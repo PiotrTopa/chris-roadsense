@@ -9,6 +9,7 @@ __pycache__/
 venv/
 # models are downloaded by scripts/fetch-models.sh, never committed
 models/*.onnx
+models/*.pt
 models/*.pkl
 models/*.bin
 # captures / logs
