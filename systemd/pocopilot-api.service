@@ -1,0 +1,17 @@
+[Unit]
+Description=pocopilot API (HTTP/WebSocket/MJPEG fan-out over the daemon sockets)
+After=network.target
+
+[Service]
+Type=simple
+# TODO: dedicated pocopilot user once it exists
+User=user
+Environment=POCOPILOT_RUNDIR=/run/pocopilot
+Environment=POCOPILOT_DATADIR=/var/lib/pocopilot
+Environment=PYTHONPATH=/usr/local/lib/pocopilot/api
+ExecStart=/usr/bin/python3 -m pocopilot_api --port 8080
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

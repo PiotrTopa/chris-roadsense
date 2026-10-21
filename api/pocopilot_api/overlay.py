@@ -92,8 +92,8 @@ def draw(img, road=None, signs=None, calib=None, intrinsics=(1500.0, 960.0, 540.
         for re in road.get("road_edges") or []:
             pts = pr.project(re["x"], re["y"], re["z"])
             if len(pts) >= 2:
-                d.line(pts, fill=(255, 60, 60, 200), width=lw)
-        for i, lead in enumerate(road.get("leads") or []):
+                d.line(pts, fill=(255, 80, 220, 200), width=lw)
+        for lead in (road.get("leads") or [])[:1]:     # hypothesis 0 = lead now; +2s/+4s not drawn
             p = lead.get("prob") or 0.0
             if p < 0.3 or not lead.get("x"):
                 continue
@@ -102,8 +102,8 @@ def draw(img, road=None, signs=None, calib=None, intrinsics=(1500.0, 960.0, 540.
             c = pr.project([lx] * 4, [ly + LEAD_W / 2, ly - LEAD_W / 2] * 2, [zg, zg, zg + LEAD_H, zg + LEAD_H])
             if len(c) == 4:
                 us, vs = [q[0] for q in c], [q[1] for q in c]
-                col = (255, 200, 0, int(80 + 175 * p)) if i == 0 else (255, 200, 0, 90)
-                d.rectangle([min(us), min(vs), max(us), max(vs)], outline=col, width=lw if i == 0 else 1)
+                col = (255, 200, 0, int(80 + 175 * p))
+                d.rectangle([min(us), min(vs), max(us), max(vs)], outline=col, width=lw)
                 v = (lead.get("v") or [None])[0]
                 label = f"{lx:.1f} m p{p:.2f}" + (f" {v:.1f} m/s" if v is not None else "")
                 d.text((min(us), min(vs) - 16), label, fill=col, font=font)
