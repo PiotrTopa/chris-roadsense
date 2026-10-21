@@ -34,3 +34,4 @@ supercombo v0.9.7 is used first: single model, 54 ms fp32 on the phone, outputs 
 - Exposure metadata from the soft ISP is unreliable (no sensor helper for IMX363); image quality itself is fine.
 - Calibration is a static config file; auto pitch/yaw from the model's pose is phase 2.
 - api and daemons run as root (phase 1); a system user with RemoveIPC=no comes later.
+- int8 quantisation tried and rejected (2026-10-21, docs/QUANTIZATION.md): the FastViT backbone's heavy-tailed activations make every int8 variant fail the lane-accuracy gate, and on ARM the QDQ overhead eats the gain anyway. fp32 stays; big cores capped at 2.09 GHz in the modeld unit.
