@@ -17,6 +17,7 @@ for m in models/*.onnx models/*.txt; do [ -f "$m" ] && install -m 644 "$m" /var/
 for c in camera.json calib.json modeld.json signd.json; do
     [ -f "/etc/pocopilot/$c" ] || { [ -f "config/$c" ] && install -m 644 "config/$c" /etc/pocopilot/; }
 done
+[ -d /etc/nftables.d ] && install -m 644 phone/50_pocopilot.nft /etc/nftables.d/ && systemctl try-restart nftables
 install -m 644 systemd/pocopilot-*.service systemd/pocopilot.target /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable pocopilot.target >/dev/null
