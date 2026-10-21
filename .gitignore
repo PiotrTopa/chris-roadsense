@@ -1,0 +1,19 @@
+# build
+build/
+*.o
+*.so
+*.a
+__pycache__/
+*.pyc
+.venv/
+venv/
+# models are downloaded by scripts/fetch-models.sh, never committed
+models/*.onnx
+models/*.pkl
+models/*.bin
+# captures / logs
+captures/
+*.jpg
+*.png
+*.mp4
+*.log
