@@ -7,13 +7,14 @@ set -eu
 cd "$(dirname "$0")/.."
 [ "$(id -u)" = 0 ] || { echo "run as root (sudo)"; exit 1; }
 BUILD=${BUILD:-build}
-cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release >/dev/null
+# ncnn backend: CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=/path/to/ncnn" (scripts/build-ncnn.sh)
+cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release ${CMAKE_ARGS:-} >/dev/null
 cmake --build "$BUILD" -j"$(nproc)"
 install -m 755 "$BUILD/camerad/camerad" "$BUILD/modeld/modeld" /usr/local/bin/
 for t in modeld/modeld_replay tools/ringdump; do [ -x "$BUILD/$t" ] && install -m 755 "$BUILD/$t" /usr/local/bin/ || true; done
 mkdir -p /usr/local/lib/roadsense /var/lib/roadsense/models /etc/roadsense
 rm -rf /usr/local/lib/roadsense/api && cp -r api /usr/local/lib/roadsense/api
-for m in models/*.onnx models/*.txt; do [ -f "$m" ] && install -m 644 "$m" /var/lib/roadsense/models/; done
+for m in models/*.onnx models/*.param models/*.bin models/*.txt; do [ -f "$m" ] && install -m 644 "$m" /var/lib/roadsense/models/; done
 for c in camera.json calib.json modeld.json; do
     [ -f "/etc/roadsense/$c" ] || { [ -f "config/$c" ] && install -m 644 "config/$c" /etc/roadsense/; }
 done

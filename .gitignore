@@ -1,5 +1,6 @@
 # build
 build/
+build-*/
 *.o
 *.so
 *.a
@@ -12,6 +13,7 @@ models/*.onnx
 models/*.pt
 models/*.pkl
 models/*.bin
+models/*.param
 # captures / logs
 captures/
 *.jpg

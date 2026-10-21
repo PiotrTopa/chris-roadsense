@@ -22,7 +22,7 @@
 
 ## Later
 - [ ] car control integration (separate project; this API is the input)
-- [ ] GPU inference via ncnn/Vulkan if CPU fps is insufficient
+- [ ] GPU inference via ncnn/Vulkan: integrated 2026-10-21 (`modeld --backend ncnn`, ~60 ms/run, ~15 % of a core). Two blockers solved (turnip cache flush, fp16 overflow in the feature normalisation); full-replay accuracy still misses the gate on far-range outliers (lane y max 0.28 m at 192 m, lead x 1.9 m at 100 m; HARDWARE.md), so the unit stays on ORT. Open: reduce the fp16 activation error (ncnn per-layer fp32 is broken on Vulkan) or relax the gate to the ranges that matter
 - [ ] newer openpilot vision/policy split models
 
 ## Model choice note (2026-10-21)

@@ -67,7 +67,9 @@ roadsense was developed and measured on a Xiaomi Poco F1 (Snapdragon 845,
 Sony IMX363 rear camera through CAMSS and libcamera's software ISP,
 postmarketOS edge, mainline kernel); see [docs/HARDWARE.md](docs/HARDWARE.md).
 Inference runs on the CPU through ONNX Runtime (no usable DSP/NPU path on
-mainline). The USB-C port is configured as a host with its own VBUS (see
+mainline); an optional ncnn/Vulkan backend runs it on the Adreno 630 in ~60 ms
+at ~15 % of one core, but does not yet meet the accuracy gate on far-range
+outliers (docs/HARDWARE.md), so the shipped unit stays on the CPU. The USB-C port is configured as a host with its own VBUS (see
 [poco-f1-usb-host](https://github.com/PiotrTopa/poco-f1-usb-host)) so the phone
 can drive a car gateway later. `scripts/install-phone.sh`,
 `scripts/sync-phone.sh`, `scripts/push-models.sh`, `systemd/` and `phone/` are
@@ -80,10 +82,13 @@ messages/s with the phone at its thermal limit (supercombo 54 ms fp32 on the 4
 big cores when cool). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ```sh
-scripts/fetch-models.sh            # dev box: downloads supercombo, converts to fp32
+scripts/fetch-models.sh            # dev box: downloads supercombo, converts to fp32 (+ ncnn model; NCNN=0 skips)
 scripts/push-models.sh             # models -> phone ~/roadsense/models
 scripts/sync-phone.sh              # tree -> phone ~/roadsense
 ssh user@phone 'cd ~/roadsense && sudo sh scripts/install-phone.sh && sudo systemctl start roadsense.target'
+# optional GPU backend (modeld --backend ncnn): build ncnn once, ~45 min, in a held-open ssh session
+ssh -t user@phone 'sh ~/roadsense/scripts/build-ncnn.sh ~/ncnn'
+ssh user@phone 'cd ~/roadsense && sudo CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=/home/user/ncnn" BUILD=build-ncnn sh scripts/install-phone.sh'
 curl http://phone:8080/v1/health ; open http://phone:8080/
 ```
 

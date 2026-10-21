@@ -134,6 +134,15 @@ per second).
 ```
 
 ### modeld: `{"type":"road", ...}` per model run (every frame it keeps up with)
+modeld runs the network through an inference backend (`modeld/backend.h`):
+`--backend ort` (default; ONNX Runtime CPU, `supercombo-fp32.onnx`) or
+`--backend ncnn` (ncnn on the GPU through Vulkan, `supercombo-ncnn.param/.bin`
+from `tools/ncnn/make_ncnn.sh`; only when built with `-DROADSENSE_NCNN=ON`, see
+`modeld/CMakeLists.txt` and HARDWARE.md for its precision). Frame prep, the
+feedback FIFOs, parsing and this message are shared, so both backends publish
+the same schema; with ncnn the default pinning is `--cpus 0-3`. Config key
+`backend` in `modeld.json`.
+
 All distances in metres, device frame exactly as openpilot defines it: x forward,
 y RIGHT, z DOWN, origin at the camera (modeld passes supercombo outputs through
 in this frame, no axis conversion). Times in seconds.

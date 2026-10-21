@@ -1,4 +1,5 @@
-// supercombo v0.9.7 runner (ONNX Runtime C++ API, CPU EP) + output parser.
+// supercombo v0.9.7 runner (inference backend from backend.h: ONNX Runtime CPU or ncnn Vulkan)
+// + output parser.
 //
 // Input filling and feedback FIFOs follow docs/SUPERCOMBO_SPEC.md sections 1.1 and 4; parsing
 // follows section 3 (parse_model_outputs.py). All spatial outputs stay in openpilot's
@@ -11,13 +12,17 @@
 #include <string>
 #include <vector>
 
+#include "backend.h"
 #include "supercombo_layout.h"
 
 namespace roadsense {
 
 struct SupercomboOptions {
-    std::string model_path = "/var/lib/roadsense/models/supercombo-fp32.onnx";
-    int threads = 4;           // intra-op threads (4 big cores on the SD845)
+    std::string backend = "ort";  // "ort" (ONNX Runtime CPU) or "ncnn" (Vulkan), see backend.h
+    std::string model_path = "/var/lib/roadsense/models/supercombo-fp32.onnx";  // ncnn: the .param file
+    int threads = 4;           // ort: intra-op threads (4 big cores on the SD845); ncnn: CPU threads (1)
+    bool ncnn_fp16 = true;     // ncnn: fp16-packed storage (false: fp32 everywhere, ~5x slower on turnip)
+    bool ncnn_flushall = true; // ncnn: add TU_DEBUG=flushall (turnip workaround, see ncnn_backend.h)
     bool rhd = false;          // false: right-hand traffic (LHD car, e.g. Poland) -> traffic_convention [1,0]
     float steer_delay = sc::kDefaultSteerDelay;
     bool allow_spinning = true;  // ORT intra-op thread spinning
@@ -63,7 +68,7 @@ public:
 
     // Image inputs: each pointer is one packed frame (sc::kFramePacked floats).
     // Runs the model once and advances the feedback FIFOs. desire: one-hot of the current
-    // desire (nullptr = none). Returns false (and sets err) on an ORT error.
+    // desire (nullptr = none). Returns false (and sets err) on a backend error.
     bool run(const float *med_prev, const float *med_cur, const float *big_prev, const float *big_cur,
              const float *desire, std::string *err);
 
@@ -77,10 +82,10 @@ public:
     const std::vector<float> &input(int i) const { return in_[i]; }
 
     static RoadOutputs parse(const float *raw);
+    const char *backend_name() const { return backend_->name(); }
 
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    std::unique_ptr<InferenceBackend> backend_;
     SupercomboOptions opt_;
     std::array<std::vector<float>, 7> in_;
     std::vector<float> out_;

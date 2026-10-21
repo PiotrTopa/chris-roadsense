@@ -5,8 +5,6 @@
 #include <cstdio>
 #include <cstring>
 
-#include <onnxruntime_cxx_api.h>
-
 namespace roadsense {
 
 namespace {
@@ -22,39 +20,7 @@ void softmax(const float *in, std::array<float, N> &out) {
 }
 }  // namespace
 
-struct Supercombo::Impl {
-    Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "modeld"};
-    Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    std::unique_ptr<Ort::Session> session;
-    std::vector<Ort::Value> inputs;
-    Ort::Value output{nullptr};
-};
-
-Supercombo::Supercombo(const SupercomboOptions &opt) : impl_(new Impl), opt_(opt) {
-    Ort::SessionOptions so;
-    so.SetIntraOpNumThreads(opt.threads);
-    so.SetInterOpNumThreads(1);
-    so.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
-    so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-    if (!opt.allow_spinning) so.AddConfigEntry("session.intra_op.allow_spinning", "0");
-    impl_->session = std::make_unique<Ort::Session>(impl_->env, opt.model_path.c_str(), so);
-
-    // Check the graph's I/O against the spec (section 1).
-    Ort::AllocatorWithDefaultOptions alloc;
-    if (impl_->session->GetInputCount() != 7 || impl_->session->GetOutputCount() != 1)
-        throw std::runtime_error("model: expected 7 inputs and 1 output (supercombo v0.9.7)");
-    for (size_t i = 0; i < 7; ++i) {
-        auto name = impl_->session->GetInputNameAllocated(i, alloc);
-        bool found = false;
-        for (auto *n : sc::kInputNames) found |= std::strcmp(n, name.get()) == 0;
-        if (!found) throw std::runtime_error(std::string("model: unexpected input ") + name.get());
-        Ort::TypeInfo info = impl_->session->GetInputTypeInfo(i);  // keep alive: the shape info refers into it
-        auto ti = info.GetTensorTypeAndShapeInfo();
-        if (ti.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-            throw std::runtime_error(std::string("model: input ") + name.get() +
-                                     " is not float32; use the fp32-converted model");
-    }
-
+Supercombo::Supercombo(const SupercomboOptions &opt) : opt_(opt) {
     const std::array<std::vector<int64_t>, 7> shapes = {{{1, sc::kImgC, sc::kImgH, sc::kImgW},
                                                           {1, sc::kImgC, sc::kImgH, sc::kImgW},
                                                           {1, sc::kDesireLen, sc::kDesireW},
@@ -66,15 +32,13 @@ Supercombo::Supercombo(const SupercomboOptions &opt) : impl_(new Impl), opt_(opt
         size_t n = 1;
         for (auto d : shapes[i]) n *= size_t(d);
         in_[i].assign(n, 0.0f);  // spec 1.1: all buffers start at zero
-        impl_->inputs.push_back(Ort::Value::CreateTensor<float>(impl_->mem, in_[i].data(), n, shapes[i].data(),
-                                                                shapes[i].size()));
     }
     out_.assign(sc::kOutputLen, 0.0f);
-    const int64_t oshape[2] = {1, sc::kOutputLen};
-    impl_->output = Ort::Value::CreateTensor<float>(impl_->mem, out_.data(), out_.size(), oshape, 2);
 
     // traffic_convention[int(is_rhd)] = 1 (spec 1.1)
     in_[3][opt.rhd ? 1 : 0] = 1.0f;
+
+    backend_ = make_backend(opt);
 }
 
 Supercombo::~Supercombo() = default;
@@ -104,14 +68,9 @@ bool Supercombo::run(const float *med_prev, const float *med_cur, const float *b
     in_[4][0] = v_ego_;
     in_[4][1] = opt_.steer_delay;
 
-    try {
-        const char *out_name = sc::kOutputName;
-        impl_->session->Run(Ort::RunOptions{nullptr}, sc::kInputNames, impl_->inputs.data(), 7, &out_name,
-                            &impl_->output, 1);
-    } catch (const Ort::Exception &e) {
-        if (err) *err = e.what();
-        return false;
-    }
+    std::array<const float *, 7> in;
+    for (int i = 0; i < 7; ++i) in[i] = in_[i].data();
+    if (!backend_->run(in, out_.data(), err)) return false;
     ++runs_;
     parsed_ = parse(out_.data());
 

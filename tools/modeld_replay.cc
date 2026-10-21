@@ -29,10 +29,12 @@ void usage() {
     fprintf(stderr,
             "usage: modeld_replay (DIR | FILE.nv12) [--width W --height H] [--fps F]\n"
             "         [--focal PX] [--cx PX] [--cy PX] [--calib FILE | --pitch R --yaw R --roll R --height-m M]\n"
-            "         [--model PATH] [--threads N] [--rhd] [--steer-delay S] [--start N] [--max-frames N]\n"
+            "         [--backend ort|ncnn] [--model PATH] [--threads N] [--ncnn-fp32] [--ncnn-no-flushall] [--rhd] [--steer-delay S]\n"
+            "         [--start N] [--max-frames N]\n"
             "         [--dump-input DIR] [--dump-runs N] [--dump-tensors]\n"
             "  defaults: fps 20, focal 1470*W/1920 (camerad default), cx W/2, cy H/2, calib from\n"
-            "  $ROADSENSE_CONFIG_DIR/calib.json if present, model /var/lib/roadsense/models/supercombo-fp32.onnx\n"
+            "  $ROADSENSE_CONFIG_DIR/calib.json if present, backend ort, model /var/lib/roadsense/models/supercombo-fp32.onnx\n"
+            "  (ncnn: supercombo-ncnn.param there, 1 CPU thread)\n"
             "  --dump-input DIR  write the packed model inputs of the first --dump-runs runs (default 3) as PGM:\n"
             "                    <run>_{input_imgs,big_input_imgs}_yuv.pgm (current frame, Y 512x256 over U|V)\n"
             "                    and <run>_{...}_ch.pgm (all 12 channels, 3x4 tiles of 256x128)\n"
@@ -147,6 +149,7 @@ int main(int argc, char **argv) {
     int dump_runs = 3;
     long start = 0, max_frames = -1;
     SupercomboOptions so;
+    bool model_set = false, threads_set = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto val = [&]() -> const char * {
@@ -167,8 +170,11 @@ int main(int argc, char **argv) {
         else if (a == "--yaw") calib.yaw = atof(val()), calib_cli = true;
         else if (a == "--roll") calib.roll = atof(val()), calib_cli = true;
         else if (a == "--height-m") calib.height_m = atof(val()), calib_cli = true;
-        else if (a == "--model") so.model_path = val();
-        else if (a == "--threads") so.threads = atoi(val());
+        else if (a == "--backend") so.backend = val();
+        else if (a == "--model") so.model_path = val(), model_set = true;
+        else if (a == "--threads") so.threads = atoi(val()), threads_set = true;
+        else if (a == "--ncnn-fp32") so.ncnn_fp16 = false;
+        else if (a == "--ncnn-no-flushall") so.ncnn_flushall = false;
         else if (a == "--rhd") so.rhd = true;
         else if (a == "--steer-delay") so.steer_delay = float(atof(val()));
         else if (a == "--start") start = atol(val());
@@ -181,6 +187,10 @@ int main(int argc, char **argv) {
         else return usage(), 2;
     }
     if (input.empty()) return usage(), 2;
+    if (so.backend == "ncnn") {
+        if (!model_set) so.model_path = "/var/lib/roadsense/models/supercombo-ncnn.param";
+        if (!threads_set) so.threads = 1;
+    }
     if (!calib_cli) {
         std::string err;
         const std::string cf = calib_file.empty() ? config_dir() + "/calib.json" : calib_file;
@@ -322,7 +332,8 @@ int main(int argc, char **argv) {
         prep_sum += cur.prep_ms;
     }
     if (stream) fclose(stream);
-    fprintf(stderr, "modeld_replay: %ld frames read, %llu runs, model %.1f ms avg, prep %.2f ms avg (both inputs)\n",
+    fprintf(stderr, "modeld_replay: %s: %ld frames read, %llu runs, model %.1f ms avg, prep %.2f ms avg (both inputs)\n",
+            model->backend_name(),
             used, (unsigned long long)runs, runs ? model_sum / runs : 0.0, runs ? prep_sum / runs : 0.0);
     return 0;
 }

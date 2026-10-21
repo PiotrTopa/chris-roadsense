@@ -17,10 +17,82 @@ USB in host mode with VBUS sourced by the phone).
 | GPU | Adreno 630, Mesa 26.2 freedreno (GLES 3.2) + turnip Vulkan ICD present |
 | DSP/NPU | Hexagon remoteprocs boot (adsp/cdsp/slpi) but no userspace path for inference on mainline. Ignore. |
 | supercombo v0.9.7 | ORT CPU, 4 threads pinned to the big cores: **fp16 graph as shipped: 300 ms**; converted to fp32 (`tools/onnx_fp16_to_fp32.py`): **54 ms** (18 fps). 8 threads is slower than 4 (little cores drag). Temperature after 10 s of inference: 64-74 C. |
-| Inference | ONNX Runtime 1.30 (Alpine `onnxruntime`, CPU EP, C++ API only: no Python bindings on musl). No ncnn/TFLite/PyTorch packages. ncnn+Vulkan on turnip is the only realistic GPU route and would have to be built from source. |
+| Inference | ONNX Runtime 1.30 (Alpine `onnxruntime`, CPU EP, C++ API only: no Python bindings on musl). No ncnn/TFLite/PyTorch packages. GPU: ncnn 20261020 + Vulkan built from source (`scripts/build-ncnn.sh`, ~45 min), `modeld --backend ncnn`, see below. |
 
 Thermal (measured 2026-10-21): modeld at 10 Hz on cpu4-7 reaches 90-95 C within a minute on the bench (no airflow) and the model slows from 56 to 110-150 ms; on cpu0-3 it runs at 3.5 Hz / 276 ms at 63-71 C. The sensor zones swing ~20 C between runs, so guards must average. Sustained 8-thread inference throttles. Measure `thermal_zone*/temp`
 and prefer the 4 big cores for the model, small cores for capture/IO.
+
+### GPU inference: ncnn + Vulkan on turnip (measured 2026-10-21)
+
+Driver facts: Mesa 26.2 turnip, "Turnip Adreno (TM) 630", Vulkan compute queue,
+subgroup 64-128. No `VK_KHR_16bit_storage` (ncnn reports fp16 packed/storage/
+arithmetic = 1/0/0), so ncnn's only fast mode is **fp16-packed**: fp16 storage
+of blobs and weights, fp32 arithmetic. GPU fp32 everywhere is exact (max output
+diff vs ORT 2e-4) but takes 320 ms. GPU clock moves between 257 and 710 MHz
+(`/sys/class/devfreq/*gpu*`). Five small layers (two MatMul, ExpandDims,
+Squeeze of the temporal part) have no Vulkan kernel and run on the CPU.
+
+| supercombo v0.9.7, ncnn fp16-packed | Value |
+|---|---|
+| model latency (replay, phone otherwise busy with the root stack) | 58-64 ms per run (+~5 ms for `TU_DEBUG=flushall`), first run (pipeline build) 0.1-1.5 s |
+| sustained, scbench alone | 16.8 runs/s for 60 s, ~15 % of one CPU core, SoC 76-80 C (CPU ORT at the same duty: 93-94 C) |
+| live modeld on cpu0-3 next to the running root stack | see below |
+
+Two problems had to be solved before the outputs were usable:
+
+1. **Random corruption (driver/ncnn synchronisation).** With ncnn's defaults
+   about half the runs on the same input return different, wrong outputs (lane
+   errors from 0.1 m to hundreds of metres, no error code); the very first run
+   after start is usually right, which is why a one-frame check passed.
+   `TU_DEBUG=flushall` (turnip flushes and invalidates all GPU caches around each
+   dispatch) makes every run bit-identical and correct at ~+5 ms. Not enough:
+   `TU_DEBUG=syncdraw`, ncnn light mode off, packing layout off, subgroup ops
+   off, shader local memory off, and a patch that forces a real barrier on
+   every recycled blob buffer. The ncnn backend therefore adds `flushall` to
+   `TU_DEBUG` before Vulkan starts (`--ncnn-no-flushall` to skip).
+2. **fp16 overflow in the vision-feature L2 normalisation.** The sum of squares
+   (ONNX `/summarizer/ReduceSum`, ncnn `sum_237`) reaches ~1.6e5 on real frames,
+   above fp16's 65504; with fp16 storage it saturates and the normalised
+   feature, which also feeds the recurrent `features_buffer`, comes out up to
+   1.5x too small (lane lines off by up to 5 m on single frames).
+   `tools/ncnn/fix_ncnn.py` scales one factor of the square by 2^-8 and the
+   norm back by 2^4 (exact in fp32). The other out-of-range blobs (up to 1.3e7)
+   are the cubic term of tanh-GELU, where saturation does not change the result.
+   Per-layer fp32 through ncnn's `featmask` does not work on Vulkan in this
+   version (outputs inf/garbage), so the remaining fp16 error cannot be fenced
+   off layer by layer; an ORT emulation (fp16 rounding of every tensor) puts
+   about half of it in the temporal attention block, spread over many ops.
+
+Accuracy over the whole Ljubljana replay (119 runs, 1920x1080 NV12, both
+backends keeping their own recurrent state, `tools/ncnn/compare_replay.py`),
+ncnn fp16-packed + flushall + fix 2 against ORT fp32:
+
+| metric (per run, then over the replay) | mean | p95 | max | gate |
+|---|---|---|---|---|
+| lane-line y, mean abs over 4 lines x 33 points (m) | 0.018 | 0.039 | 0.055 | mean < 0.05: pass |
+| lane-line y, max abs (m) | 0.078 | 0.171 | 0.276 | max < 0.2: **fail** (only at x = 192 m; <= 0.062 m up to 50 m, <= 0.104 m up to 100 m) |
+| lane-line prob | 0.006 | 0.014 | 0.041 | < 0.05: pass |
+| lead 0 x at t=0 (m) | 0.26 | 0.77 | 1.86 | < 1 m: **fail** (leads at 50-105 m, plus seq 120) |
+| lead 0 v at t=0 (m/s) | 0.12 | 0.26 | 5.54 | (one run, seq 120, prob 0.96: 27.6 vs 33.2) |
+| lead 0 prob | 0.002 | 0.008 | 0.025 | |
+| plan x/y, max abs over 33 points (m) | 1.05 | 3.01 | 9.0 | |
+
+No drift: the first and last thirds of the replay have the same error. Running
+the temporal part and heads on the CPU in fp32 (featmask CPU) only reduces the
+mean lane error to 0.014 m with the same outliers, at 500+ ms per run. ORT on
+the fp16-weight graph as shipped (weights fp16, compute fp32) stays within
+0.009 m on the same frames, so the residual is ncnn's fp16 activation storage.
+Because the gate is not met, the shipped unit keeps `--backend ort`.
+
+Live, 120 s (2026-10-21 ~21:55 CEST), own modeld `--backend ncnn --max-hz 20`
+(default cpus 0-3, 1 CPU thread) reading the system ring next to the running
+root stack (camerad, ORT modeld at 5 Hz on cpu4-7): the phone was already at
+88 C (hottest zone), so the thermal guard halved the rate at once; 9.6 road
+messages/s (1154 in 120 s), model_ms 79-94 ms average (max 138; prep 18-21 ms on
+the A55s), the process used 57 % of one A55 (prep + dispatch + CPU layers), GPU
+zones 65 -> 75-85 C, CPU zones 85 -> 92-95 C, GPU clock mostly 710 MHz. These
+temperatures are dominated by the CPU stack running alongside; a GPU-only stack
+was not measured live.
 
 ## Camera
 

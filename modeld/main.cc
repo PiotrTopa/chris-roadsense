@@ -1,4 +1,4 @@
-// modeld: camera frame ring -> openpilot v0.9.7 supercombo (ONNX Runtime CPU) -> `road` JSON lines.
+// modeld: camera frame ring -> openpilot v0.9.7 supercombo (ONNX Runtime CPU or ncnn Vulkan) -> `road` JSON lines.
 //
 // Threads: a prep thread reads every new ring frame, selects model frames (20 Hz clock, see
 // FrameSelector) and warps+packs each selected frame for both model inputs, so the image pair
@@ -34,7 +34,8 @@ void on_signal(int) { g_run = false; }
 
 struct Options {
     SupercomboOptions sc;
-    std::string cpus = "4-7";
+    std::string cpus = "4-7";  // ncnn backend: 0-3 unless set (little cores do prep + GPU dispatch)
+    bool cpus_set = false, threads_set = false, model_set = false;
     std::string prep_cpus;  // empty: inherit the process mask
     std::string rundir;
     std::string ring;
@@ -69,11 +70,16 @@ bool parse_cpus(const std::string &s, cpu_set_t *set) {
 
 void usage() {
     fprintf(stderr,
-            "usage: modeld [--model PATH] [--threads N] [--cpus LIST|none] [--prep-cpus LIST] [--rhd] [--steer-delay S]\n"
-            "              [--max-hz N] [--throttle-temp MC] [--spin] [--runs N] [--stats S] [--verbose]\n"
-            "  --model PATH   fp32 supercombo v0.9.7 (default /var/lib/roadsense/models/supercombo-fp32.onnx)\n"
-            "  --threads N    ORT intra-op threads (default 4)\n"
-            "  --cpus LIST    CPU affinity for the whole process, e.g. 4-7 or 4,5 (default 4-7; none = no pinning)\n"
+            "usage: modeld [--backend ort|ncnn] [--model PATH] [--threads N] [--cpus LIST|none] [--prep-cpus LIST] [--rhd]\n"
+            "              [--steer-delay S] [--max-hz N] [--throttle-temp MC] [--spin] [--ncnn-fp32] [--ncnn-no-flushall] [--runs N] [--stats S]\n"
+            "              [--verbose]\n"
+            "  --backend B    ort: ONNX Runtime on the CPU (default); ncnn: ncnn on the GPU through Vulkan (if built in)\n"
+            "  --model PATH   ort: fp32 supercombo v0.9.7 (default /var/lib/roadsense/models/supercombo-fp32.onnx)\n"
+            "                 ncnn: the .param file, weights in the .bin next to it\n"
+            "                 (default /var/lib/roadsense/models/supercombo-ncnn.param)\n"
+            "  --threads N    ort: intra-op threads (default 4); ncnn: CPU threads for its CPU-only layers (default 1)\n"
+            "  --cpus LIST    CPU affinity for the whole process, e.g. 4-7 or 4,5 (default 4-7 with ort, 0-3 with ncnn;\n"
+            "                 none = no pinning)\n"
             "  --prep-cpus L  CPU affinity of the frame-prep thread only (default: same as --cpus), e.g. 0-3\n"
             "  --rhd          left-hand traffic (right-hand-drive car); default right-hand traffic\n"
             "  --steer-delay  lateral_control_params[1] in s (default 0.4 = 0.2 actuator + 0.2)\n"
@@ -81,8 +87,10 @@ void usage() {
             "  --throttle-temp MC  hottest thermal zone (millidegrees C, 5 s average) above which the rate is halved,\n"
             "                 restored below MC - 5000 (default 80000)\n"
             "  --spin         let ORT intra-op threads spin between runs (default off: much cooler, ~+15 ms/run)\n"
+            "  --ncnn-fp32    ncnn: disable fp16 packing (fp32 storage on the GPU; ~5x slower on the Adreno 630)\n"
+            "  --ncnn-no-flushall  ncnn: do not add TU_DEBUG=flushall (turnip needs it for correct results)\n"
             "  --runs N       exit after N model runs (testing)\n"
-            "config: $ROADSENSE_CONFIG_DIR (default /etc/roadsense)/modeld.json keys model, threads, cpus, prep_cpus, rhd,\n"
+            "config: $ROADSENSE_CONFIG_DIR (default /etc/roadsense)/modeld.json keys backend, model, threads, cpus, prep_cpus, rhd,\n"
             "        steer_delay, max_hz, throttle_temp (CLI wins); calibration from calib.json there (pitch, yaw, roll rad; height_m)\n"
             "env: ROADSENSE_RUNDIR (default /run/roadsense), ROADSENSE_RING (default /dev/shm/roadsense-frames)\n");
 }
@@ -219,9 +227,10 @@ int main(int argc, char **argv) {
         if (read_file(config_dir() + "/modeld.json", &s)) {
             double v;
             std::string str;
-            if (json_string(s, "model", &str)) opt.sc.model_path = str;
-            if (json_number(s, "threads", &v)) opt.sc.threads = int(v);
-            if (json_string(s, "cpus", &str)) opt.cpus = str;
+            if (json_string(s, "backend", &str)) opt.sc.backend = str;
+            if (json_string(s, "model", &str)) opt.sc.model_path = str, opt.model_set = true;
+            if (json_number(s, "threads", &v)) opt.sc.threads = int(v), opt.threads_set = true;
+            if (json_string(s, "cpus", &str)) opt.cpus = str, opt.cpus_set = true;
             if (json_string(s, "prep_cpus", &str)) opt.prep_cpus = str;
             if (json_number(s, "rhd", &v)) opt.sc.rhd = v != 0;
             if (json_number(s, "steer_delay", &v)) opt.sc.steer_delay = float(v);
@@ -238,9 +247,12 @@ int main(int argc, char **argv) {
             }
             return argv[++i];
         };
-        if (a == "--model") opt.sc.model_path = val();
-        else if (a == "--threads") opt.sc.threads = atoi(val().c_str());
-        else if (a == "--cpus") opt.cpus = val();
+        if (a == "--backend") opt.sc.backend = val();
+        else if (a == "--model") opt.sc.model_path = val(), opt.model_set = true;
+        else if (a == "--threads") opt.sc.threads = atoi(val().c_str()), opt.threads_set = true;
+        else if (a == "--cpus") opt.cpus = val(), opt.cpus_set = true;
+        else if (a == "--ncnn-fp32") opt.sc.ncnn_fp16 = false;
+        else if (a == "--ncnn-no-flushall") opt.sc.ncnn_flushall = false;
         else if (a == "--prep-cpus") opt.prep_cpus = val();
         else if (a == "--rhd") opt.sc.rhd = true;
         else if (a == "--steer-delay") opt.sc.steer_delay = float(atof(val().c_str()));
@@ -255,6 +267,16 @@ int main(int argc, char **argv) {
             usage();
             return a == "--help" || a == "-h" ? 0 : 2;
         }
+    }
+    if (!backend_available(opt.sc.backend)) {
+        fprintf(stderr, "modeld: backend '%s' not available in this build (ort%s)\n", opt.sc.backend.c_str(),
+                backend_available("ncnn") ? ", ncnn" : "");
+        return 2;
+    }
+    if (opt.sc.backend == "ncnn") {  // backend-specific defaults, unless set by config or CLI
+        if (!opt.model_set) opt.sc.model_path = "/var/lib/roadsense/models/supercombo-ncnn.param";
+        if (!opt.threads_set) opt.sc.threads = 1;
+        if (!opt.cpus_set) opt.cpus = "0-3";
     }
     const char *rd = getenv("ROADSENSE_RUNDIR");
     opt.rundir = (rd && *rd) ? rd : "/run/roadsense";
@@ -282,8 +304,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "modeld: cannot load %s: %s\n", opt.sc.model_path.c_str(), e.what());
         return 1;
     }
-    fprintf(stderr, "modeld: model %s, %d threads, cpus %s, %s traffic, steer delay %.2f s\n",
-            opt.sc.model_path.c_str(), opt.sc.threads, opt.cpus.c_str(), opt.sc.rhd ? "left-hand" : "right-hand",
+    fprintf(stderr, "modeld: backend %s, model %s, %d threads, cpus %s, %s traffic, steer delay %.2f s\n",
+            model->backend_name(), opt.sc.model_path.c_str(), opt.sc.threads, opt.cpus.c_str(),
+            opt.sc.rhd ? "left-hand" : "right-hand",
             opt.sc.steer_delay);
 
     mkdir(opt.rundir.c_str(), 0755);

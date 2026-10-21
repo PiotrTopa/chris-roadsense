@@ -30,4 +30,16 @@ if [ ! -f models/supercombo-fp32.onnx ]; then
     fi
     $PY -I tools/onnx_fp16_to_fp32.py models/supercombo.onnx models/supercombo-fp32.onnx
 fi
-sha256sum models/*.onnx
+
+# ncnn (Vulkan) model for `modeld --backend ncnn`: onnxsim + pnnx + graph fixes, see
+# tools/ncnn/make_ncnn.sh. pnnx links against torch (CPU wheel, ~200 MB download) and needs
+# an x86_64/aarch64 glibc box, so this also runs on the dev box. Skip with NCNN=0.
+if [ "${NCNN:-1}" != 0 ] && [ ! -f models/supercombo-ncnn.param ]; then
+    [ -x .venv-models/bin/python ] || python3 -m venv .venv-models
+    if ! .venv-models/bin/python -c 'import onnx, onnxsim, pnnx, torch' 2>/dev/null; then
+        .venv-models/bin/pip -q install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+        .venv-models/bin/pip -q install onnx==1.23.2 onnxsim==0.8.1 pnnx==20261020 numpy
+    fi
+    tools/ncnn/make_ncnn.sh models/supercombo-fp32.onnx models/supercombo-ncnn .venv-models
+fi
+sha256sum models/*.onnx models/*.param models/*.bin 2>/dev/null || true
