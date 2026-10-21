@@ -70,8 +70,9 @@ emitted in order, slow clients are disconnected when their send buffer exceeds
 `dropped` (frames not written because a consumer held the slot too long; always 0 with the drop-on-overwrite reader protocol, reported for completeness).
 
 ### modeld: `{"type":"road", ...}` per model run (every frame it keeps up with)
-All distances in metres, device frame as openpilot defines it: x forward,
-y left, z up, origin at the camera. Times in seconds.
+All distances in metres, device frame exactly as openpilot defines it: x forward,
+y RIGHT, z DOWN, origin at the camera (modeld passes supercombo outputs through
+in this frame, no axis conversion). Times in seconds.
 
 ```
 "model_ms": 298.1,
@@ -120,7 +121,8 @@ once confirmed.
 api never touches the camera or the models; it is a fan-out and overlay layer.
 Overlays project the 3D road outputs into the image with the pinhole model
 from the ring header (focal_px, cx, cy) and the calibration used by modeld,
-published by modeld in a `{"type":"calib", ...}` message on start and on change.
+published by modeld in a `{"type":"calib", ...}` message to every client when it
+connects, and to all clients on change.
 
 ## Calibration
 
