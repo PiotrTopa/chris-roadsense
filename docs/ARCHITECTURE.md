@@ -14,8 +14,18 @@ camerad ──JSON (frame meta)────────────────�
 
 ## Frame ring (`/dev/shm/pocopilot-frames`)
 
-A single file created and truncated by camerad, mmapped by everyone else.
-Little-endian, all offsets in bytes, header is 4096 bytes.
+A single file created by camerad, mmapped by everyone else. Little-endian,
+all offsets in bytes, header is 4096 bytes. camerad builds a fresh file under a
+temporary name and `rename()`s it over the path at start-up (never truncates a
+mapped file, so old readers cannot SIGBUS); readers detect the new inode and
+remap (`RingReader` in `camerad/ring.h` does this). Reference implementation of
+everything in this section: `camerad/ring.h` (header-only, `RingWriter` /
+`RingReader`). Tests may override the path with env `POCOPILOT_RING`.
+
+Pixel data: NV12, **BT.601 full range** (JFIF: Y 0..255, Cb/Cr 0..255 centred
+on 128; `Y = 0.299R + 0.587G + 0.114B`, `Cb = -0.168736R - 0.331264G + 0.5B + 128`,
+`Cr = 0.5R - 0.418688G - 0.081312B + 128`), sRGB-gamma values as the software
+ISP delivers them, chroma = box average of each 2x2 block.
 
 ```
 struct RingHeader {            // offset 0
@@ -29,9 +39,10 @@ struct RingHeader {            // offset 0
   uint32_t format;             // 1 = NV12 (Y plane then interleaved UV plane, 4:2:0)
   float    focal_px;           // horizontal focal length in pixels at width x height (camerad config)
   float    cx, cy;             // principal point (default width/2, height/2)
-  uint64_t write_seq;          // last fully written frame number (atomic store, release); 0 = none yet
-  uint64_t camerad_pid;        // liveness
-}
+  uint32_t reserved0;          // offset 52: natural-alignment padding, 0
+  uint64_t write_seq;          // offset 56: last fully written frame number (atomic store, release); 0 = none yet
+  uint64_t camerad_pid;        // offset 64: liveness
+}                              // 72 bytes used, rest of the 4096 zero
 struct SlotHeader {            // at header_size + i*slot_size, i = seq % slot_count
   uint64_t seq;                // frame number, starts at 1
   int64_t  ts_mono_ns;         // CLOCK_MONOTONIC at sensor timestamp (libcamera SensorTimestamp)
@@ -41,18 +52,56 @@ struct SlotHeader {            // at header_size + i*slot_size, i = seq % slot_c
   float    colour_gain_r, colour_gain_b;
   uint32_t data_offset;        // from slot start, 4096
   uint32_t data_size;          // y_stride*height + uv_stride*height/2
-}
+}                              // 48 bytes; pixels at slot start + data_offset
 ```
 
-Writer protocol: pick slot `seq % slot_count`, write SlotHeader with the new
-seq and pixel data, then store `write_seq = seq` with release semantics.
-Reader protocol: read `write_seq` (acquire), copy or process the slot, then
+With 1920x1080: `slot_size` = 3117056, file size 4096 + 6*3117056 = 18706432.
+
+Writer protocol: pick slot `seq % slot_count`, store the new `seq` into the
+SlotHeader **first** (followed by a release fence), then write the rest of the
+SlotHeader and the pixel data, then store `write_seq = seq` with release
+semantics. Writing the slot seq before the pixels is what lets a reader detect
+an overwrite that started while it was copying.
+Reader protocol: read `write_seq` (acquire), check the slot's `seq` equals it
+(else it was already lapped), copy or process the slot, acquire fence, then
 re-read that slot's `seq`; if it changed the slot was overwritten mid-read,
 drop the frame. Readers poll `write_seq` with a 1-2 ms sleep; there is no
 notification channel (30 fps makes polling cheap).
 
 camerad also writes a JPEG of every Nth frame to `/run/pocopilot/preview.jpg`
-(atomic rename) for the MJPEG endpoint, N configurable (default 3).
+(atomic rename) for the MJPEG endpoint, N configurable (default 3): 960x540
+(2x box downscale of the NV12 frame), baseline 4:2:0, quality 80, ~110 KB.
+If the encoder is still busy with the previous preview the frame is skipped.
+
+Run directory: `/run/pocopilot`, overridden by env `POCOPILOT_RUNDIR` for
+every daemon (`/tmp/pocopilot` for development).
+
+**/dev/shm and logind:** systemd-logind's default `RemoveIPC=yes` deletes a
+regular (uid >= 1000) user's files in `/dev/shm` when that user's last session
+ends (observed on the phone: the ring vanished after the ssh session closed).
+The systemd units must therefore run camerad as a system user (uid < 1000) or
+root, or logind needs `RemoveIPC=no`. During development, run camerad and its
+readers inside the same login session.
+
+### camerad configuration (`/etc/pocopilot/camera.json`, env `POCOPILOT_CONFIG_DIR`)
+
+Flat JSON object of scalars, every key optional:
+
+| key | default | meaning |
+|---|---|---|
+| `focal_px` | 1470 | ring header focal length (4.3 mm lens / 5.64 mm sensor width * 1920 px) |
+| `cx`, `cy` | 960, 540 | principal point |
+| `fps` | 20 | sensor frame rate set via the IMX363 `vertical_blanking` control; 0 = leave the sensor alone (~30.3 fps). CLI `--fps N` overrides |
+| `preview_every` | 3 | JPEG every Nth frame, 0 = off (CLI `--no-preview`) |
+| `preview_quality` | 80 | JPEG quality |
+| `little_cores` | true | pin the whole process (incl. libcamera threads) to cpu0-3 |
+| `convert_threads` | 1 | threads for XRGB->NV12 (1 is enough: ~12 ms per frame on an A55) |
+| `sensor_line_ns`, `sensor_base_lines` | 10468, 3045 | empirical frame-timing model `T = (base_lines + vblank) * line_ns`, see HARDWARE.md |
+
+CLI: `camerad [--verbose] [--frames N] [--no-preview] [--fps N] [--vblank N]`
+(`--verbose` prints fps and timings to stderr once per second; `--vblank` writes
+a raw VBLANK for calibration). SIGINT/SIGTERM stop the camera, close clients and
+unlink the socket.
 
 ## JSON sockets
 
@@ -68,6 +117,15 @@ emitted in order, slow clients are disconnected when their send buffer exceeds
 ### camerad: `{"type":"camera", ...}` per frame
 `exposure_us`, `analogue_gain`, `colour_gains:[r,b]`, `fps` (rolling 1 s),
 `dropped` (frames not written because a consumer held the slot too long; always 0 with the drop-on-overwrite reader protocol, reported for completeness).
+Additional fields: `sensor_drops` (cumulative gaps in libcamera's frame
+sequence, i.e. frames lost before camerad saw them) and `conv_ms` (XRGB->NV12
+conversion + ring write time of this frame). `seq` is the ring seq; `ts_*` are
+the frame's SensorTimestamp and its realtime equivalent (offset re-sampled once
+per second).
+
+```
+{"type":"camera","seq":294,"ts_mono_ns":8126624315000,"ts_real_ns":1792603772832163915,"exposure_us":54262,"analogue_gain":480.000,"colour_gains":[1.4321,3.0155],"fps":20.01,"dropped":0,"sensor_drops":0,"conv_ms":12.39}
+```
 
 ### modeld: `{"type":"road", ...}` per model run (every frame it keeps up with)
 All distances in metres, device frame exactly as openpilot defines it: x forward,
