@@ -2,7 +2,7 @@
 
 Camera perception service for a **Xiaomi Poco F1 running postmarketOS**, in the
 spirit of [openpilot](https://github.com/commaai/openpilot) /
-[flowpilot](https://github.com/flowdriveai/flowpilot): the phone's rear camera
+[flowpilot](https://github.com/flowdriveai/flowpilot) (flowpilot is GPL-3.0, so it is a source of ideas only; nothing from it is copied): the phone's rear camera
 looks at the road and a small set of daemons turn the stream into structured
 road understanding, served over a local HTTP/WebSocket API.
 

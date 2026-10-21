@@ -24,3 +24,6 @@
 - [ ] car control integration (separate project; this API is the input)
 - [ ] GPU inference via ncnn/Vulkan if CPU fps is insufficient
 - [ ] newer openpilot vision/policy split models
+
+## Model choice note (2026-10-21)
+supercombo v0.9.7 is used first: single model, 54 ms fp32 on the phone, outputs lane lines, road edges, leads, plan, pose directly (docs/SUPERCOMBO_SPEC.md). openpilot v0.9.8–v0.11.1 split it into `driving_vision.onnx` + `driving_policy.onnx` with a 5 Hz history, which would allow running every 4th frame (less CPU) at the cost of a new parser; current master merged them again. Revisit when CPU budget becomes the problem.
