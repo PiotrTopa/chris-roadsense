@@ -140,12 +140,12 @@ class Fake:
         curv = 0.0004 * math.sin(0.3 * t)
         x = np.array(X_IDXS)
         lanes = []
-        for off, prob in ((5.4, 0.35), (1.8, 0.97), (-1.8, 0.93), (-5.4, 0.2)):
+        for off, prob in ((-5.4, 0.35), (-1.8, 0.97), (1.8, 0.93), (5.4, 0.2)):   # y right
             y = off + 0.5 * curv * x ** 2 + 0.1 * math.sin(t)
-            lanes.append({"x": X_IDXS, "y": y.round(3).tolist(), "z": [-CAM_HEIGHT] * 33,
+            lanes.append({"x": X_IDXS, "y": y.round(3).tolist(), "z": [CAM_HEIGHT] * 33,
                           "y_std": [0.1 + 0.002 * xi for xi in X_IDXS], "prob": prob})
-        edges = [{"x": X_IDXS, "y": (off + 0.5 * curv * x ** 2).round(3).tolist(), "z": [-CAM_HEIGHT] * 33,
-                  "y_std": [0.3] * 33} for off in (7.0, -3.5)]
+        edges = [{"x": X_IDXS, "y": (off + 0.5 * curv * x ** 2).round(3).tolist(), "z": [CAM_HEIGHT] * 33,
+                  "y_std": [0.3] * 33} for off in (-7.0, 3.5)]
         v = 20.0
         px = np.array([v * ti for ti in T_IDXS])
         zeros = [0.0] * 33

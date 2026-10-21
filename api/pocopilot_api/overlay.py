@@ -1,9 +1,8 @@
 """Draw road/sign overlays on a preview JPEG with Pillow.
 
-Model outputs are in the (calibrated) device frame as the contract defines it:
-x forward, y left, z up, origin at the camera. Projection:
-  p_frd   = diag(1,-1,-1) p_flu                (to openpilot's x fwd / y right / z down)
-  p_dev   = R(roll,pitch,yaw) p_frd            (openpilot rot_from_euler: Rz(yaw) Ry(pitch) Rx(roll))
+Model outputs are in openpilot's (calibrated) device frame, passed through by modeld:
+x forward, y right, z down, origin at the camera. Projection:
+  p_dev   = R(roll,pitch,yaw) p_calib          (openpilot rot_from_euler: Rz(yaw) Ry(pitch) Rx(roll))
   p_cam   = [[0,1,0],[0,0,1],[1,0,0]] p_dev    (camera: x right, y down, z forward)
   u,v     = f*X/Z + cx, f*Y/Z + cy, then scaled from sensor size to preview size.
 """
@@ -13,7 +12,6 @@ import math
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-FLU_TO_FRD = np.diag([1.0, -1.0, -1.0])
 VIEW_FROM_DEVICE = np.array([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]])
 MIN_Z = 1.0
 LEAD_W, LEAD_H = 1.8, 1.5
@@ -45,7 +43,7 @@ class Projector:
         self.height = float(calib.get("height_m") or 1.22)
         self.m = VIEW_FROM_DEVICE @ rot_from_euler(float(calib.get("roll") or 0.0),
                                                    float(calib.get("pitch") or 0.0),
-                                                   float(calib.get("yaw") or 0.0)) @ FLU_TO_FRD
+                                                   float(calib.get("yaw") or 0.0))
 
     def project(self, x, y, z):
         """Arrays of device-frame points -> list of (u,v) for points in front of the camera."""
@@ -79,7 +77,7 @@ def draw(img, road=None, signs=None, calib=None, intrinsics=(1500.0, 960.0, 540.
         if plan.get("x"):
             x = np.asarray(plan["x"], float)
             y = np.asarray(plan.get("y") or np.zeros_like(x), float)
-            z = np.asarray(plan.get("z") or np.zeros_like(x), float) - pr.height
+            z = np.asarray(plan.get("z") or np.zeros_like(x), float) + pr.height   # path on the ground (z down)
             left = pr.project(x, y + PATH_HALF_W, z)
             right = pr.project(x, y - PATH_HALF_W, z)
             if len(left) >= 2 and len(right) >= 2:
@@ -98,8 +96,8 @@ def draw(img, road=None, signs=None, calib=None, intrinsics=(1500.0, 960.0, 540.
             if p < 0.3 or not lead.get("x"):
                 continue
             lx, ly = float(lead["x"][0]), float((lead.get("y") or [0.0])[0])
-            zg = -pr.height
-            c = pr.project([lx] * 4, [ly + LEAD_W / 2, ly - LEAD_W / 2] * 2, [zg, zg, zg + LEAD_H, zg + LEAD_H])
+            zg = pr.height                              # ground, z down
+            c = pr.project([lx] * 4, [ly - LEAD_W / 2, ly + LEAD_W / 2] * 2, [zg, zg, zg - LEAD_H, zg - LEAD_H])
             if len(c) == 4:
                 us, vs = [q[0] for q in c], [q[1] for q in c]
                 col = (255, 200, 0, int(80 + 175 * p))

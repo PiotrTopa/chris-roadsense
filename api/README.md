@@ -14,7 +14,7 @@ cd api && python3 -m pocopilot_api --rundir /run/pocopilot --port 8080
 | Option / env | Default | |
 |---|---|---|
 | `--rundir` / `POCOPILOT_RUNDIR` | `/run/pocopilot` | daemon sockets and `preview.jpg` |
-| `--datadir` / `POCOPILOT_DATADIR` | `<rundir>/../var/lib/pocopilot` | `signs.jsonl` (ended sign tracks) is appended here if the directory exists |
+| `--datadir` / `POCOPILOT_DATADIR` | `/var/lib/pocopilot` | `signs.jsonl` (ended sign tracks) is appended here if the directory exists |
 | `--ring` / `POCOPILOT_RING` | `/dev/shm/pocopilot-frames` | frame ring; only its header is read (intrinsics for `/v1/camera` and overlays) |
 | `--port` / `POCOPILOT_API_PORT` | `8080` | |
 
@@ -28,13 +28,12 @@ signs polled once per second. CORS allows all origins.
 
 ## Overlay projection
 
-Model outputs are in the device frame of the contract (x forward, y left, z up,
-origin at the camera). They are converted to openpilot's x forward / y right / z down,
-rotated by the `calib` message's roll/pitch/yaw (openpilot `rot_from_euler`), mapped
+Model outputs are in openpilot's device frame, passed through unconverted by modeld
+(x forward, y right, z down, origin at the camera). They are rotated by the `calib` message's roll/pitch/yaw (openpilot `rot_from_euler`), mapped
 to the camera frame (x right, y down, z forward) and projected with focal_px/cx/cy
 from the ring header (fallback: `calib.focal_px`, image centre), scaled to the
 preview size (960x540 for a 1920x1080 sensor). The plan path is drawn on the
-ground (`plan.z - calib.height_m`); lane lines and road edges use their own z.
+ground (`plan.z + calib.height_m`); lane lines and road edges use their own z.
 Only lead hypothesis 0 (now) is drawn.
 
 ## Testing without hardware
