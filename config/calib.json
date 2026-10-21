@@ -1,0 +1,7 @@
+{
+ "pitch": 0.0,
+ "yaw": 0.0,
+ "roll": 0.0,
+ "height_m": 1.22,
+ "_comment": "radians, openpilot convention (docs/SUPERCOMBO_SPEC.md); height of the camera above the road in metres"
+}

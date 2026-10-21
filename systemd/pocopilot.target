@@ -1,0 +1,6 @@
+[Unit]
+Description=pocopilot perception stack (camerad, modeld, signd, api)
+Wants=pocopilot-camerad.service pocopilot-modeld.service pocopilot-signd.service pocopilot-api.service
+
+[Install]
+WantedBy=multi-user.target

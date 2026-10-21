@@ -1,0 +1,7 @@
+{
+ "focal_px": 1470.0,
+ "cx": 960.0,
+ "cy": 540.0,
+ "little_cores": true,
+ "_comment": "IMX363 4.3 mm lens, 5.64 mm sensor width -> ~1470 px at 1920 wide; refine with a checkerboard. Frame rate is the --fps flag in the systemd unit."
+}

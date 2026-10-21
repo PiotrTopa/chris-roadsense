@@ -1,0 +1,22 @@
+[Unit]
+Description=pocopilot camerad (camera capture -> frame ring)
+PartOf=pocopilot.target
+After=
+
+
+[Service]
+Type=simple
+# Phase 1: root. The frame ring lives in /dev/shm and logind would remove a
+# normal user's shm segments at logout (RemoveIPC); a system user comes later.
+Environment=POCOPILOT_RUNDIR=/run/pocopilot
+Environment=POCOPILOT_CONFIG_DIR=/etc/pocopilot
+RuntimeDirectory=pocopilot
+RuntimeDirectoryPreserve=yes
+StateDirectory=pocopilot
+ExecStart=/usr/local/bin/camerad --fps 20
+Restart=always
+RestartSec=2
+Nice=-5
+
+[Install]
+WantedBy=pocopilot.target

@@ -1,11 +1,12 @@
 [Unit]
 Description=pocopilot API (HTTP/WebSocket/MJPEG fan-out over the daemon sockets)
-After=network.target
+After=network.target pocopilot-camerad.service
+PartOf=pocopilot.target
 
 [Service]
 Type=simple
 # TODO: dedicated pocopilot user once it exists
-User=user
+# User=root for now (reads the root-owned sockets/ring; see the daemon units)
 Environment=POCOPILOT_RUNDIR=/run/pocopilot
 Environment=POCOPILOT_DATADIR=/var/lib/pocopilot
 Environment=PYTHONPATH=/usr/local/lib/pocopilot/api
@@ -14,4 +15,4 @@ Restart=always
 RestartSec=2
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=pocopilot.target
