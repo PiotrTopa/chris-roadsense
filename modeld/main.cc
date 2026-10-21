@@ -9,7 +9,9 @@
 #include <signal.h>
 #include <sys/stat.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -37,7 +39,10 @@ struct Options {
     std::string rundir;
     std::string ring;
     std::string calib_path;
+    Options() { sc.allow_spinning = false; }  // spinning keeps 4 big cores busy between rate-capped runs (+10 C)
     uint64_t max_runs = 0;
+    double max_hz = 20;              // cap on model runs per second (pairs stay 50 ms apart; extra pairs skipped)
+    int throttle_mc = 80000;         // hottest thermal zone (millidegrees C) above which the rate is halved
     double stats_s = 10;
     bool verbose = false;
 };
@@ -65,16 +70,20 @@ bool parse_cpus(const std::string &s, cpu_set_t *set) {
 void usage() {
     fprintf(stderr,
             "usage: modeld [--model PATH] [--threads N] [--cpus LIST|none] [--prep-cpus LIST] [--rhd] [--steer-delay S]\n"
-            "              [--no-spin] [--runs N] [--stats S] [--verbose]\n"
+            "              [--max-hz N] [--throttle-temp MC] [--spin] [--runs N] [--stats S] [--verbose]\n"
             "  --model PATH   fp32 supercombo v0.9.7 (default /var/lib/pocopilot/models/supercombo-fp32.onnx)\n"
             "  --threads N    ORT intra-op threads (default 4)\n"
             "  --cpus LIST    CPU affinity for the whole process, e.g. 4-7 or 4,5 (default 4-7; none = no pinning)\n"
             "  --prep-cpus L  CPU affinity of the frame-prep thread only (default: same as --cpus), e.g. 0-3\n"
             "  --rhd          left-hand traffic (right-hand-drive car); default right-hand traffic\n"
             "  --steer-delay  lateral_control_params[1] in s (default 0.4 = 0.2 actuator + 0.2)\n"
+            "  --max-hz N     max model runs per second (default 20); pairs stay 50 ms apart, extra pairs are skipped\n"
+            "  --throttle-temp MC  hottest thermal zone (millidegrees C, 5 s average) above which the rate is halved,\n"
+            "                 restored below MC - 5000 (default 80000)\n"
+            "  --spin         let ORT intra-op threads spin between runs (default off: much cooler, ~+15 ms/run)\n"
             "  --runs N       exit after N model runs (testing)\n"
             "config: $POCOPILOT_CONFIG_DIR (default /etc/pocopilot)/modeld.json keys model, threads, cpus, prep_cpus, rhd,\n"
-            "        steer_delay (CLI wins); calibration from calib.json there (pitch, yaw, roll rad; height_m)\n"
+            "        steer_delay, max_hz, throttle_temp (CLI wins); calibration from calib.json there (pitch, yaw, roll rad; height_m)\n"
             "env: POCOPILOT_RUNDIR (default /run/pocopilot), POCOPILOT_RING (default /dev/shm/pocopilot-frames)\n");
 }
 
@@ -111,6 +120,24 @@ private:
     bool has_ = false;
     uint64_t skipped_ = 0;
 };
+
+// Hottest /sys/class/thermal/thermal_zone*/temp in millidegrees C, -1 if none readable.
+int hottest_zone_mc() {
+    int best = -1;
+    for (int i = 0; i < 64; ++i) {
+        char path[64];
+        snprintf(path, sizeof path, "/sys/class/thermal/thermal_zone%d/temp", i);
+        FILE *f = fopen(path, "r");
+        if (!f) {
+            if (i > 0 && errno == ENOENT) break;
+            continue;
+        }
+        int v;
+        if (fscanf(f, "%d", &v) == 1 && v > best && v < 200000) best = v;
+        fclose(f);
+    }
+    return best;
+}
 
 time_t file_mtime(const std::string &p) {
     struct stat st;
@@ -198,6 +225,8 @@ int main(int argc, char **argv) {
             if (json_string(s, "prep_cpus", &str)) opt.prep_cpus = str;
             if (json_number(s, "rhd", &v)) opt.sc.rhd = v != 0;
             if (json_number(s, "steer_delay", &v)) opt.sc.steer_delay = float(v);
+            if (json_number(s, "max_hz", &v)) opt.max_hz = v;
+            if (json_number(s, "throttle_temp", &v)) opt.throttle_mc = int(v);
         }
     }
     for (int i = 1; i < argc; ++i) {
@@ -215,7 +244,10 @@ int main(int argc, char **argv) {
         else if (a == "--prep-cpus") opt.prep_cpus = val();
         else if (a == "--rhd") opt.sc.rhd = true;
         else if (a == "--steer-delay") opt.sc.steer_delay = float(atof(val().c_str()));
+        else if (a == "--spin") opt.sc.allow_spinning = true;
         else if (a == "--no-spin") opt.sc.allow_spinning = false;
+        else if (a == "--max-hz") opt.max_hz = atof(val().c_str());
+        else if (a == "--throttle-temp") opt.throttle_mc = atoi(val().c_str());
         else if (a == "--runs") opt.max_runs = strtoull(val().c_str(), nullptr, 10);
         else if (a == "--stats") opt.stats_s = atof(val().c_str());
         else if (a == "--verbose" || a == "-v") opt.verbose = true;
@@ -274,10 +306,42 @@ int main(int argc, char **argv) {
     double win_model = 0, win_prep = 0, win_model_max = 0;
     auto win_t0 = std::chrono::steady_clock::now();
     uint64_t win_skipped0 = 0;
+    // Rate cap + thermal guard: the next run may start at next_run; pairs arriving earlier are
+    // overwritten by newer ones in Shared (counted as skipped), so pair spacing never stretches.
+    const double max_hz = opt.max_hz > 0 ? opt.max_hz : 20;
+    // The hottest zone reads ~20 C higher during an inference burst than between runs, so the guard
+    // works on a smoothed value: sampled every 250 ms, exponential average with a 5 s time constant.
+    bool throttled = false;
+    int raw_mc = hottest_zone_mc();
+    double temp_mc = raw_mc;
+    auto next_temp = std::chrono::steady_clock::now();
+    auto next_run = next_temp;
     Pair p;
     while (g_run) {
         srv.service();
+        auto now = std::chrono::steady_clock::now();
+        if (now >= next_temp) {
+            next_temp = now + std::chrono::milliseconds(250);
+            raw_mc = hottest_zone_mc();
+            if (raw_mc >= 0) temp_mc = temp_mc < 0 ? raw_mc : temp_mc + 0.05 * (raw_mc - temp_mc);
+            if (!throttled && temp_mc >= opt.throttle_mc) {
+                throttled = true;
+                fprintf(stderr, "modeld: thermal %.1f C >= %.1f C, halving the model rate\n", temp_mc / 1000.0,
+                        opt.throttle_mc / 1000.0);
+            } else if (throttled && temp_mc >= 0 && temp_mc < opt.throttle_mc - 5000) {
+                throttled = false;
+                fprintf(stderr, "modeld: thermal %.1f C, rate restored\n", temp_mc / 1000.0);
+            }
+        }
+        const double eff_hz = throttled ? max_hz / 2 : max_hz;
+        if (now < next_run) {
+            std::this_thread::sleep_for(std::min(std::chrono::duration<double>(next_run - now),
+                                                 std::chrono::duration<double>(0.02)));
+            continue;
+        }
         if (!sh.take(&p, 20)) continue;
+        next_run = std::chrono::steady_clock::now() +
+                   std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / eff_hz));
         if (!calib_published || !(p.cur->calib == pub_calib) || !(p.cur->k == pub_k)) {
             pub_calib = p.cur->calib;
             pub_k = p.cur->k;
@@ -303,6 +367,9 @@ int main(int argc, char **argv) {
         m.v_ego = model->v_ego();
         m.steer_delay = model->steer_delay();
         m.frames_skipped = sh.skipped();
+        m.thermal_c = temp_mc >= 0 ? temp_mc / 1000.0 : -1;
+        m.effective_hz = eff_hz;
+        m.rate_limited = throttled;
         srv.publish(road_json(model->outputs(), m));
         ++runs;
         ++win_runs;
@@ -313,9 +380,9 @@ int main(int argc, char **argv) {
         if (el >= opt.stats_s) {
             fprintf(stderr,
                     "modeld: %.1f runs/s, model %.1f ms avg %.1f max, prep %.1f ms, pair dt %.0f ms, stream %.1f ms, "
-                    "skipped %llu, clients %zu\n",
+                    "skipped %llu, clients %zu, thermal_c %.1f, effective_hz %.1f\n",
                     win_runs / el, win_model / win_runs, win_model_max, win_prep / win_runs, m.pair_dt_ms,
-                    p.stream_dt_ms, (unsigned long long)(m.frames_skipped - win_skipped0), srv.client_count());
+                    p.stream_dt_ms, (unsigned long long)(m.frames_skipped - win_skipped0), srv.client_count(), m.thermal_c, eff_hz);
             win_t0 = std::chrono::steady_clock::now();
             win_runs = 0;
             win_model = win_prep = win_model_max = 0;

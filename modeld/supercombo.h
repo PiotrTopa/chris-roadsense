@@ -100,6 +100,9 @@ struct RoadMeta {
     double pair_dt_ms = 0;  // time between the two frames of the pair
     float v_ego = 0, steer_delay = 0;
     uint64_t frames_skipped = 0;  // selected frames the model did not run on (cumulative)
+    double thermal_c = -1;        // hottest thermal zone (C), < 0 = unknown (null)
+    double effective_hz = 0;      // current run-rate cap (max_hz, halved while thermally throttled)
+    bool rate_limited = false;    // true while the thermal guard has halved the rate
 };
 std::string road_json(const RoadOutputs &o, const RoadMeta &m);
 

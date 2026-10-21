@@ -272,6 +272,9 @@ std::string road_json(const RoadOutputs &o, const RoadMeta &m) {
     j.key("pair_dt_ms"), j.num(m.pair_dt_ms), j.s += ',';
     j.key("frames_skipped"), j.s += std::to_string(m.frames_skipped), j.s += ',';
     j.key("v_ego"), j.num(m.v_ego), j.s += ',';
+    j.key("thermal_c"), j.num(m.thermal_c >= 0 ? m.thermal_c : NAN), j.s += ',';
+    j.key("effective_hz"), j.num(m.effective_hz), j.s += ',';
+    j.key("rate_limited"), j.s += m.rate_limited ? "true" : "false", j.s += ',';
     j.key("steer_delay"), j.num(m.steer_delay), j.s += ',';
     j.key("valid"), j.s += o.finite ? "true" : "false", j.s += ',';
 
