@@ -1,0 +1,18 @@
+[Unit]
+Description=roadsense API (HTTP/WebSocket/MJPEG fan-out over the daemon sockets)
+After=network.target roadsense-camerad.service
+PartOf=roadsense.target
+
+[Service]
+Type=simple
+# TODO: dedicated roadsense user once it exists
+# User=root for now (reads the root-owned sockets/ring; see the daemon units)
+Environment=ROADSENSE_RUNDIR=/run/roadsense
+Environment=ROADSENSE_DATADIR=/var/lib/roadsense
+Environment=PYTHONPATH=/usr/local/lib/roadsense/api
+ExecStart=/usr/bin/python3 -m roadsense_api --port 8080
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=roadsense.target

@@ -21,7 +21,7 @@
 #include "camerad/nv12.h"
 #include "pipeline.h"
 
-using namespace pocopilot;
+using namespace roadsense;
 
 namespace {
 
@@ -32,7 +32,7 @@ void usage() {
             "         [--model PATH] [--threads N] [--rhd] [--steer-delay S] [--start N] [--max-frames N]\n"
             "         [--dump-input DIR] [--dump-runs N] [--dump-tensors]\n"
             "  defaults: fps 20, focal 1470*W/1920 (camerad default), cx W/2, cy H/2, calib from\n"
-            "  $POCOPILOT_CONFIG_DIR/calib.json if present, model /var/lib/pocopilot/models/supercombo-fp32.onnx\n"
+            "  $ROADSENSE_CONFIG_DIR/calib.json if present, model /var/lib/roadsense/models/supercombo-fp32.onnx\n"
             "  --dump-input DIR  write the packed model inputs of the first --dump-runs runs (default 3) as PGM:\n"
             "                    <run>_{input_imgs,big_input_imgs}_yuv.pgm (current frame, Y 512x256 over U|V)\n"
             "                    and <run>_{...}_ch.pgm (all 12 channels, 3x4 tiles of 256x128)\n"

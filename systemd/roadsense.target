@@ -1,0 +1,6 @@
+[Unit]
+Description=roadsense perception stack (camerad, modeld, api; optional sign provider, e.g. roadsense-signd from roadsense-signs)
+Wants=roadsense-camerad.service roadsense-modeld.service roadsense-api.service
+
+[Install]
+WantedBy=multi-user.target

@@ -5,7 +5,7 @@
 
 #include "supercombo_layout.h"
 
-namespace pocopilot {
+namespace roadsense {
 
 Mat3 mat3_mul(const Mat3 &a, const Mat3 &b) {
     Mat3 r{};
@@ -154,4 +154,4 @@ void FramePacker::pack(const uint8_t *y, int y_stride, const uint8_t *uv, int uv
     pack_yuv6(y_.data(), u_.data(), v_.data(), out6);
 }
 
-}  // namespace pocopilot
+}  // namespace roadsense

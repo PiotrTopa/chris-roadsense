@@ -1,5 +1,5 @@
 #!/bin/sh
-# Download the model files pocopilot needs into ./models (not committed).
+# Download the model files roadsense needs into ./models (not committed).
 set -eu
 cd "$(dirname "$0")/.."
 mkdir -p models

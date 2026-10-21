@@ -25,7 +25,7 @@
 #include "json_server.h"
 #include "pipeline.h"
 
-using namespace pocopilot;
+using namespace roadsense;
 
 namespace {
 
@@ -71,7 +71,7 @@ void usage() {
     fprintf(stderr,
             "usage: modeld [--model PATH] [--threads N] [--cpus LIST|none] [--prep-cpus LIST] [--rhd] [--steer-delay S]\n"
             "              [--max-hz N] [--throttle-temp MC] [--spin] [--runs N] [--stats S] [--verbose]\n"
-            "  --model PATH   fp32 supercombo v0.9.7 (default /var/lib/pocopilot/models/supercombo-fp32.onnx)\n"
+            "  --model PATH   fp32 supercombo v0.9.7 (default /var/lib/roadsense/models/supercombo-fp32.onnx)\n"
             "  --threads N    ORT intra-op threads (default 4)\n"
             "  --cpus LIST    CPU affinity for the whole process, e.g. 4-7 or 4,5 (default 4-7; none = no pinning)\n"
             "  --prep-cpus L  CPU affinity of the frame-prep thread only (default: same as --cpus), e.g. 0-3\n"
@@ -82,9 +82,9 @@ void usage() {
             "                 restored below MC - 5000 (default 80000)\n"
             "  --spin         let ORT intra-op threads spin between runs (default off: much cooler, ~+15 ms/run)\n"
             "  --runs N       exit after N model runs (testing)\n"
-            "config: $POCOPILOT_CONFIG_DIR (default /etc/pocopilot)/modeld.json keys model, threads, cpus, prep_cpus, rhd,\n"
+            "config: $ROADSENSE_CONFIG_DIR (default /etc/roadsense)/modeld.json keys model, threads, cpus, prep_cpus, rhd,\n"
             "        steer_delay, max_hz, throttle_temp (CLI wins); calibration from calib.json there (pitch, yaw, roll rad; height_m)\n"
-            "env: POCOPILOT_RUNDIR (default /run/pocopilot), POCOPILOT_RING (default /dev/shm/pocopilot-frames)\n");
+            "env: ROADSENSE_RUNDIR (default /run/roadsense), ROADSENSE_RING (default /dev/shm/roadsense-frames)\n");
 }
 
 struct Pair {
@@ -256,8 +256,8 @@ int main(int argc, char **argv) {
             return a == "--help" || a == "-h" ? 0 : 2;
         }
     }
-    const char *rd = getenv("POCOPILOT_RUNDIR");
-    opt.rundir = (rd && *rd) ? rd : "/run/pocopilot";
+    const char *rd = getenv("ROADSENSE_RUNDIR");
+    opt.rundir = (rd && *rd) ? rd : "/run/roadsense";
     opt.ring = ring_path();
     opt.calib_path = config_dir() + "/calib.json";
 

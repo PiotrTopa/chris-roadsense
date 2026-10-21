@@ -4,7 +4,7 @@ import json
 import logging
 import os
 
-log = logging.getLogger("pocopilot_api.sockets")
+log = logging.getLogger("roadsense_api.sockets")
 LINE_LIMIT = 16 * 1024 * 1024
 
 

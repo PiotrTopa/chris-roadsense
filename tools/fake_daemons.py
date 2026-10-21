@@ -3,9 +3,9 @@
 
 Creates <rundir>/{camerad,modeld,signd}.sock, emits contract-shaped JSON at
 30/5/10 Hz, writes <rundir>/preview.jpg (960x540, every 3rd frame) and a
-header-only frame ring <rundir>/pocopilot-frames (pass --ring to the api).
+header-only frame ring <rundir>/roadsense-frames (pass --ring to the api).
 
-    python3 tools/fake_daemons.py --rundir /tmp/pocopilot-fake
+    python3 tools/fake_daemons.py --rundir /tmp/roadsense-fake
 """
 import argparse
 import asyncio
@@ -90,12 +90,12 @@ class Fake:
 
     def write_ring(self):
         slot = 4096 + ((W * H * 3 // 2 + 4095) // 4096) * 4096
-        hdr = struct.pack(RING_FMT, b"PPFRAME1", 4096, 6, slot, W, H, W, W, 1, FOCAL, CX, CY,
+        hdr = struct.pack(RING_FMT, b"RSFRAME1", 4096, 6, slot, W, H, W, W, 1, FOCAL, CX, CY,
                           self.seq, os.getpid())
-        tmp = os.path.join(self.rundir, ".pocopilot-frames.tmp")
+        tmp = os.path.join(self.rundir, ".roadsense-frames.tmp")
         with open(tmp, "wb") as f:
             f.write(hdr.ljust(4096, b"\0"))
-        os.replace(tmp, os.path.join(self.rundir, "pocopilot-frames"))
+        os.replace(tmp, os.path.join(self.rundir, "roadsense-frames"))
 
     # ---- camerad ------------------------------------------------------------
     @staticmethod
@@ -208,7 +208,7 @@ class Fake:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--rundir", default=os.environ.get("POCOPILOT_RUNDIR", "/tmp/pocopilot-fake"))
+    ap.add_argument("--rundir", default=os.environ.get("ROADSENSE_RUNDIR", "/tmp/roadsense-fake"))
     a = ap.parse_args()
     os.makedirs(a.rundir, exist_ok=True)
     try:

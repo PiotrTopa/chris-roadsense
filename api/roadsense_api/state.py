@@ -27,7 +27,7 @@ def read_ring_header(path):
     except (OSError, struct.error):
         return None
     hdr = dict(zip(RING_FIELDS, vals))
-    if hdr["magic"] != b"PPFRAME1":
+    if hdr["magic"] != b"RSFRAME1":
         return None
     hdr["magic"] = hdr["magic"].decode()
     return hdr

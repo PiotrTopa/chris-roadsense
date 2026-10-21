@@ -8,7 +8,7 @@
 
 #include <cstddef>
 
-namespace pocopilot::sc {
+namespace roadsense::sc {
 
 // ---- inputs (spec section 1) -----------------------------------------------
 constexpr int kImgC = 12, kImgH = 128, kImgW = 256;               // input_imgs / big_input_imgs [1,12,128,256]
@@ -96,4 +96,4 @@ constexpr float META_T_IDXS[kMetaDisengageN] = {2.f, 4.f, 6.f, 8.f, 10.f};
 // Model clock: 20 Hz, image pair 50 ms apart (1.1 "Timing assumption").
 constexpr double kModelPeriodS = 0.05;
 
-}  // namespace pocopilot::sc
+}  // namespace roadsense::sc

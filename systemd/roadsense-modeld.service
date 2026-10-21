@@ -1,0 +1,22 @@
+[Unit]
+Description=roadsense modeld (openpilot supercombo road model)
+PartOf=roadsense.target
+After=roadsense-camerad.service
+Wants=roadsense-camerad.service
+
+[Service]
+Type=simple
+# Phase 1: root. The frame ring lives in /dev/shm and logind would remove a
+# normal user's shm segments at logout (RemoveIPC); a system user comes later.
+Environment=ROADSENSE_RUNDIR=/run/roadsense
+Environment=ROADSENSE_CONFIG_DIR=/etc/roadsense
+RuntimeDirectory=roadsense
+RuntimeDirectoryPreserve=yes
+StateDirectory=roadsense
+ExecStart=/usr/local/bin/modeld --model /var/lib/roadsense/models/supercombo-fp32.onnx --cpus 4-7 --prep-cpus 0-3 --max-hz 5 --throttle-temp 75000 --stats 10
+Restart=always
+RestartSec=2
+Nice=-5
+
+[Install]
+WantedBy=roadsense.target

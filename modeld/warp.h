@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace pocopilot {
+namespace roadsense {
 
 using Mat3 = std::array<double, 9>;  // row-major
 
@@ -94,4 +94,4 @@ void pack_yuv6(const uint8_t *y, const uint8_t *u, const uint8_t *v, float *out)
 // Inverse of pack_yuv6 (for dumps/tests).
 void unpack_yuv6(const float *in, uint8_t *y, uint8_t *u, uint8_t *v);
 
-}  // namespace pocopilot
+}  // namespace roadsense

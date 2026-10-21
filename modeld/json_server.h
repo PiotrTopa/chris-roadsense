@@ -18,7 +18,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-namespace pocopilot {
+namespace roadsense {
 
 class GreetingJsonServer {
 public:
@@ -150,4 +150,4 @@ private:
     std::vector<Client> clients_;
 };
 
-}  // namespace pocopilot
+}  // namespace roadsense

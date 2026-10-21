@@ -1,4 +1,4 @@
-// ringdump: read the latest frame from the pocopilot frame ring via RingReader
+// ringdump: read the latest frame from the roadsense frame ring via RingReader
 // and write it as <prefix>.pgm (Y plane) and <prefix>.ppm (RGB, full-range
 // BT.601 inverse of camerad's NV12). Prints the ring header.
 //
@@ -12,7 +12,7 @@
 
 #include "ring.h"
 
-using namespace pocopilot;
+using namespace roadsense;
 
 static uint8_t clamp8(int v) { return uint8_t(v < 0 ? 0 : (v > 255 ? 255 : v)); }
 

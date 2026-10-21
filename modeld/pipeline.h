@@ -11,9 +11,9 @@
 #include "supercombo.h"
 #include "warp.h"
 
-namespace pocopilot {
+namespace roadsense {
 
-// Directory of calib.json / modeld.json: POCOPILOT_CONFIG_DIR or /etc/pocopilot.
+// Directory of calib.json / modeld.json: ROADSENSE_CONFIG_DIR or /etc/roadsense.
 std::string config_dir();
 // Reads {"pitch":..,"yaw":..,"roll":..,"height_m":..} (radians, metres). Missing file or keys keep the
 // defaults (0, 0, 0, 1.22). Returns true if the file was read.
@@ -73,4 +73,4 @@ std::string calib_json(const Calib &c, const Intrinsics &k, uint64_t seq, const 
 int64_t mono_ns();
 int64_t real_ns();
 
-}  // namespace pocopilot
+}  // namespace roadsense

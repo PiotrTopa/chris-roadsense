@@ -8,14 +8,14 @@ from .server import make_app
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="pocopilot_api", description="pocopilot HTTP/WebSocket API")
-    ap.add_argument("--rundir", default=os.environ.get("POCOPILOT_RUNDIR", "/run/pocopilot"))
-    ap.add_argument("--datadir", default=os.environ.get("POCOPILOT_DATADIR", "/var/lib/pocopilot"),
+    ap = argparse.ArgumentParser(prog="roadsense_api", description="roadsense HTTP/WebSocket API")
+    ap.add_argument("--rundir", default=os.environ.get("ROADSENSE_RUNDIR", "/run/roadsense"))
+    ap.add_argument("--datadir", default=os.environ.get("ROADSENSE_DATADIR", "/var/lib/roadsense"),
                     help="where signs.jsonl is appended (skipped if the directory is missing)")
-    ap.add_argument("--ring", default=os.environ.get("POCOPILOT_RING", "/dev/shm/pocopilot-frames"),
+    ap.add_argument("--ring", default=os.environ.get("ROADSENSE_RING", "/dev/shm/roadsense-frames"),
                     help="frame ring file, read for its header only")
     ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument("--port", type=int, default=int(os.environ.get("POCOPILOT_API_PORT", 8080)))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("ROADSENSE_API_PORT", 8080)))
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,

@@ -1,7 +1,7 @@
 """End-to-end test: tools/fake_daemons.py + the api as subprocesses, every endpoint exercised.
 
     cd <repo> && python3 -m unittest discover -s api/tests -v
-Env: POCOPILOT_RUNDIR (default: a temp dir), POCOPILOT_TEST_PORT (default: a free port), OVERLAY_OUT (save one /preview frame there).
+Env: ROADSENSE_RUNDIR (default: a temp dir), ROADSENSE_TEST_PORT (default: a free port), OVERLAY_OUT (save one /preview frame there).
 """
 import asyncio
 import json
@@ -27,16 +27,16 @@ def free_port():
 class ApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.mkdtemp(prefix="pocopilot-test-")
-        cls.rundir = os.environ.get("POCOPILOT_RUNDIR") or os.path.join(cls.tmp, "run")
+        cls.tmp = tempfile.mkdtemp(prefix="roadsense-test-")
+        cls.rundir = os.environ.get("ROADSENSE_RUNDIR") or os.path.join(cls.tmp, "run")
         cls.datadir = os.path.join(cls.tmp, "data")
         os.makedirs(cls.rundir, exist_ok=True)
         os.makedirs(cls.datadir)
-        cls.port = int(os.environ.get("POCOPILOT_TEST_PORT") or free_port())
+        cls.port = int(os.environ.get("ROADSENSE_TEST_PORT") or free_port())
         cls.base = f"http://127.0.0.1:{cls.port}"
         cls.api = subprocess.Popen(
-            [sys.executable, "-m", "pocopilot_api", "--rundir", cls.rundir, "--datadir", cls.datadir,
-             "--ring", os.path.join(cls.rundir, "pocopilot-frames"), "--host", "127.0.0.1", "--port", str(cls.port)],
+            [sys.executable, "-m", "roadsense_api", "--rundir", cls.rundir, "--datadir", cls.datadir,
+             "--ring", os.path.join(cls.rundir, "roadsense-frames"), "--host", "127.0.0.1", "--port", str(cls.port)],
             cwd=os.path.join(REPO, "api"))
         cls.start_fake()
         cls.wait(lambda: all(d["connected"] for d in cls.get("/v1/health")["daemons"].values()), 15)

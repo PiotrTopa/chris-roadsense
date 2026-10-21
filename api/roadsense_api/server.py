@@ -11,10 +11,10 @@ from . import overlay
 from .sockets import start_clients
 from .state import DAEMONS, State
 
-log = logging.getLogger("pocopilot_api.server")
+log = logging.getLogger("roadsense_api.server")
 PREVIEW_POLL_S = 0.015
 WS_QUEUE_MAX = 512
-BOUNDARY = "ppframe"
+BOUNDARY = "rsframe"
 
 
 def _json(data, status=200):
@@ -225,7 +225,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True):
 
 INDEX_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>pocopilot</title>
+<title>roadsense</title>
 <style>
 body{margin:0;background:#111;color:#ddd;font:14px/1.4 monospace}
 main{display:flex;flex-wrap:wrap;gap:12px;padding:12px}

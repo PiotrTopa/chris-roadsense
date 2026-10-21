@@ -13,10 +13,10 @@
 
 #include "supercombo_layout.h"
 
-namespace pocopilot {
+namespace roadsense {
 
 struct SupercomboOptions {
-    std::string model_path = "/var/lib/pocopilot/models/supercombo-fp32.onnx";
+    std::string model_path = "/var/lib/roadsense/models/supercombo-fp32.onnx";
     int threads = 4;           // intra-op threads (4 big cores on the SD845)
     bool rhd = false;          // false: right-hand traffic (LHD car, e.g. Poland) -> traffic_convention [1,0]
     float steer_delay = sc::kDefaultSteerDelay;
@@ -106,4 +106,4 @@ struct RoadMeta {
 };
 std::string road_json(const RoadOutputs &o, const RoadMeta &m);
 
-}  // namespace pocopilot
+}  // namespace roadsense

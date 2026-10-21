@@ -1,18 +1,24 @@
 # Architecture and inter-process contract
 
-Four processes, all started by systemd on the phone, all talking through two
-simple mechanisms: a shared-memory frame ring (camerad -> consumers) and
-newline-delimited JSON over Unix stream sockets (every daemon -> api / tools).
-No message broker, no protobuf, no capnp. `nc -U /run/pocopilot/modeld.sock`
+Three core processes (camerad, modeld, api) plus any number of external
+consumers such as a sign provider, all talking through two simple mechanisms: a
+shared-memory frame ring (camerad -> consumers) and newline-delimited JSON over
+Unix stream sockets (every daemon -> api / tools). These two mechanisms are the
+whole contract: a process that writes the ring as described below is a valid
+camerad (any camera, any device), and a process that reads the ring and serves
+`<rundir>/signd.sock` is a valid sign provider. Nothing else couples the
+processes; they share no libraries beyond the header-only `camerad/ring.h` and
+`camerad/jsonsock.h`, which exist for convenience.
+No message broker, no protobuf, no capnp. `nc -U /run/roadsense/modeld.sock`
 must always be a valid debugging tool.
 
 ```
-camerad ──frame ring (shm)──┬──> modeld ──JSON──┐
-                            └──> signd  ──JSON──┼──> api ──> HTTP / WebSocket / MJPEG
-camerad ──JSON (frame meta)─────────────────────┘
+camerad ──frame ring (shm)──┬──> modeld ─────────────────JSON──┐
+                            └──> sign provider (external) ─JSON──┼──> api ──> HTTP / WebSocket / MJPEG
+camerad ──JSON (frame meta)──────────────────────────────────────┘
 ```
 
-## Frame ring (`/dev/shm/pocopilot-frames`)
+## Frame ring (`/dev/shm/roadsense-frames`)
 
 A single file created by camerad, mmapped by everyone else. Little-endian,
 all offsets in bytes, header is 4096 bytes. camerad builds a fresh file under a
@@ -20,7 +26,7 @@ temporary name and `rename()`s it over the path at start-up (never truncates a
 mapped file, so old readers cannot SIGBUS); readers detect the new inode and
 remap (`RingReader` in `camerad/ring.h` does this). Reference implementation of
 everything in this section: `camerad/ring.h` (header-only, `RingWriter` /
-`RingReader`). Tests may override the path with env `POCOPILOT_RING`.
+`RingReader`). Tests may override the path with env `ROADSENSE_RING`.
 
 Pixel data: NV12, **BT.601 full range** (JFIF: Y 0..255, Cb/Cr 0..255 centred
 on 128; `Y = 0.299R + 0.587G + 0.114B`, `Cb = -0.168736R - 0.331264G + 0.5B + 128`,
@@ -29,7 +35,7 @@ ISP delivers them, chroma = box average of each 2x2 block.
 
 ```
 struct RingHeader {            // offset 0
-  char     magic[8];           // "PPFRAME1"
+  char     magic[8];           // "RSFRAME1"
   uint32_t header_size;        // 4096
   uint32_t slot_count;         // 6
   uint32_t slot_size;          // bytes per slot incl. SlotHeader, 4096-aligned
@@ -68,13 +74,13 @@ re-read that slot's `seq`; if it changed the slot was overwritten mid-read,
 drop the frame. Readers poll `write_seq` with a 1-2 ms sleep; there is no
 notification channel (30 fps makes polling cheap).
 
-camerad also writes a JPEG of every Nth frame to `/run/pocopilot/preview.jpg`
+camerad also writes a JPEG of every Nth frame to `/run/roadsense/preview.jpg`
 (atomic rename) for the MJPEG endpoint, N configurable (default 3): 960x540
 (2x box downscale of the NV12 frame), baseline 4:2:0, quality 80, ~110 KB.
 If the encoder is still busy with the previous preview the frame is skipped.
 
-Run directory: `/run/pocopilot`, overridden by env `POCOPILOT_RUNDIR` for
-every daemon (`/tmp/pocopilot` for development).
+Run directory: `/run/roadsense`, overridden by env `ROADSENSE_RUNDIR` for
+every daemon (`/tmp/roadsense` for development).
 
 **/dev/shm and logind:** systemd-logind's default `RemoveIPC=yes` deletes a
 regular (uid >= 1000) user's files in `/dev/shm` when that user's last session
@@ -83,7 +89,7 @@ The systemd units must therefore run camerad as a system user (uid < 1000) or
 root, or logind needs `RemoveIPC=no`. During development, run camerad and its
 readers inside the same login session.
 
-### camerad configuration (`/etc/pocopilot/camera.json`, env `POCOPILOT_CONFIG_DIR`)
+### camerad configuration (`/etc/roadsense/camera.json`, env `ROADSENSE_CONFIG_DIR`)
 
 Flat JSON object of scalars, every key optional:
 
@@ -105,7 +111,7 @@ unlink the socket.
 
 ## JSON sockets
 
-Each daemon listens on `/run/pocopilot/<name>.sock` (SOCK_STREAM). Clients
+Each daemon listens on `/run/roadsense/<name>.sock` (SOCK_STREAM). Clients
 connect and receive one JSON object per line, newest-first never: messages are
 emitted in order, slow clients are disconnected when their send buffer exceeds
 1 MiB. Every message has:
@@ -150,18 +156,32 @@ in this frame, no axis conversion). Times in seconds.
 Exact index tables come from openpilot v0.9.7 `selfdrive/modeld/constants.py`
 and are mirrored in `modeld/supercombo_layout.h`.
 
-### signd: `{"type":"signs", ...}` per processed frame
+### sign provider: `{"type":"signs", ...}` per processed frame
+Sign detection is not part of roadsense. Any external process may provide it by
+reading the frame ring and listening on `<rundir>/signd.sock` with the message
+below; the api connects to that socket like to the others and treats a missing
+socket as "not connected" (everything else keeps working). The reference
+implementation is [roadsense-signs](https://github.com/PiotrTopa/roadsense-signs)
+(AGPL-3.0, separate repository because of its model licences), whose `signd`
+runs an MTSD detector + classifier + SORT tracker.
+
 ```
 "detect_ms": 85.0,
 "detections": [ {"track_id": 17, "cls": "regulatory--maximum-speed-limit-50", "cls_id": 23, "score": 0.81,
                  "box": [x0,y0,x1,y1]  // pixels in the 1920x1080 frame
                  , "age": 12, "hits": 11} ],
 "tracks_ended": [ {"track_id": 15, "cls": "...", "first_seq": 1100, "last_seq": 1190, "hits": 40, "best_score": 0.93,
-                   "best_crop": "/run/pocopilot/crops/15.jpg"} ]
+                   "best_crop": "/run/roadsense/crops/15.jpg"} ]
 ```
-Tracker: SORT-style (IoU association, constant-velocity Kalman per box,
-`max_age` 10 frames, `min_hits` 3). A track is reported in `detections` only
-once confirmed.
+What the api relies on: `detections[]` entries with `track_id`, `cls`, `score`
+and `box` (frame pixels) build the live-track list and the preview overlay;
+`tracks_ended[]` entries (keyed by `track_id`) end a live track and are stored
+as-is in the history and `signs.jsonl`; `detect_ms` is shown in `/v1/health`.
+Everything else is passed through untouched.
+`best_crop`, if present, is a JPEG path the provider wrote under the run directory.
+The reference implementation's tracker is SORT-style (IoU association,
+constant-velocity Kalman per box, `max_age` 10 frames, `min_hits` 3) and reports
+a track in `detections` only once confirmed.
 
 ## api (Python, aiohttp, port 8080)
 
@@ -185,13 +205,15 @@ connects, and to all clients on change.
 ## Calibration
 
 modeld publishes `calib`: `{"pitch":..,"yaw":..,"roll":..,"height_m":..,"focal_px":..,"source":"config|auto"}`.
-Phase 1 uses a config file (`/etc/pocopilot/calib.json`); phase 2 estimates
+Phase 1 uses a config file (`/etc/roadsense/calib.json`); phase 2 estimates
 pitch/yaw from the model's own pose output like openpilot's calibrationd.
 
 ## Build and deploy
 
-C++17, CMake, one binary per daemon, built on the phone
-(`g++`, `cmake`, `onnxruntime-dev`, `libcamera-dev` from Alpine).
-`scripts/install-phone.sh` builds, installs to `/usr/local/bin`, writes the
-systemd units from `systemd/` and enables them. Models under
-`/var/lib/pocopilot/models`, fetched with `scripts/fetch-models.sh`.
+C++17, CMake, one binary per daemon. In the reference deployment (Poco F1,
+postmarketOS) everything is built on the phone (`g++`, `cmake`,
+`onnxruntime-dev`, `libcamera-dev` from Alpine); `scripts/install-phone.sh`
+builds, installs to `/usr/local/bin`, writes the systemd units from `systemd/`
+and enables `roadsense.target`. Models under `/var/lib/roadsense/models`,
+fetched with `scripts/fetch-models.sh`. A sign provider installs its own unit
+with `PartOf=`/`WantedBy=roadsense.target`; the target does not require it.

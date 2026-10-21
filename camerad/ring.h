@@ -1,4 +1,4 @@
-// pocopilot shared-memory frame ring (/dev/shm/pocopilot-frames).
+// roadsense shared-memory frame ring (/dev/shm/roadsense-frames).
 //
 // Header-only, shared by the writer (camerad) and every reader (modeld, signd,
 // tools). The layout and protocol are specified in docs/ARCHITECTURE.md; this
@@ -54,23 +54,23 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace pocopilot {
+namespace roadsense {
 
-constexpr const char *kRingPath = "/dev/shm/pocopilot-frames";
+constexpr const char *kRingPath = "/dev/shm/roadsense-frames";
 constexpr char kRingMagic[8] = {'P', 'P', 'F', 'R', 'A', 'M', 'E', '1'};
 constexpr uint32_t kRingHeaderSize = 4096;
 constexpr uint32_t kRingSlotCount = 6;
 constexpr uint32_t kRingDataOffset = 4096;  // pixel data offset inside a slot
 constexpr uint32_t kFormatNV12 = 1;
 
-// Ring path: POCOPILOT_RING overrides the contract path (tests only).
+// Ring path: ROADSENSE_RING overrides the contract path (tests only).
 inline std::string ring_path() {
-    const char *p = getenv("POCOPILOT_RING");
+    const char *p = getenv("ROADSENSE_RING");
     return (p && *p) ? std::string(p) : std::string(kRingPath);
 }
 
 struct RingHeader {             // offset 0, little-endian
-    char magic[8];              //  0 "PPFRAME1"
+    char magic[8];              //  0 "RSFRAME1"
     uint32_t header_size;       //  8 4096
     uint32_t slot_count;        // 12 6
     uint32_t slot_size;         // 16 bytes per slot incl. SlotHeader, 4096-aligned
@@ -351,4 +351,4 @@ private:
     std::vector<uint8_t> buf_;
 };
 
-}  // namespace pocopilot
+}  // namespace roadsense

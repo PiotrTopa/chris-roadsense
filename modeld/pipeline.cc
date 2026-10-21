@@ -8,11 +8,11 @@
 #include <fstream>
 #include <sstream>
 
-namespace pocopilot {
+namespace roadsense {
 
 std::string config_dir() {
-    const char *d = getenv("POCOPILOT_CONFIG_DIR");
-    return (d && *d) ? std::string(d) : std::string("/etc/pocopilot");
+    const char *d = getenv("ROADSENSE_CONFIG_DIR");
+    return (d && *d) ? std::string(d) : std::string("/etc/roadsense");
 }
 
 bool read_file(const std::string &path, std::string *out) {
@@ -130,4 +130,4 @@ int64_t real_ns() {
     return int64_t(t.tv_sec) * 1000000000 + t.tv_nsec;
 }
 
-}  // namespace pocopilot
+}  // namespace roadsense

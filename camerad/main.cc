@@ -48,7 +48,7 @@
 #include "nv12.h"
 #include "ring.h"
 
-using namespace pocopilot;
+using namespace roadsense;
 using Clock = std::chrono::steady_clock;
 
 namespace {
@@ -65,7 +65,7 @@ struct Config {
     // reads the full sensor width, scaled by 4032/1920 = 2.1, so
     //   focal_px = 4.3 mm / 5.64 mm * 1920 px = 1464 px  (~1470).
     // Treat it as a starting value; replace with a calibrated one in
-    // /etc/pocopilot/camera.json.
+    // /etc/roadsense/camera.json.
     float focal_px = 1470.0f;
     float cx = kWidth / 2.0f, cy = kHeight / 2.0f;
     int preview_every = 3;      // JPEG every Nth frame (0 = off)
@@ -106,8 +106,8 @@ bool json_number(const std::string &s, const char *key, double *out) {
 }
 
 std::string config_path() {
-    const char *d = getenv("POCOPILOT_CONFIG_DIR");
-    return std::string(d && *d ? d : "/etc/pocopilot") + "/camera.json";
+    const char *d = getenv("ROADSENSE_CONFIG_DIR");
+    return std::string(d && *d ? d : "/etc/roadsense") + "/camera.json";
 }
 
 void load_config(Config &c, bool verbose) {
@@ -132,8 +132,8 @@ void load_config(Config &c, bool verbose) {
 }
 
 std::string rundir() {
-    const char *d = getenv("POCOPILOT_RUNDIR");
-    return d && *d ? d : "/run/pocopilot";
+    const char *d = getenv("ROADSENSE_RUNDIR");
+    return d && *d ? d : "/run/roadsense";
 }
 
 bool mkdir_p(const std::string &path) {
@@ -793,8 +793,8 @@ void usage() {
     fprintf(stderr,
             "usage: camerad [--verbose] [--frames N] [--no-preview] [--fps N]\n"
             "  --fps N   sensor frame rate via IMX363 VBLANK (default 20 or config \"fps\"; 0 = leave sensor alone)\n"
-            "env: POCOPILOT_RUNDIR (default /run/pocopilot), POCOPILOT_CONFIG_DIR (default /etc/pocopilot),\n"
-            "     POCOPILOT_RING (default /dev/shm/pocopilot-frames)\n");
+            "env: ROADSENSE_RUNDIR (default /run/roadsense), ROADSENSE_CONFIG_DIR (default /etc/roadsense),\n"
+            "     ROADSENSE_RING (default /dev/shm/roadsense-frames)\n");
 }
 
 }  // namespace

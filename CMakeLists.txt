@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(pocopilot CXX)
+project(roadsense CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,9 +9,9 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Built on the phone itself (Snapdragon 845: Cortex-A75 + A55, ARMv8.2-A).
-option(POCOPILOT_NATIVE "Tune for the build machine CPU (-mcpu=native)" ON)
+option(ROADSENSE_NATIVE "Tune for the build machine CPU (-mcpu=native)" ON)
 include(CheckCXXCompilerFlag)
-if(POCOPILOT_NATIVE)
+if(ROADSENSE_NATIVE)
   check_cxx_compiler_flag(-mcpu=native HAVE_MCPU_NATIVE)
   if(HAVE_MCPU_NATIVE)
     add_compile_options(-mcpu=native)
@@ -24,5 +24,4 @@ find_package(Threads REQUIRED)
 
 add_subdirectory(camerad)
 add_subdirectory(modeld)
-add_subdirectory(signd)
 add_subdirectory(tools)

@@ -6,4 +6,10 @@
 | openpilot output parsing constants | `modeld/` (re-implemented in C++) | MIT | index tables from `selfdrive/modeld/constants.py` |
 | ONNX Runtime | Alpine package `onnxruntime` | MIT | CPU execution provider |
 | libcamera | Alpine package `libcamera` | LGPL-2.1+ (library), used unmodified | |
-| traffic-sign detector `mtsd_signdet_yolov8n_384x640.onnx` + classifier `mtsd_signcls_yolov8n_64.onnx` | exported locally from `jkot/pova-traffic-sign-recognition-models` (Hugging Face, commit `0c135006544630d813603f48866de2f11287c518`) | **no licence on the weights** (all rights reserved by default); trained with Ultralytics (AGPL-3.0 claim on weights) on Mapillary Traffic Sign Dataset (CC BY-NC-SA 4.0, non-commercial) | private, non-commercial use only; never re-host; see docs/SIGN_MODELS.md for the export recipe |
+
+Sign detection is not part of roadsense. The reference sign provider,
+[roadsense-signs](https://github.com/PiotrTopa/roadsense-signs), is a separate
+AGPL-3.0 project because its models are Ultralytics-trained (AGPL-3.0 claim on
+the weights) and carry no licence of their own; it talks to roadsense only over
+the frame ring and a JSON socket (docs/ARCHITECTURE.md), so no sign code or model
+is linked into or shipped with roadsense.

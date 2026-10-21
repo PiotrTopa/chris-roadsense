@@ -1,4 +1,4 @@
-// pocopilot newline-delimited JSON publisher over a Unix stream socket.
+// roadsense newline-delimited JSON publisher over a Unix stream socket.
 //
 // Header-only, single-threaded (call everything from one thread). Contract
 // (docs/ARCHITECTURE.md): any number of clients connect to <rundir>/<name>.sock
@@ -6,8 +6,8 @@
 // ever blocking: unsent bytes are queued per client, and a client whose queue
 // exceeds 1 MiB is disconnected. Bytes received from clients are discarded.
 //
-//   pocopilot::JsonLineServer srv;
-//   srv.listen("/run/pocopilot/camerad.sock");
+//   roadsense::JsonLineServer srv;
+//   srv.listen("/run/roadsense/camerad.sock");
 //   srv.publish("{\"type\":\"camera\",...}");   // newline appended if missing
 //   srv.service();                              // accept/flush when idle
 #pragma once
@@ -23,7 +23,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-namespace pocopilot {
+namespace roadsense {
 
 class JsonLineServer {
 public:
@@ -167,4 +167,4 @@ private:
     uint64_t slow_drops_ = 0;
 };
 
-}  // namespace pocopilot
+}  // namespace roadsense

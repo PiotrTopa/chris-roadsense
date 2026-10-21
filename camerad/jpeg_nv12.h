@@ -12,7 +12,7 @@
 #include <cstring>
 #include <vector>
 
-namespace pocopilot {
+namespace roadsense {
 
 class JpegNV12Encoder {
 public:
@@ -308,4 +308,4 @@ private:
     int bitcnt_ = 0;
 };
 
-}  // namespace pocopilot
+}  // namespace roadsense

@@ -10,10 +10,10 @@
 
 #if defined(__aarch64__) || defined(__ARM_NEON)
 #include <arm_neon.h>
-#define POCOPILOT_NEON 1
+#define ROADSENSE_NEON 1
 #endif
 
-namespace pocopilot {
+namespace roadsense {
 
 // libcamera XRGB8888 (DRM XR24) is little-endian 0xXXRRGGBB: bytes B, G, R, X.
 // Portable reference version (auto-vectorised). tmp must hold 3*width
@@ -55,7 +55,7 @@ inline void xrgb_to_nv12_rows_ref(const uint8_t *__restrict src, size_t src_stri
     }
 }
 
-#ifdef POCOPILOT_NEON
+#ifdef ROADSENSE_NEON
 // NEON version: 2 rows x 16 pixels per iteration. GCC's auto-vectorised
 // reference loop runs at ~40 ms/frame on a Cortex-A55 (structure-load
 // shuffles); this one is several times faster on both core types.
@@ -135,7 +135,7 @@ inline void xrgb_to_nv12_rows_neon(const uint8_t *__restrict src, size_t src_str
 
 inline void xrgb_to_nv12_rows(const uint8_t *src, size_t src_stride, int width, uint8_t *y, size_t y_stride,
                               uint8_t *uv, size_t uv_stride, int row0, int row1, uint16_t *tmp) {
-#ifdef POCOPILOT_NEON
+#ifdef ROADSENSE_NEON
     (void)tmp;
     xrgb_to_nv12_rows_neon(src, src_stride, width, y, y_stride, uv, uv_stride, row0, row1);
 #else
@@ -153,7 +153,7 @@ inline void nv12_half(const uint8_t *__restrict y, size_t y_stride, const uint8_
         const uint8_t *__restrict b = a + y_stride;
         uint8_t *__restrict o = oy + size_t(r) * ow;
         int x = 0;
-#ifdef POCOPILOT_NEON
+#ifdef ROADSENSE_NEON
         for (; x + 8 <= ow; x += 8)
             vst1_u8(o + x, vrshrn_n_u16(vpadalq_u8(vpaddlq_u8(vld1q_u8(a + 2 * x)), vld1q_u8(b + 2 * x)), 2));
 #endif
@@ -166,7 +166,7 @@ inline void nv12_half(const uint8_t *__restrict y, size_t y_stride, const uint8_
         const uint8_t *__restrict b = a + uv_stride;
         uint8_t *__restrict o = ouv + size_t(r) * ow;
         int i = 0;
-#ifdef POCOPILOT_NEON
+#ifdef ROADSENSE_NEON
         for (; i + 8 <= cw; i += 8) {  // 8 output CbCr pairs from 16 input pairs
             const uint8x8x4_t pa = vld4_u8(a + 4 * i);  // U even, V even, U odd, V odd
             const uint8x8x4_t pb = vld4_u8(b + 4 * i);
@@ -185,4 +185,4 @@ inline void nv12_half(const uint8_t *__restrict y, size_t y_stride, const uint8_
     }
 }
 
-}  // namespace pocopilot
+}  // namespace roadsense

@@ -7,7 +7,7 @@
 
 #include <onnxruntime_cxx_api.h>
 
-namespace pocopilot {
+namespace roadsense {
 
 namespace {
 inline float sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
@@ -380,4 +380,4 @@ std::string road_json(const RoadOutputs &o, const RoadMeta &m) {
     return j.s;
 }
 
-}  // namespace pocopilot
+}  // namespace roadsense

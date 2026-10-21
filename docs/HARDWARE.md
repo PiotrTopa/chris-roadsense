@@ -1,4 +1,7 @@
-# Hardware and platform notes (Poco F1 / postmarketOS)
+# Reference deployment: Poco F1 on postmarketOS
+
+roadsense itself is device-agnostic (see the README); this file records the
+platform it was developed and measured on.
 
 Measured on 2026-10-21 on the bench phone (postmarketOS edge, systemd, phosh,
 kernel 7.1.0-rc1-sdm845, Tianma kernel variant with the FocalTech touch patch,

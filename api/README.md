@@ -1,4 +1,4 @@
-# pocopilot api
+# roadsense api
 
 Python fan-out and overlay layer: connects to `camerad.sock`, `modeld.sock` and
 `signd.sock` in the run directory, keeps the latest message per type and serves
@@ -8,15 +8,15 @@ It never touches the camera or the models.
 Dependencies: Python 3.14 + `py3-aiohttp`, `py3-numpy`, `py3-pillow` (Alpine packages, no pip).
 
 ```sh
-cd api && python3 -m pocopilot_api --rundir /run/pocopilot --port 8080
+cd api && python3 -m roadsense_api --rundir /run/roadsense --port 8080
 ```
 
 | Option / env | Default | |
 |---|---|---|
-| `--rundir` / `POCOPILOT_RUNDIR` | `/run/pocopilot` | daemon sockets and `preview.jpg` |
-| `--datadir` / `POCOPILOT_DATADIR` | `/var/lib/pocopilot` | `signs.jsonl` (ended sign tracks) is appended here if the directory exists |
-| `--ring` / `POCOPILOT_RING` | `/dev/shm/pocopilot-frames` | frame ring; only its header is read (intrinsics for `/v1/camera` and overlays) |
-| `--port` / `POCOPILOT_API_PORT` | `8080` | |
+| `--rundir` / `ROADSENSE_RUNDIR` | `/run/roadsense` | daemon sockets and `preview.jpg` |
+| `--datadir` / `ROADSENSE_DATADIR` | `/var/lib/roadsense` | `signs.jsonl` (ended sign tracks) is appended here if the directory exists |
+| `--ring` / `ROADSENSE_RING` | `/dev/shm/roadsense-frames` | frame ring; only its header is read (intrinsics for `/v1/camera` and overlays) |
+| `--port` / `ROADSENSE_API_PORT` | `8080` | |
 
 Modules: `sockets.py` (one reconnecting client per daemon, backoff 0.2-5 s),
 `state.py` (latest messages, rolling fps, live/ended sign tracks, ring header,
@@ -39,11 +39,11 @@ Only lead hypothesis 0 (now) is drawn.
 ## Testing without hardware
 
 ```sh
-tools/fake_daemons.py --rundir /tmp/pocopilot-fake     # synthetic camerad/modeld/signd
+tools/fake_daemons.py --rundir /tmp/roadsense-fake     # synthetic camerad/modeld/signd
 tools/smoke_api.sh                                     # fake daemons + api, every endpoint
 OVERLAY_OUT=/tmp/overlay.jpg tools/smoke_api.sh        # also save one overlay frame
 ```
 
 `smoke_api.sh` runs `python3 -m unittest discover -s api/tests`, which starts both
 processes on a temporary run directory and a free port (override with
-`POCOPILOT_RUNDIR`, `POCOPILOT_TEST_PORT`).
+`ROADSENSE_RUNDIR`, `ROADSENSE_TEST_PORT`).

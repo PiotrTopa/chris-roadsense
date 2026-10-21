@@ -1,2 +1,2 @@
 add_executable(ringdump ringdump.cc)
-target_link_libraries(ringdump PRIVATE pocopilot_ipc)
+target_link_libraries(ringdump PRIVATE roadsense_ipc)
