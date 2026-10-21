@@ -24,5 +24,5 @@ find_package(Threads REQUIRED)
 
 add_subdirectory(camerad)
 add_subdirectory(modeld)
-# add_subdirectory(signd)
+add_subdirectory(signd)
 add_subdirectory(tools)
