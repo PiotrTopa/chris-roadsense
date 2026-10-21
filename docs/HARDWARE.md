@@ -16,7 +16,7 @@ USB in host mode with VBUS sourced by the phone).
 | supercombo v0.9.7 | ORT CPU, 4 threads pinned to the big cores: **fp16 graph as shipped: 300 ms**; converted to fp32 (`tools/onnx_fp16_to_fp32.py`): **54 ms** (18 fps). 8 threads is slower than 4 (little cores drag). Temperature after 10 s of inference: 64-74 C. |
 | Inference | ONNX Runtime 1.30 (Alpine `onnxruntime`, CPU EP, C++ API only: no Python bindings on musl). No ncnn/TFLite/PyTorch packages. ncnn+Vulkan on turnip is the only realistic GPU route and would have to be built from source. |
 
-Thermal: sustained 8-thread inference throttles. Measure `thermal_zone*/temp`
+Thermal (measured 2026-10-21): modeld at 10 Hz on cpu4-7 reaches 90-95 C within a minute on the bench (no airflow) and the model slows from 56 to 110-150 ms; on cpu0-3 it runs at 3.5 Hz / 276 ms at 63-71 C. The sensor zones swing ~20 C between runs, so guards must average. Sustained 8-thread inference throttles. Measure `thermal_zone*/temp`
 and prefer the 4 big cores for the model, small cores for capture/IO.
 
 ## Camera

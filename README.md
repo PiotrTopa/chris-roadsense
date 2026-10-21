@@ -38,7 +38,22 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the message formats and
 
 ## Status
 
-Phase 0, feasibility. See [docs/ROADMAP.md](docs/ROADMAP.md).
+Phase 1 complete (2026-10-21): the four services run on the phone under systemd and
+the API answers on port 8080. Verified: supercombo lanes/edges/path/lead on a real
+motorway clip, sign detection + classification on Polish street photos, live
+overlay from the bench. CPU-bound: ~5 road messages/s and ~2 sign frames/s with
+the phone at its thermal limit. See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Quick start
+
+```sh
+scripts/fetch-models.sh            # dev box: downloads supercombo, converts to fp32
+# sign models: export locally per docs/SIGN_MODELS.md into models/
+scripts/push-models.sh             # models -> phone ~/pocopilot/models
+scripts/sync-phone.sh              # tree -> phone ~/pocopilot
+ssh user@phone 'cd ~/pocopilot && sudo sh scripts/install-phone.sh && sudo systemctl start pocopilot.target'
+curl http://phone:8080/v1/health ; open http://phone:8080/
+```
 
 ## Hardware
 
