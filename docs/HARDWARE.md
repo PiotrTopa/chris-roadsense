@@ -13,6 +13,7 @@ USB in host mode with VBUS sourced by the phone).
 | Storage | 109 GiB root, ~100 GiB free |
 | GPU | Adreno 630, Mesa 26.2 freedreno (GLES 3.2) + turnip Vulkan ICD present |
 | DSP/NPU | Hexagon remoteprocs boot (adsp/cdsp/slpi) but no userspace path for inference on mainline. Ignore. |
+| supercombo v0.9.7 | ORT CPU, 4 threads pinned to the big cores: **fp16 graph as shipped: 300 ms**; converted to fp32 (`tools/onnx_fp16_to_fp32.py`): **54 ms** (18 fps). 8 threads is slower than 4 (little cores drag). Temperature after 10 s of inference: 64-74 C. |
 | Inference | ONNX Runtime 1.30 (Alpine `onnxruntime`, CPU EP, C++ API only: no Python bindings on musl). No ncnn/TFLite/PyTorch packages. ncnn+Vulkan on turnip is the only realistic GPU route and would have to be built from source. |
 
 Thermal: sustained 8-thread inference throttles. Measure `thermal_zone*/temp`

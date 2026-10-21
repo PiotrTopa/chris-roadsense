@@ -3,7 +3,7 @@
 ## Phase 0: feasibility (in progress)
 - [x] libcamera capture with AE/AWB at 1080p30 (GPU debayer)
 - [x] ONNX Runtime C++ available on the phone; supercombo v0.9.7 loads
-- [ ] supercombo latency on 4 big cores (target: >= 5 model fps, i.e. 200 ms)
+- [x] supercombo latency on 4 big cores: 54 ms as fp32 (300 ms as fp16)
 - [ ] sign detector chosen, licence recorded, latency measured
 
 ## Phase 1: pipeline on the bench

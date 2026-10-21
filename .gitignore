@@ -17,3 +17,4 @@ captures/
 *.png
 *.mp4
 *.log
+.venv-models/
