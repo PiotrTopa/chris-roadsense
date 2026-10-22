@@ -57,7 +57,7 @@
 namespace roadsense {
 
 constexpr const char *kRingPath = "/dev/shm/roadsense-frames";
-constexpr char kRingMagic[8] = {'P', 'P', 'F', 'R', 'A', 'M', 'E', '1'};
+constexpr char kRingMagic[8] = {'R', 'S', 'F', 'R', 'A', 'M', 'E', '1'};
 constexpr uint32_t kRingHeaderSize = 4096;
 constexpr uint32_t kRingSlotCount = 6;
 constexpr uint32_t kRingDataOffset = 4096;  // pixel data offset inside a slot

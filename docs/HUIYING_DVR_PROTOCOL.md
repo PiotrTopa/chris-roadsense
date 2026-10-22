@@ -197,3 +197,15 @@ If static plus on-device probing proves insufficient, a usbmon capture of the or
 ## Verified on hardware (2026-10-22, laptop, /dev/sda)
 
 `tools/dvr_probe.py --block /dev/sda --count 30`: info sector valid (version `0416_v4.8P`, board v1 header, SD card present), 30 frames in 1.48 s = 20.2 fps, frames about 46-64 KB, 1280x720 baseline JPEG with the camera's own date/speed overlay burned into the bottom-left corner (clock unset: 2022/04/26). The JPEG lacks an EOI marker inside `video_size`; decoders tolerate it. The kernel names the device "Buildwin Media-Player", so the controller is a Buildwin chip. Kernel usb-storage stayed attached; no writes were made.
+
+## Streaming daemon
+
+`camerad-dvr` (`camerad-dvr/main.cc`) implements the read-only streaming path of
+section 4 in C++ and feeds roadsense's frame ring: raw block device with
+`O_DIRECT | O_EXCL`, the probe's FAT/VSFILE validation, info-sector polling,
+check-word verification, libjpeg-turbo raw YCbCr decode to NV12, and the
+camera's JPEG as `preview.jpg`. Usage, measured numbers and the systemd unit:
+[ARCHITECTURE.md, "Alternative camera sources"](ARCHITECTURE.md#alternative-camera-sources).
+Measured with it: 19.5 fps over 3206 frames with no sequence gaps; VSFILE on
+this unit is only 192 KiB (LBA 0x380..0x500), so frames are read past its end,
+as the app does. The bytes after a frame's EOI (still inside `video_size`) can be stale data.

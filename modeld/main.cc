@@ -170,6 +170,7 @@ void prep_thread(const Options *opt, Shared *sh) {
     auto next_calib_check = std::chrono::steady_clock::now();
     std::shared_ptr<const PackedFrame> prev;
     uint64_t last_seq = 0;
+    int64_t last_ts = 0;
     bool waiting_logged = false;
     FrameView fv;
     while (g_run) {
@@ -191,11 +192,14 @@ void prep_thread(const Options *opt, Shared *sh) {
                 calib = c;
             }
         }
-        if (fv.seq <= last_seq) {  // camerad restarted
+        // camerad restarted, or the stream stalled (e.g. a USB camera reconnecting): never pair
+        // across the gap
+        if (fv.seq <= last_seq || (last_ts && fv.ts_mono_ns - last_ts > 500'000'000)) {
             sel.reset();
             prev.reset();
         }
         last_seq = fv.seq;
+        last_ts = fv.ts_mono_ns;
         if (!sel.accept(fv.ts_mono_ns)) continue;
         NV12Frame f;
         f.seq = fv.seq;

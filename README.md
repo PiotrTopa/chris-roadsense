@@ -51,7 +51,11 @@ The processes share nothing but two mechanisms, specified in
   the reference phone's IMX363 and are skipped or overridden by `camera.json`
   elsewhere); a V4L2, GStreamer, video-file or network source only has to fill
   the same header and slots, and publish `camera` messages if the api should
-  show camera metadata.
+  show camera metadata. `camerad-dvr` is a second bundled source: a USB "DVR"
+  head-unit camera (Huiying/Buildwin, USB 1902:3241) that streams 1280x720 MJPEG
+  through sectors of a mass-storage volume
+  ([docs/HUIYING_DVR_PROTOCOL.md](docs/HUIYING_DVR_PROTOCOL.md),
+  docs/ARCHITECTURE.md "Alternative camera sources").
 * **Model:** supercombo is device-independent given the intrinsics: modeld reads
   `focal_px`, `cx`, `cy` from the ring header and warps each frame to the
   model's own camera, so a different lens or resolution needs correct intrinsics
@@ -90,6 +94,8 @@ ssh user@phone 'cd ~/roadsense && sudo sh scripts/install-phone.sh && sudo syste
 ssh -t user@phone 'sh ~/roadsense/scripts/build-ncnn.sh ~/ncnn'
 ssh user@phone 'cd ~/roadsense && sudo CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=/home/user/ncnn" BUILD=build-ncnn sh scripts/install-phone.sh'
 curl http://phone:8080/v1/health ; open http://phone:8080/
+# USB DVR camera (1902:3241) instead of the phone camera (needs libjpeg-turbo-dev at build time)
+ssh user@phone 'cd ~/roadsense && sudo sh scripts/install-camerad-dvr.sh --enable'
 ```
 
 Signs: install [roadsense-signs](https://github.com/PiotrTopa/roadsense-signs)

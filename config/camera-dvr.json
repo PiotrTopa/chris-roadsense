@@ -1,0 +1,8 @@
+{
+ "focal_px": 448.0,
+ "cx": 640.0,
+ "cy": 360.0,
+ "preview_every": 2,
+ "poll_us": 2000,
+ "_comment": "camerad-dvr (USB DVR camera 1902:3241, 1280x720). focal_px is a guess for a ~110 deg HFOV dashcam lens (640/tan(55 deg)); calibrate it."
+}

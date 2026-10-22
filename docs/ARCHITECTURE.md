@@ -39,7 +39,7 @@ struct RingHeader {            // offset 0
   uint32_t header_size;        // 4096
   uint32_t slot_count;         // 6
   uint32_t slot_size;          // bytes per slot incl. SlotHeader, 4096-aligned
-  uint32_t width, height;      // 1920, 1080 (native sensor size)
+  uint32_t width, height;      // 1920, 1080 (native sensor size; camerad-dvr: 1280, 720)
   uint32_t y_stride;           // bytes per luma row (1920)
   uint32_t uv_stride;          // bytes per chroma row (1920, NV12 interleaved)
   uint32_t format;             // 1 = NV12 (Y plane then interleaved UV plane, 4:2:0)
@@ -108,6 +108,86 @@ CLI: `camerad [--verbose] [--frames N] [--no-preview] [--fps N] [--vblank N]`
 (`--verbose` prints fps and timings to stderr once per second; `--vblank` writes
 a raw VBLANK for calibration). SIGINT/SIGTERM stop the camera, close clients and
 unlink the socket.
+
+## Alternative camera sources
+
+Any process that writes the ring and serves `camerad.sock` per this document is
+a camerad; modeld, the sign provider and the api read the geometry and
+intrinsics from the ring header and do not care which one runs. Run exactly one
+(the systemd units `Conflicts=` each other).
+
+### camerad-dvr: USB "DVR" head-unit camera (Huiying/Buildwin, USB 1902:3241)
+
+A cheap car head-unit camera that enumerates only as a USB mass-storage disk
+(kernel name "Buildwin Media-Player"). Its firmware serves the live stream from
+fixed sectors inside the file `VSFILE` of its FAT volume: an info sector (frame
+size, frame sequence, check word) and the current frame, a 1280x720 baseline
+JPEG (4:2:0, restart interval one MCU row, ~45-70 KB) at ~19.5 fps. No commands
+are needed. Protocol: [HUIYING_DVR_PROTOCOL.md](HUIYING_DVR_PROTOCOL.md);
+probe: `tools/dvr_probe.py`.
+
+`camerad-dvr (--auto | --dev /dev/sdX) [--verbose] [--frames N] [--no-preview]`
+(source `camerad-dvr/main.cc`, single thread, libjpeg-turbo):
+
+* **Device:** `--auto` takes the first whole-disk block device whose USB parent
+  is 1902:3241 (sysfs walk); `--dev` refuses anything that is not 1902:3241 or
+  is a partition. Opened `O_RDONLY | O_DIRECT | O_EXCL`: **read-only, never
+  writes** (the command sector of the protocol is not used), uncached, and
+  exclusive (fails while mounted or held by another camerad-dvr). Needs root or
+  group `disk`. The layout is validated like `dvr_probe.py` does: MBR, FAT
+  boot sector, the 8.3 entry `VSFILE` in the root directory, and the info +
+  audio + first video sector inside VSFILE's first cluster run (VSFILE is only
+  192 KiB on the tested unit; frames extend past its end, served live by the
+  firmware). Reads are confined to [VSFILE start, video + 0x4B000 + 0x1400].
+* **Loop:** read the 512-byte info sector every `poll_us` (2 ms sleep plus a
+  ~2.7 ms USB round trip: ~210 polls/s, timestamp resolution ~5 ms). On a new
+  `video_seq`: `ts_mono_ns` = CLOCK_MONOTONIC right after the info read that
+  showed it; one `O_DIRECT` pread of `(size & ~0x1FF) + 0x200` bytes (one
+  READ(10) up to `max_sectors_kb`); check word verified (re-polled up to 3
+  times, then counted as `rejected`); `jpeg_read_raw_data` decodes the Y plane
+  straight into the ring slot and the Cb/Cr planes into 8-row buffers that are
+  interleaved into the NV12 UV plane (no colour conversion, no upsampling, no
+  RGB). JFIF YCbCr is exactly the ring's BT.601 full range, so the pixels are
+  the camera's own. After 400 ms without a new sequence it does the app's
+  dummy "kick" read.
+* **Ring:** 1280x720, strides 1280, `exposure_us`/gains 0. Created (and
+  `camerad.sock` bound) only once a camera has been opened, so a second
+  instance never replaces a live ring.
+* **Unplug:** an I/O error closes the device; it is re-resolved and reopened
+  every second, the ring and socket stay up, the ring `seq` continues. modeld
+  never pairs frames across a stall > 500 ms.
+* **Preview:** every `preview_every`-th frame the camera's own JPEG (cut at its
+  EOI; the stream carries stale bytes after it) is written to `preview.jpg`
+  (temp + rename): full 1280x720, no re-encode.
+* **Burned-in overlay:** the camera draws its date/time and speed (`2022/04/26
+  19:53:14   0 km/h`, clock unset) into the bottom ~40 rows, left half. It
+  stays in the ring frames (nothing blanks it); whether it falls inside
+  supercombo's warped crop depends on `focal_px` and the mounting calibration
+  and has not been evaluated. Sign or OCR consumers should ignore the bottom
+  ~40 rows.
+* **Message:** the `camera` message gets `"source":"dvr"`, `video_seq` (the
+  DVR's counter), `jpeg_bytes`, `read_ms`, `conv_ms` (decode + NV12),
+  `rejected`, `decode_fail`, `jpeg_warnings`, `recording` (DVR flag 0x4000)
+  and `reconnects`; `sensor_drops` counts gaps in `video_seq` (frames the camera
+  produced that camerad-dvr never saw); `dropped` stays 0.
+
+Config `/etc/roadsense/camera-dvr.json` (`ROADSENSE_CONFIG_DIR`), flat JSON:
+
+| key | default | meaning |
+|---|---|---|
+| `focal_px` | 448 | **uncalibrated guess**: wide dashcam lens, ~110 deg HFOV, 640 / tan(55 deg). Calibrate it (supercombo's warp depends on it) |
+| `cx`, `cy` | 640, 360 | principal point |
+| `preview_every` | 2 | camera JPEG to `preview.jpg` every Nth frame, 0 = off |
+| `poll_us` | 2000 | sleep between info-sector polls |
+
+Measured on a laptop (i7-8850H, USB 2.0 high speed, 2026-10-22, 3206 frames):
+19.5 fps (the camera's own rate), 0 sequence gaps, 0 rejected; frame read
+5.8 ms; decode + NV12 1.7 ms avg (2.9 ms max); camerad-dvr 4.4 % of one core
+including polling. modeld pairs consecutive frames (pair dt 49-52 ms).
+Estimate for a Cortex-A75: decode ~5-7 ms per frame. Units:
+`systemd/roadsense-camerad-dvr.service` (`--auto`); `scripts/install-camerad-dvr.sh
+--enable` installs it, masks `roadsense-camerad.service` (which `roadsense.target`
+and modeld otherwise pull in) and starts it; `--disable` switches back.
 
 ## JSON sockets
 

@@ -23,5 +23,12 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 
 add_subdirectory(camerad)
+# camerad-dvr: alternative camera source (USB DVR camera 1902:3241, MJPEG over mass storage).
+find_package(JPEG)
+include(CMakeDependentOption)
+cmake_dependent_option(ROADSENSE_CAMERAD_DVR "Build camerad-dvr (needs libjpeg-turbo)" ON "JPEG_FOUND" OFF)
+if(ROADSENSE_CAMERAD_DVR)
+  add_subdirectory(camerad-dvr)
+endif()
 add_subdirectory(modeld)
 add_subdirectory(tools)
