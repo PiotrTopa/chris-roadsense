@@ -1,8 +1,8 @@
 {
- "focal_px": 448.0,
+ "focal_px": 975.0,
  "cx": 640.0,
  "cy": 360.0,
  "preview_every": 2,
  "poll_us": 2000,
- "_comment": "camerad-dvr (USB DVR camera 1902:3241, 1280x720). focal_px is a guess for a ~110 deg HFOV dashcam lens (640/tan(55 deg)); calibrate it."
+ "_comment": "Checkerboard on a 15.6\" 1920x1080 panel at 1100 mm (2026-10-22): focal 953 px from corner pitch, 995 px from calibrateCamera with k1=-0.34 (barrel). HFOV ~68 deg. No undistortion is applied yet, so 975 is a compromise for the centre crop."
 }

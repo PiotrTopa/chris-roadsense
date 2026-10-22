@@ -213,3 +213,20 @@ as the app does. The bytes after a frame's EOI (still inside `video_size`) can b
 ## Latency (2026-10-22, laptop, backlight-toggle test)
 
 Glass-to-host latency measured by toggling the laptop backlight in front of the camera and timing the first frame (centre-of-screen ROI) that shows the change, via the block backend polling the info sector every ~3 ms. Backlight ON: change visible on the second frame after the write, 92-95 ms (n=5, spread 3 ms). Backlight OFF: the sysfs write itself blocks ~355 ms (panel fade), change visible ~42 ms after the write returns. So the camera's exposure + JPEG encode + USB delivery is roughly 45-95 ms, i.e. about one to two frame periods at 20 fps; call it 70 ms ± 25. Script: scratchpad `dvr-latency/latency.py` (not in the repo; needs root for the backlight and the block device).
+
+## Calibration (2026-10-22, checkerboard on the laptop panel)
+
+Setup: 12x6 board of 160 px squares (28.75 mm on the 15.6" 1920x1080 panel) drawn on /dev/fb0, camera 1100 mm in front, board in the lower-centre of the frame (about 300x140 px). All 5 frames detected (cv2 findChessboardCornersSB), corner pitch 24.92 px, reprojection rms 0.23 px.
+
+| quantity | value |
+|---|---|
+| focal from corner pitch (pinhole, local) | 953 px |
+| focal from calibrateCamera (single view, principal point fixed at centre) | 995 px, solved distance 1098 mm |
+| radial distortion k1 | -0.34 (barrel; single off-centre view, so treat as indicative) |
+| horizontal FOV | about 68 deg (not the 110 deg of the earlier guess) |
+
+`config/camera-dvr.json` now uses focal_px 975. The lens is a moderate wide angle, close to openpilot's road camera, so the supercombo warp works without undistortion for the central crop; undistortion (k1) in camerad-dvr is a possible refinement for the lane-line geometry at the image edges.
+
+## Framebuffer latency test (2026-10-22)
+
+Writing white/black directly to /dev/fb0 on a text VT (i915drmfb) gave 144-253 ms, median 195 ms, versus 92-95 ms with the backlight toggle. The difference is the kernel's fbdev emulation itself: /dev/fb0 writes go through a shadow buffer flushed by deferred I/O, which adds a variable ~100 ms before the pixels reach the panel, so the framebuffer path is the worse reference on this kernel. The backlight PWM responds within a millisecond and remains the trustworthy bound: camera latency about 45-95 ms. A hardware LED driven by a GPIO would be the next step up in rigour.
