@@ -230,3 +230,7 @@ Setup: 12x6 board of 160 px squares (28.75 mm on the 15.6" 1920x1080 panel) draw
 ## Framebuffer latency test (2026-10-22)
 
 Writing white/black directly to /dev/fb0 on a text VT (i915drmfb) gave 144-253 ms, median 195 ms, versus 92-95 ms with the backlight toggle. The difference is the kernel's fbdev emulation itself: /dev/fb0 writes go through a shadow buffer flushed by deferred I/O, which adds a variable ~100 ms before the pixels reach the panel, so the framebuffer path is the worse reference on this kernel. The backlight PWM responds within a millisecond and remains the trustworthy bound: camera latency about 45-95 ms. A hardware LED driven by a GPIO would be the next step up in rigour.
+
+## Latency, definitive (2026-10-22, LED reference, tools/ledlat)
+
+An RP2040 LED switched over USB serial (1 ms round trip) at random phase to the frame clock, 40 events: **min 30, median 56, max 84 ms** glass-to-host. That is a fixed ~30 ms pipeline delay (exposure end, JPEG encode, USB read) plus 0-50 ms of frame-clock phase. The earlier backlight (92-95 ms) and framebuffer (195 ms) figures were inflated by the display path and by a trigger that was phase-locked to the frames; the LED numbers supersede them.
