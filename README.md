@@ -35,6 +35,8 @@ separate project.
 
 The processes share nothing but two mechanisms, specified in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md):
+- [docs/PHONE_DVR_DEPLOY.md](docs/PHONE_DVR_DEPLOY.md): putting the USB DVR camera path on the phone (findings, steps, verification).
+
 
 * the **frame ring** `/dev/shm/roadsense-frames`: a 4096-byte header (magic
   `RSFRAME1`, size, strides, focal length and principal point) followed by 6
