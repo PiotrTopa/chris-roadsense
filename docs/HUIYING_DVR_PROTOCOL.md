@@ -209,3 +209,7 @@ camera's JPEG as `preview.jpg`. Usage, measured numbers and the systemd unit:
 Measured with it: 19.5 fps over 3206 frames with no sequence gaps; VSFILE on
 this unit is only 192 KiB (LBA 0x380..0x500), so frames are read past its end,
 as the app does. The bytes after a frame's EOI (still inside `video_size`) can be stale data.
+
+## Latency (2026-10-22, laptop, backlight-toggle test)
+
+Glass-to-host latency measured by toggling the laptop backlight in front of the camera and timing the first frame (centre-of-screen ROI) that shows the change, via the block backend polling the info sector every ~3 ms. Backlight ON: change visible on the second frame after the write, 92-95 ms (n=5, spread 3 ms). Backlight OFF: the sysfs write itself blocks ~355 ms (panel fade), change visible ~42 ms after the write returns. So the camera's exposure + JPEG encode + USB delivery is roughly 45-95 ms, i.e. about one to two frame periods at 20 fps; call it 70 ms ± 25. Script: scratchpad `dvr-latency/latency.py` (not in the repo; needs root for the backlight and the block device).
