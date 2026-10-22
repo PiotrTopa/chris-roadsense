@@ -72,10 +72,12 @@ The processes share nothing but two mechanisms, specified in
 roadsense was developed and measured on a Xiaomi Poco F1 (Snapdragon 845,
 Sony IMX363 rear camera through CAMSS and libcamera's software ISP,
 postmarketOS edge, mainline kernel); see [docs/HARDWARE.md](docs/HARDWARE.md).
-Inference runs on the CPU through ONNX Runtime (no usable DSP/NPU path on
-mainline); an optional ncnn/Vulkan backend runs it on the Adreno 630 in ~60 ms
-at ~15 % of one core, but does not yet meet the accuracy gate on far-range
-outliers (docs/HARDWARE.md), so the shipped unit stays on the CPU. The USB-C port is configured as a host with its own VBUS (see
+Inference runs on the Adreno 630 through the ncnn/Vulkan backend (~60-80 ms per
+run, ~15 % of one little core, the shipped unit since 2026-10-21); the accuracy gate was
+relaxed for data gathering because the fp16 path only deviates on far-range lane points
+and leads beyond 50 m (docs/ROADMAP.md). The exact ONNX Runtime CPU path remains as the
+reference (`--backend ort`, 54 ms cold but 90+ C sustained; no usable DSP/NPU path on
+mainline). The USB-C port is configured as a host with its own VBUS (see
 [poco-f1-usb-host](https://github.com/PiotrTopa/poco-f1-usb-host)) so the phone
 can drive a car gateway later. `scripts/install-phone.sh`,
 `scripts/sync-phone.sh`, `scripts/push-models.sh`, `systemd/` and `phone/` are
