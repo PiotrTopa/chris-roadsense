@@ -1,5 +1,7 @@
 # Deploying the USB DVR camera path on the phone
 
+**Deployed and verified on the phone 2026-10-23** (results under "Measured on the phone").
+
 Everything below was verified on the laptop on 2026-10-22; the phone side is a rebuild
 plus a unit switch. Phone: Poco F1, postmarketOS, user `user`, sudo password in the vault
 (`poco_user_password`), Wi-Fi 192.168.0.86. Dev checkouts live in `~user/roadsense` and
@@ -45,6 +47,7 @@ cd ~user/roadsense-signs && BUILD=/var/tmp/roadsense-signs-build ROADSENSE_DIR=/
 systemctl start roadsense.target
 ```
 
+`install-phone.sh` no longer enables boot autostart unless `AUTOSTART=1` is set.
 The rebuild also fixes the ring magic for the api. `install-phone.sh` reinstalls the
 `roadsense-camerad` unit file, so re-run `install-camerad-dvr.sh --enable` after every
 `install-phone.sh`. Back to the phone camera: `install-camerad-dvr.sh --disable`.
@@ -58,8 +61,26 @@ curl http://192.168.0.86:8080/v1/health          # camera ~19.5 fps, road > 9/s 
 http://192.168.0.86:8080/                        # preview must show the camera, lanes drawn
 ```
 
-Expected on the phone (not yet measured): decode 5-7 ms per frame on an A75, camerad-dvr
-well under 20 % of one core; modeld unchanged (GPU); the DVR camera adds no SoC heat.
+## Measured on the phone (2026-10-23, camera behind the Terminus 1a40:0101 hub)
+
+| item | result |
+|---|---|
+| camerad-dvr | 19.5 fps into the ring, 0 drops, read 21 ms + convert 17 ms per frame, ~3 % CPU |
+| api | `/v1/camera` source dvr, 1280x720, focal 975; `/v1/frame.jpg` live |
+| modeld (GPU) | 78.7 ms avg; 9.7 runs/s after the 80 C throttle halved the rate |
+| signd (big cores) | detect 196 ms, 4.7 fps |
+| heat | 89 C after 15 s, 95 C after ~1 min with signd on the big cores; stack stopped |
+
+Without active cooling the full stack cannot run; modeld + camerad-dvr alone is the
+realistic configuration until the fan is fitted (signd is the heat source).
+
+**VBUS boost trip.** After a long uptime the port gave 0 V and nothing enumerated: the PMI8998
+OTG block showed CMD_OTG (0x1140) = 1 but OTG_STATUS (0x1109) = 0x04 and the OTG fail bit in
+0x1110 set, i.e. the boost had latched off (likely an inrush or overcurrent when the camera or
+hub was plugged in). Unbinding the regulator driver does not reset an always-on regulator and
+the regmap debugfs is read-only, so the fix is a reboot with the camera already attached;
+healthy state is 0x1109 = 0x0a. Check with
+`sudo grep -E "^(1109|1110|1140):" /sys/kernel/debug/regmap/0-02/registers`.
 
 ## Open items for the phone
 
@@ -67,4 +88,5 @@ well under 20 % of one core; modeld unchanged (GPU); the DVR camera adds no SoC 
   test script needs `/dev/ttyACM0` and root).
 - Full lens calibration (15-20 board views) and optional undistortion in camerad-dvr.
 - Decide the model crop versus the burned-in overlay (`--crop-bottom` is not implemented).
-- The camera clock: `tools/dvr_probe.py --cmd sync_time` writes one command sector.
+- The camera clock (shows 2022 in the overlay): `tools/dvr_probe.py --cmd sync_time` writes one command sector.
+- A boost watchdog that power-cycles OTG when 0x1109 leaves state 2 needs a register write path (small kernel module or driver patch).

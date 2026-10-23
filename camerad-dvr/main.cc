@@ -19,6 +19,7 @@
 #include <cerrno>
 #include <cinttypes>
 #include <csetjmp>
+#include <climits>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>

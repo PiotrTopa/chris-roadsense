@@ -21,5 +21,6 @@ done
 [ -d /etc/nftables.d ] && install -m 644 phone/50_roadsense.nft /etc/nftables.d/ && systemctl try-restart nftables
 install -m 644 systemd/roadsense-*.service systemd/roadsense.target /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable roadsense.target >/dev/null
+# boot autostart is opt-in (AUTOSTART=1): the reference phone overheats without cooling
+[ "${AUTOSTART:-0}" = 1 ] && systemctl enable roadsense.target >/dev/null || true
 echo "installed. start:  systemctl start roadsense.target   status: systemctl status 'roadsense-*'"
