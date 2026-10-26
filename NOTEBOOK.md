@@ -15,7 +15,8 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 |---|---|---|---|
 | L1 signs-vulkan | Fable | done (2026-10-24 ~01:00 CEST) | docs/lanes/L1-signs-vulkan.md |
 | L1-soak | Opus | ordered, not started | orders/L1-soak.md |
-| L2 envd (environment/weather analyser, 1 fps) | Fable (user ruling 2026-10-26) | running | docs/lanes/L2-envd.md |
+| L2 envd (environment/weather analyser, 1 fps) | Fable (user ruling 2026-10-26) | done (2026-10-26 ~18:20 CET) | docs/lanes/L2-envd.md |
+| L2-envd-phone | Opus | ordered, not started (waits for the stress test to end) | orders/L2-envd-phone.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
 - [FAV] signd's detector runs on the Adreno 630 (ncnn/Vulkan) next to modeld: 5.0 signs/s at
@@ -36,3 +37,26 @@ roadsense 753d2ae (lane report, soak order). Phone: signd binary, ncnn models an
 signd left stopped.
 Roadmap: next L1-soak (Opus, 15-min plateaus of the shipped and uncapped configs, does modeld's
 80 C throttle ever fire); candidate L2 = GPU min-frequency pin for modeld; then mount/calibration.
+
+## Fold 2 (2026-10-26): environment analyser envd (L2, Fable)
+- [FAV] envd works with zero-shot CLIP ViT-B/32 (OpenAI weights, MIT) + a linear probe: held-out macro
+  recall weather 78.9 % (BDD), light 86.2 %, place 74.0 % (BDD) / 73 % (Places365 proxy incl.
+  underground parking 98 %, forest road 83 %). Smoothed labels: 0-2 extra flips at 20 % wrong frames,
+  5-6 s to follow a real change.
+- [UNFAV] Zero-shot alone is not enough (BDD weather macro 56.9 %, place 58.3 %; highway 35 %,
+  overcast 35 %, snow 30 %); fog is barely testable on BDD (13 images; ~10 %). The probe is trained on
+  research-licensed data (BDD100K, DAWN CC BY-NC, Places365), so it is not committed; the repo ships
+  the zero-shot class file.
+- [INSTR] Encoder choice by pre-registered zero-shot rule: ViT-B/32 openai 71.1 > SigLIP2 68.1 >
+  TinyCLIP-40M 67.0 > ViT-B/32 laion2b 65.4; MobileCLIP excluded (Apple research-only). C++ path
+  bit-exact to Python (cos 1.00000), smoother identical on 360/360 frames. Laptop cost 89 ms/frame at
+  2 threads. ncnn conversion done but unverified (x86 ncnn wheel segfaults), so ORT on the little cores
+  is the default.
+Deviations: two disclosed in the lane report (anchored probe variant; extra datasets split A/B after a
+BDD-only probe could not learn the Places-only classes). The pre-registration section was first
+committed together with results (2c03711), so its precedence is the lane's statement, not a git fact.
+Not measured: phone cost (the user's stress test ran the whole lane); order L2-envd-phone.
+Changes: roadsense 2c03711..460b5ef (envd/, tools, api env topic + /v1/env, unit, docs; 11 api tests pass).
+Roadmap: L2-envd-phone (Opus: build, install with the probe class file, cost rows, 30-min run) once
+the stress test ends; L1-soak still open; candidates: GPU min-clock pin, boost auto-recovery, mount
+and calibration, in-car recordings as own training data for envd.
