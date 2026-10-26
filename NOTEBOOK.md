@@ -18,7 +18,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L2 envd (environment/weather analyser, 1 fps) | Fable (user ruling 2026-10-26) | done (2026-10-26 ~18:20 CET) | docs/lanes/L2-envd.md |
 | L2-envd-phone | Opus | folded into L3 | orders/L2-envd-phone.md |
 | L3 speed-tune + envd on phone | Opus | done (2026-10-26 21:40 CET) | docs/lanes/L3-speed.md |
-| L4 GPU turn-taking (signd/modeld) | Opus | running (2026-10-26 22:15 CET) | docs/lanes/L4-gpu-sched.md |
+| L4 GPU turn-taking (signd/modeld) | Opus | done (2026-10-27 00:28 CET) | docs/lanes/L4-gpu-sched.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
@@ -115,3 +115,23 @@ Deviation: the lane stopped a download with `pkill -x curl -u piotr` (broader th
   the markings (lead 11.8 m, 89 m). use-replay.sh worked on its first run.
 - [INSTR] Sign boxes trail the moving scene by ~40 px (~100 ms of sign latency at ~10 m/s), visible in
   the preview; envd's place label wanders (city_street vs highway on wide arterials).
+
+## Fold 5 (2026-10-27): GPU turn-taking + pipelined modeld (L4, Opus)
+- [FAV] Road 13.0 -> 14.05 runs/s (+7.8 %, 15 min on the replay, 89/90 windows at 14.0-14.1) at 5.0
+  signs/s; model mean/p90 74/107 -> 53/55 ms (no longer bimodal); road latency frame->ws median/p90
+  121/168 -> 107/126 ms. Verified live 00:3x CET: road 14.0/s, model 54.8 ms, 62 C.
+- [INSTR] Gains by step: turn-taking alone ~neutral (13.26); signd records its detector before taking the
+  turn 13.57; two-stage (pipelined) modeld 13.68; CPU wake-latency request (--cpu-latency-us 0) 14.05.
+  Free-running pipelined without turn-taking ties on rate (14.17) but has p90 103 ms; turn-taking kept
+  for latency. GPU busy 92-93 %; estimated ceiling ~15.9 road/s at 5 signs/s.
+- [INSTR] Contract: <rundir>/gpu.sched (camerad/gpusched.h, docs/ARCHITECTURE.md "GPU schedule"),
+  every wait bounded; each daemon works alone; signd kill -9 x3 harmless. Outputs bit-identical
+  (modeld 39/39 runs, signd 14/14 detections).
+- [UNFAV] Sign latency +16 ms median (signd waits for its turn). --cpu-latency-us 0 costs idle power in
+  the car. Remaining lever small: ~2 ms/run of CPU-only ncnn layers in the policy stage (<= +0.5 road/s).
+Deviation/incident: road stream down 13 min (22:27-22:40 CET) from a bad test drop-in (pointed at the build
+directory); script now verifies modeld after each switch. Empty drop-in dirs left in /run (harmless).
+Changes: roadsense d9ace97, roadsense-signs 26183d1; phone runs the new binaries from installed units
+(old ones kept as *.pre-l4); replay still the camera source; autostart disabled.
+Roadmap: idle-power policy for --cpu-latency-us in the car; policy-stage op conversion (small);
+mount + calibration; envd place stability; own recordings; boost auto-recovery.
