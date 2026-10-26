@@ -276,6 +276,7 @@ int main(int argc, char **argv) {
     auto next_allowed = Clock::now();
     auto next_temp = Clock::now();
     int temp_mc = -1;
+    bool pausing = false;
 
     while (g_run) {
         srv.service();
@@ -295,10 +296,14 @@ int main(int argc, char **argv) {
             temp_mc = hottest_zone_mc();
         }
         if (opt.pause_mc > 0 && temp_mc > opt.pause_mc) {
+            if (!pausing) fprintf(stderr, "envd: hottest zone %.1f C > %.1f C, pausing\n", temp_mc / 1000.0, opt.pause_mc / 1000.0);
+            pausing = true;
             ++paused;
             next_allowed = now + std::chrono::milliseconds(int64_t(period_s * 1000));
             continue;
         }
+        if (pausing) fprintf(stderr, "envd: hottest zone %.1f C, resuming\n", temp_mc / 1000.0);
+        pausing = false;
         if (!rr.next(fv, 200)) continue;  // newest frame
         next_allowed = Clock::now() + std::chrono::microseconds(int64_t(period_s * 1e6));
         if (fv.format != kFormatNV12 || (fv.width & 1) || (fv.height & 1)) {

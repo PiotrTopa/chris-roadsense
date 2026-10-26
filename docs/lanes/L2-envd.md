@@ -117,6 +117,17 @@ ViT-B-32/openai, `envd_replay --reset-each --emb` vs the replica (cosine of the 
 - For scale: the model's own transform (resize short side + centre crop) vs the squash gives
   cos 0.86-0.95 (mean 0.92) on the same images, so the squash numbers below are the ones that count.
 
+### End-to-end on the laptop (17:5x CEST)
+`tools/ring_replay.py --nv12 1920x1080 ljkr.nv12 --fps 20 --loop --ring /tmp/roadsense-ring-l2` (a
+fake camerad: the 120-frame Ljubljana motorway clip from the phone's `~/rs-replay`, 6 s looped),
+`envd --threads 4 --cpus none --max-hz 1 --pause-temp 0 --verbose` and the api on port 18091:
+envd takes one frame per second (seq 48, 68, 88, ...: every 20th frame), 109-197 ms per frame
+(encode 98-184 ms with the extraction jobs loading the laptop), says highway 56-67 % / clear 96 % /
+day 77-92 % with `stable_s` growing; `GET /v1/env` returns the message, `/v1/health` shows `env_ms`
+and the three labels. Null found on the way: with the laptop package at 97 C the default
+`--pause-temp 92000` silently paused envd (that is the phone's guard); it now logs the pause and
+the resume.
+
 ## 2. Zero-shot results (model transform = resize short side + centre crop; candidate selection)
 
 Command per cell: `tools/envd/zeroshot_eval.py --emb <cache>/<ds>_<tag>.npz --classes <cache>/classes_<tag>.json
@@ -175,6 +186,24 @@ residential 79.8, tunnel 88.9, parking lot 81.6, gas station 6/7); DAWN macro 79
 snow 99.0, fog 83.0). Better than openai on place, clearly worse on weather and light. Anchored
 probe (L2 0.1, A -> B): weather 76.5, light 85.3, place 73.7: the same as openai's probe within a
 point, at 1.3x the input pixels and 1.5x the embedding size.
+
+### TinyCLIP-ViT-40M-32-Text-19M (MIT; logit scale 50)
+BDD weather macro 48.5 (overcast 14.4, rain 53.0, snow 41.2, clear 85.5); BDD light macro 73.7
+(dusk_dawn 24.3); BDD place macro 64.6 (highway 57.3, city 52.8, residential 60.1, tunnel 81.5,
+parking lot 71.4); DAWN macro 81.3 (rain 56.5, snow 98.5, fog 89.0).
+
+### Selection (pre-registered rule: mean of the four macros, cost as tie-breaker)
+| encoder | BDD weather | BDD light | BDD place | DAWN | mean | licence | input / dim |
+|---|---|---|---|---|---|---|---|
+| **ViT-B-32 / openai** | 55.8 | 79.9 | 66.1 | 82.5 | **71.1** | MIT | 224 / 512 |
+| ViT-B-32-SigLIP2-256 | 46.2 | 74.0 | 72.5 | 79.5 | 68.1 | Apache-2.0 | 256 / 768 |
+| TinyCLIP-40M/32 | 48.5 | 73.7 | 64.6 | 81.3 | 67.0 | MIT | 224 / 512 |
+| ViT-B-32 / laion2b | 44.7 | 69.5 | 65.1 | 82.3 | 65.4 | MIT | 224 / 512 |
+
+Decision: **ViT-B-32 / openai** (best zero-shot mean, best on the three weak groups weather / light,
+equal to SigLIP2 after the probe, smallest input of the two, MIT). TinyCLIP-40M would save ~20 %
+of the encoder time for 4 points of macro; not worth it at 1 fps. Everything below is on this
+encoder with the squash preprocessing of the daemon.
 
 ### Reading (first two encoders)
 Zero-shot misses the 70 % bar on overcast (called clear), snow (BDD "snowy" = snow on the ground
