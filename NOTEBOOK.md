@@ -89,3 +89,8 @@ Roadmap / candidates: (a) supply check or soak for the resets (user hardware: el
 wire gauge, powered hub); (b) code lane: interleave/serialise signd and modeld on the GPU to win back
 part of the 3.8 road/s; (c) envd place smoothing or a gas-station/underground-parking disambiguation;
 (d) ledlat glass-to-API; (e) boost auto-recovery; (f) mount + calibration; (g) own recordings.
+
+### Fold 3 correction (2026-10-26, user)
+The resets at 16:38, 20:14 and ~21:03 CET were caused by the user's own hardware testing, not by the
+stack or a supply brown-out. The [UNFAV] reset item of fold 3 is withdrawn; roadmap item (a) is dropped;
+the big-core pin stays.
