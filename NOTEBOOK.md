@@ -19,7 +19,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L2-envd-phone | Opus | folded into L3 | orders/L2-envd-phone.md |
 | L3 speed-tune + envd on phone | Opus | done (2026-10-26 21:40 CET) | docs/lanes/L3-speed.md |
 | L4 GPU turn-taking (signd/modeld) | Opus | running (2026-10-26 22:15 CET) | docs/lanes/L4-gpu-sched.md |
-| L5 ride replay (10-min dashcam ride as camera source) | Opus | phase 1 laptop running; phone switch after L4 | docs/lanes/L5-ride-replay.md |
+| L5 ride replay (10-min dashcam ride as camera source) | Opus | phase 1 done (5b2ae5a); 2a copying ride; 2b switch after L4 | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
 - [FAV] signd's detector runs on the Adreno 630 (ncnn/Vulkan) next to modeld: 5.0 signs/s at
@@ -96,3 +96,15 @@ part of the 3.8 road/s; (c) envd place smoothing or a gas-station/underground-pa
 The resets at 16:38, 20:14 and ~21:03 CET were caused by the user's own hardware testing, not by the
 stack or a supply brown-out. The [UNFAV] reset item of fold 3 is withdrawn; roadmap item (a) is dropped;
 the big-core pin stays.
+
+## Fold 4 (2026-10-26): ride replay source, phase 1 (L5, Opus)
+- [FAV] camerad-replay plays a 10-min Krakow city drive (Wikimedia Commons, CC BY 3.0, Relaxing Roads 4K)
+  as a camera: 20.0 fps steady, 2 ms decode, loops with a 1 s seam; supercombo overlays plausible on
+  the laptop (lines on markings, lead at 45 m on a bridge; weak lanes in dense junctions).
+  One-command switch: scripts/use-replay.sh --enable FILE | --disable.
+- [UNFAV] City only: no open Polish rural/forest/highway clip found (fallbacks: German mixed 57 min,
+  Slovenian motorway 12 min). Intrinsics are estimates (focal 690 px, pitch -0.085, height 1.1 m).
+- [INSTR] Bug fixed in camerad/ring.h: readers never noticed a replaced ring at their 200 ms timeout,
+  so modeld/envd stayed on a dead ring after any camerad restart; now a 500 ms re-check timer. The
+  phone's installed daemons predate the fix (use-replay.sh restarts them).
+Deviation: the lane stopped a download with `pkill -x curl -u piotr` (broader than its PID).
