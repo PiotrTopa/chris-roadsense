@@ -19,7 +19,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L2-envd-phone | Opus | folded into L3 | orders/L2-envd-phone.md |
 | L3 speed-tune + envd on phone | Opus | done (2026-10-26 21:40 CET) | docs/lanes/L3-speed.md |
 | L4 GPU turn-taking (signd/modeld) | Opus | running (2026-10-26 22:15 CET) | docs/lanes/L4-gpu-sched.md |
-| L5 ride replay (10-min dashcam ride as camera source) | Opus | phase 1 done (5b2ae5a); 2a copying ride; 2b switch after L4 | docs/lanes/L5-ride-replay.md |
+| L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
 - [FAV] signd's detector runs on the Adreno 630 (ncnn/Vulkan) next to modeld: 5.0 signs/s at
@@ -108,3 +108,10 @@ the big-core pin stays.
   so modeld/envd stayed on a dead ring after any camerad restart; now a 500 ms re-check timer. The
   phone's installed daemons predate the fix (use-replay.sh restarts them).
 Deviation: the lane stopped a download with `pkill -x curl -u piotr` (broader than its PID).
+
+### Fold 4 addendum (2026-10-26 23:20 CET): replay live on the phone
+- [FAV] Phone runs the Krakow ride as its camera: 20.0 fps, 0 drops; road 12.6-13.1/s, signs 4.5-5.0/s
+  with real tracks (yield, priority road), envd city_street/overcast/dusk; overlays on the phone match
+  the markings (lead 11.8 m, 89 m). use-replay.sh worked on its first run.
+- [INSTR] Sign boxes trail the moving scene by ~40 px (~100 ms of sign latency at ~10 m/s), visible in
+  the preview; envd's place label wanders (city_street vs highway on wide arterials).
