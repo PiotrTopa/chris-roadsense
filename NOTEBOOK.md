@@ -17,7 +17,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L1-soak | Opus | superseded by L3 (speed ruling) | orders/L1-soak.md |
 | L2 envd (environment/weather analyser, 1 fps) | Fable (user ruling 2026-10-26) | done (2026-10-26 ~18:20 CET) | docs/lanes/L2-envd.md |
 | L2-envd-phone | Opus | folded into L3 | orders/L2-envd-phone.md |
-| L3 speed-tune + envd on phone | Opus | running (2026-10-26) | docs/lanes/L3-speed.md |
+| L3 speed-tune + envd on phone | Opus | done (2026-10-26 21:40 CET) | docs/lanes/L3-speed.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
 - [FAV] signd's detector runs on the Adreno 630 (ncnn/Vulkan) next to modeld: 5.0 signs/s at
@@ -61,3 +61,31 @@ Changes: roadsense 2c03711..460b5ef (envd/, tools, api env topic + /v1/env, unit
 Roadmap: L2-envd-phone (Opus: build, install with the probe class file, cost rows, 30-min run) once
 the stress test ends; L1-soak still open; candidates: GPU min-clock pin, boost auto-recovery, mount
 and calibration, in-car recordings as own training data for envd.
+
+## Fold 3 (2026-10-26): speed profile + envd live on the phone (L3, Opus)
+- [FAV] Road rate 9.6 -> 13.2 runs/s (15-min run, 13.0-13.3 in every window), model 95 -> 74 ms,
+  frame-to-client latency 185 -> 144 ms median; signs unchanged at 5.0/s (detect 107 -> 81 ms);
+  envd live at 1 Hz, 323 ms per frame on the big cores. Die 61-64 C after the first 4 min (max 82 C).
+  Verified live 21:39 CET: road 12.7/s, signs 4.6/s, env connected.
+- [FAV] The lever was CPU clocks, not the GPU: modeld's main thread on the big cores, little and big
+  cores pinned at max (big-core 2.09 GHz cap removed); GPU min-freq pin and throttle-temp had no
+  measurable effect (kept as guard / raised to 95 C).
+- [UNFAV] The phone hard-reset by itself twice under high load (20:14 and ~21:03 CET; also 16:38 in the
+  user's stress test). No oops, no thermal event, temps < 66 C, boost healthy afterwards; suspected
+  supply brown-out (battery eliminator + VBUS boost feeding hub and camera; peaks >= 2.8 A with the
+  speed profile). Not proven. Fallback: drop the big-core pin (12.6 road/s).
+- [UNFAV] envd on ncnn/Vulkan hung the GPU (kernel hangcheck), leaving modeld failing every run until
+  restart; modeld now exits after 20 consecutive failures (built, not yet exercised by a real hang).
+  envd at 2 Hz heats 60 -> 88 C for no gain.
+- [INSTR] Signs cost ~3.8 road runs/s (16.3/s without signd): modeld runs take ~105 ms when they overlap
+  a detector run on the GPU (bimodal). Per-stage road latency: camera ~38 ms, prep 11 ms, model 56 ms
+  median, ~20 ms queue/JSON, api +4 ms.
+- [INSTR] envd live on a dark bench: weather clear, light night; place flips between underground
+  parking and gas station (known probe confusion, conf ~0.4-0.6).
+Changes: roadsense 0e531ef (units, envd.json, modeld lost-device exit, report), roadsense-signs
+cb9087e (comment). Phone: speed profile installed and running; autostart disabled; old modeld and api
+kept as backups.
+Roadmap / candidates: (a) supply check or soak for the resets (user hardware: eliminator rating,
+wire gauge, powered hub); (b) code lane: interleave/serialise signd and modeld on the GPU to win back
+part of the 3.8 road/s; (c) envd place smoothing or a gas-station/underground-parking disambiguation;
+(d) ledlat glass-to-API; (e) boost auto-recovery; (f) mount + calibration; (g) own recordings.
