@@ -66,6 +66,9 @@ def main():
         # Replica of envd/prep.cc: the frame as NV12 (full-range BT.601, 4:2:0 chroma = 2x2 means),
         # box-downscaled to size x size with INTEGER block bounds (ox*W//size .. (ox+1)*W//size),
         # the block mean converted to RGB afterwards. Parity with the C++: docs/lanes/L2-envd.md.
+        if im.size[0] < 2 * size or im.size[1] < 2 * size:  # too small for the block filter (not the camera case)
+            k = max((2 * size + im.size[0] - 1) // im.size[0], (2 * size + im.size[1] - 1) // im.size[1])
+            im = im.resize((im.size[0] * k, im.size[1] * k), Image.NEAREST)
         w, h = im.size[0] & ~1, im.size[1] & ~1
         ycc = np.asarray(im.crop((0, 0, w, h)).convert("YCbCr"), dtype=np.float64)
         Y = ycc[:, :, 0]

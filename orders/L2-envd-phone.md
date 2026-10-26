@@ -14,6 +14,8 @@ order the moment any thermal zone passes 95 C (`cat /sys/class/thermal/thermal_z
 # laptop: sync the committed tree and push the envd model files
 scripts/sync-phone.sh                                   # ~/roadsense on the phone
 scp models/envd-image.onnx models/envd-classes.json user@192.168.0.86:~/roadsense/models/
+# the probe-anchored class file (not committed, trained on BDD/DAWN): ~/datasets/envd-cache/envd-classes-probe.json on the P52
+# TinyCLIP fallback (row F): ~/datasets/envd-cache/onnx/tinyclip40m.onnx + classes_tinyclip40m.json, renamed as in row F
 # optional GPU backend: also models/envd-image-ncnn.param/.bin (tools/envd/make_ncnn.sh; see the lane report
 # for whether the ncnn conversion of the chosen tower was verified)
 # phone, as user: build only envd (keeps the installed modeld/camerad untouched)
@@ -42,11 +44,12 @@ hottest zone before / after:
 | C (big cores) | `--backend ort --threads 2 --cpus 4-7 --max-hz 1` |
 | D (GPU, only if the ncnn model is installed) | `--backend ncnn --cpus 0-3 --max-hz 1` |
 | E (uncapped, 30 frames, cost ceiling) | A with `--max-hz 0` and `--frames 30` |
+| F (TinyCLIP-40M fallback, 3x cheaper, -4 macro points) | A with `--model ~user/roadsense/models/envd-tinyclip40m.onnx --classes ~user/roadsense/models/envd-classes-tinyclip40m.json` |
 
-Expectation from the laptop (docs/lanes/L2-envd.md section 5): ViT-B/32 fp32 ~1 GFLOP-class... see
-the report's table; A should land in the 300-800 ms range on the A55s, i.e. well inside the 1 s period.
-If A exceeds 1000 ms, note it and try B and C; the unit file gets whichever stays under ~600 ms with
-the least big-core use.
+Expectation from the laptop (docs/lanes/L2-envd.md section 1b: 89 ms at 2 threads on an i7):
+A should land in the 500-1000 ms range on the A55s, i.e. at the 1 s period; B/C ~half of that;
+F ~1/3. If A exceeds ~800 ms, the unit file should move to whichever of B/C/F stays under ~500 ms
+with the least big-core use (F costs 4 points of macro accuracy).
 
 ## 3. 30 minutes live next to the stack
 `systemctl start roadsense-envd` with camerad-dvr + modeld + api running (signd as the user left it).

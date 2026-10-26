@@ -94,11 +94,14 @@ def main():
     true_changes = [t for t in range(1, len(seq_true)) if seq_true[t] != seq_true[t - 1]]
     sm_changes = [t for t in range(1, len(sm_lab)) if sm_lab[t] != sm_lab[t - 1]]
     raw_flips = sum(1 for t in range(1, len(raw_lab)) if raw_lab[t] != raw_lab[t - 1])
-    lat = []
-    for tc in true_changes:
-        after = [t for t in sm_changes if t >= tc and sm_lab[t] == seq_true[tc]]
+    lat, used = [], set()
+    bounds = true_changes + [len(seq_true)]
+    for k, tc in enumerate(true_changes):
+        after = [t for t in sm_changes if tc <= t < bounds[k + 1] and sm_lab[t] == seq_true[tc] and t not in used]
         lat.append(after[0] - tc if after else None)
-    extra = len(sm_changes) - sum(1 for x in lat if x is not None)
+        if after:
+            used.add(after[0])
+    extra = len(sm_changes) - len(used)  # label changes that are not the detection of a true change
     print(f"{a.group}: {len(seq_true)} s, {len(true_changes)} true changes, noise {a.noise:.0%}, window {a.window} s, "
           f"hysteresis {a.hysteresis}, hold {a.min_hold} s")
     print(f"  raw arg-max: accuracy {np.mean(raw_lab == seq_true) * 100:.1f} %, {raw_flips} flips")

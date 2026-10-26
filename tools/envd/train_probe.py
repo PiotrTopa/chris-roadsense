@@ -65,7 +65,7 @@ def main():
     ap.add_argument("--group", required=True)
     ap.add_argument("--label-col", required=True)
     ap.add_argument("--dataset", required=True)
-    ap.add_argument("--extra", action="append", default=[], help="more training data: path.npz:dataset:label_col (all of it goes to split A)")
+    ap.add_argument("--extra", action="append", default=[], help="more labelled data: path.npz:dataset:label_col (split A/B by file name like the main set; A trains, B is reported)")
     ap.add_argument("--l2", type=float, default=1e-3)
     ap.add_argument("--init-zeroshot", action="store_true", help="start from the prompt embeddings (keeps classes without data usable)")
     ap.add_argument("--out", default="")
@@ -77,11 +77,14 @@ def main():
     X, y, files = load(a.emb, a.dataset, a.label_col, classes)
     isA = np.array([split_of(f) == "A" for f in files])
     XA, yA, XB, yB = X[isA], y[isA], X[~isA], y[~isA]
+    extras_B = []
     for ex in a.extra:
         p, ds, col = ex.split(":")
-        Xe, ye, _ = load(p, ds, col, classes)
-        XA = np.concatenate([XA, Xe])
-        yA = np.concatenate([yA, ye])
+        Xe, ye, fe = load(p, ds, col, classes)
+        eA = np.array([split_of(f) == "A" for f in fe])  # extra sets are split the same way: A trains, B tests
+        XA = np.concatenate([XA, Xe[eA]])
+        yA = np.concatenate([yA, ye[eA]])
+        extras_B.append((p, Xe[~eA], ye[~eA]))
     init = np.array(g["emb"], np.float32) if a.init_zeroshot else None
     W = train(XA, yA, len(classes), a.l2, doc["logit_scale"], init=init)
     labelsB = [classes[i] for i in yB]
@@ -100,6 +103,17 @@ def main():
     print("probe on B:" if a.md else "")
     print(tp)
     print(f"macro zero-shot {mz * 100:.1f} -> probe {mp * 100:.1f}; micro {uz * 100:.1f} -> {up * 100:.1f}")
+    for p, Xe, ye in extras_B:
+        le = [classes[i] for i in ye]
+        _, pz = scores(Xe, doc, a.group)
+        _, mz, _ = evaluate(Xe, le, classes, pz, False, "")
+        lg = doc["logit_scale"] * Xe @ W.T
+        lg -= lg.max(1, keepdims=True)
+        pe = np.exp(lg)
+        pe /= pe.sum(1, keepdims=True)
+        te, me, _ = evaluate(Xe, le, classes, pe, a.md, f"probe on {p} split B")
+        print(f"{p} split B ({len(ye)} images): macro zero-shot {mz * 100:.1f} -> probe {me * 100:.1f}")
+        print(te)
     if a.out:
         doc["groups"][a.group]["emb"] = [[round(float(v), 6) for v in row] for row in W]
         doc["groups"][a.group]["probe"] = {"trained_on": [a.emb] + a.extra, "l2": a.l2, "split": "A"}

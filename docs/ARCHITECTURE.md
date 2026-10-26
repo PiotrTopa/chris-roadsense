@@ -300,7 +300,10 @@ label, `stable_s` the time since it last changed. Cheap frame statistics ride al
 "model":   "ViT-B-32/openai ort"
 ```
 The last message is sent to every client when it connects. Accuracy per class, the choice of
-encoder and the smoothing check: `docs/lanes/L2-envd.md`. Config `/etc/roadsense/envd.json`
+encoder and the smoothing check: `docs/lanes/L2-envd.md`. The committed class file holds the
+zero-shot prompt embeddings; `tools/envd/train_probe.py` writes a drop-in replacement whose rows
+are a linear probe on frozen embeddings (trained on research-licensed data, so not committed;
+point `classes` in `envd.json` at it). Config `/etc/roadsense/envd.json`
 (keys as the CLI options, see `envd --help`); offline: `envd_replay` on JPEGs or an NV12 sequence.
 
 ## api (Python, aiohttp, port 8080)

@@ -71,9 +71,19 @@ void Preprocessor::run(const Nv12View &v, float *out, FrameStats *stats) {
     }
     float *R = out, *G = out + n, *B = out + 2 * n;
     for (size_t i = 0; i < n; ++i) {
-        const float Y = cnt_y_[i] ? float(sum_y_[i]) / float(cnt_y_[i]) : 0.f;
-        const float U = cnt_uv_[i] ? float(sum_u_[i]) / float(cnt_uv_[i]) - 128.f : 0.f;
-        const float V = cnt_uv_[i] ? float(sum_v_[i]) / float(cnt_uv_[i]) - 128.f : 0.f;
+        float Y, U, V;
+        if (cnt_y_[i] && cnt_uv_[i]) {
+            Y = float(sum_y_[i]) / float(cnt_y_[i]);
+            U = float(sum_u_[i]) / float(cnt_uv_[i]) - 128.f;
+            V = float(sum_v_[i]) / float(cnt_uv_[i]) - 128.f;
+        } else {  // frame smaller than the input (upscaling): nearest source pixel
+            const int ox = int(i % size_t(S)), oy = int(i / size_t(S));
+            const int sx = std::min(W - 1, int(int64_t(ox) * W / S)), sy = std::min(H - 1, int(int64_t(oy) * H / S));
+            Y = v.y[size_t(sy) * v.y_stride + sx];
+            const uint8_t *uv = v.uv + size_t(sy / 2) * v.uv_stride + (sx & ~1);
+            U = float(uv[0]) - 128.f;
+            V = float(uv[1]) - 128.f;
+        }
         // BT.601 full range inverse (ring.h): R = Y + 1.402 V, G = Y - 0.344136 U - 0.714136 V, B = Y + 1.772 U
         const float r = std::min(255.f, std::max(0.f, Y + 1.402f * V));
         const float g = std::min(255.f, std::max(0.f, Y - 0.344136f * U - 0.714136f * V));
