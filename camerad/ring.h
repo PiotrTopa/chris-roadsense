@@ -321,11 +321,17 @@ public:
     // Re-opens the ring if camerad restarted.
     bool next(FrameView &out, int timeout_ms) {
         auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-        int idle = 0;
         for (;;) {
             if (latest(out, true)) return true;
-            if (std::chrono::steady_clock::now() >= deadline) return false;
-            if (++idle % 500 == 0) open();  // every ~0.5 s: check for a replaced ring file
+            const auto now = std::chrono::steady_clock::now();
+            // every ~0.5 s without a new frame: check for a replaced ring file. The clock lives in the
+            // reader (not per call) so callers with a short timeout (modeld, envd: 200 ms) also follow
+            // a camerad restart or a switch of frame source.
+            if (now >= reopen_check_) {
+                reopen_check_ = now + std::chrono::milliseconds(500);
+                open();
+            }
+            if (now >= deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
@@ -348,6 +354,7 @@ private:
     ino_t ino_ = 0;
     uint64_t last_seq_ = 0;
     uint64_t dropped_ = 0;
+    std::chrono::steady_clock::time_point reopen_check_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
     std::vector<uint8_t> buf_;
 };
 

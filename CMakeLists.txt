@@ -30,6 +30,11 @@ cmake_dependent_option(ROADSENSE_CAMERAD_DVR "Build camerad-dvr (needs libjpeg-t
 if(ROADSENSE_CAMERAD_DVR)
   add_subdirectory(camerad-dvr)
 endif()
+# camerad-replay: alternative camera source (a recorded ride, MJPEG file, looping).
+cmake_dependent_option(ROADSENSE_CAMERAD_REPLAY "Build camerad-replay (needs libjpeg-turbo)" ON "JPEG_FOUND" OFF)
+if(ROADSENSE_CAMERAD_REPLAY)
+  add_subdirectory(camerad-replay)
+endif()
 add_subdirectory(modeld)
 add_subdirectory(envd)
 add_subdirectory(tools)

@@ -1,0 +1,8 @@
+{
+ "focal_px": 690.0,
+ "cx": 640.0,
+ "cy": 360.0,
+ "fps": 20,
+ "preview_every": 2,
+ "_comment": "Default for scripts/use-replay.sh when the ride has no camera-replay.json of its own. Values = the krakow-2024 ride (docs/lanes/L5-ride-replay.md): action camera, linear mode, HFOV ~86 deg guess"
+}

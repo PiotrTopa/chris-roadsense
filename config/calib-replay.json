@@ -1,0 +1,7 @@
+{
+ "pitch": -0.085,
+ "yaw": 0.015,
+ "roll": 0.0,
+ "height_m": 1.1,
+ "_comment": "Default calib.json for scripts/use-replay.sh when the ride has none (= the krakow-2024 guess, docs/lanes/L5-ride-replay.md). The DVR calib.json is restored by --disable"
+}

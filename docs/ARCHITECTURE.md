@@ -190,6 +190,36 @@ Estimate for a Cortex-A75: decode ~5-7 ms per frame. Units:
 --enable` installs it, masks `roadsense-camerad.service` (which `roadsense.target`
 and modeld otherwise pull in) and starts it; `--disable` switches back.
 
+### camerad-replay: a recorded ride, looping
+
+`camerad-replay --file RIDE.mjpeg [--fps N] [--start S] [--once] [--gap-ms MS] [--verbose] [--frames N] [--no-preview]`
+(source `camerad-replay/main.cc`, single thread, libjpeg-turbo) plays a recorded drive into the ring
+so the whole stack (modeld, envd, sign provider, api, dashboard) runs on road footage:
+
+* **File:** concatenated baseline JPEGs, YCbCr 4:2:0 full range, width and height multiples of 16
+  (`ffmpeg ... -pix_fmt yuvj420p -f mjpeg`; `tools/make_ride.sh` makes one at 1280x720, 20 fps, about
+  125 KB/frame, i.e. ~1.5 GB per 10 minutes). The file is mmapped and indexed (SOI..EOI) at start-up
+  (~0.15 s for 12000 frames on the laptop). The ring takes the frame size of the file.
+* **Pacing:** absolute CLOCK_MONOTONIC deadlines at the source rate; `ts_mono_ns` is the frame's
+  deadline. A frame more than one period late is skipped (counted in `sensor_drops`) so the ride stays
+  in real time. At the end it pauses `--gap-ms` (default 1000, longer than modeld's 500 ms pairing
+  limit, so no model pair spans the seam) and starts again; `--once` stops instead.
+* **Decode:** same raw libjpeg path as camerad-dvr (Y straight into the slot, CbCr interleaved, no
+  colour conversion): 2 ms per 1280x720 frame on the laptop.
+* **Preview:** every `preview_every`-th frame's own JPEG becomes `preview.jpg` (no re-encode).
+* **Message:** `camera` with `"source":"replay"`, `file_frame`, `file_frames`, `file_t_s`, `loops`,
+  `jpeg_bytes`, `decode_fail`, `jpeg_warnings`; exposure and gains 0.
+
+Config `/etc/roadsense/camera-replay.json` (`ROADSENSE_CONFIG_DIR`): `focal_px` (default: 975 scaled to
+the frame width, a placeholder), `cx`, `cy` (centre), `fps` (20), `preview_every` (2). The intrinsics
+and the mounting (`calib.json`) belong to the ride, not to the phone: keep a `camera-replay.json` and a
+`calib.json` next to the ride file. `scripts/use-replay.sh --enable FILE` (root) installs the binary
+(building it directly with `c++` if needed) and `systemd/roadsense-camerad-replay.service`
+(`Conflicts=` camerad and camerad-dvr), installs the ride's two config files (saving the current
+`calib.json`), stops the current camera, starts the replay and restarts the running ring readers;
+`--disable` restores `calib.json` and the camera that ran before. Ride preparation, licences and the
+calibration guesses: `docs/lanes/L5-ride-replay.md`.
+
 ## JSON sockets
 
 Each daemon listens on `/run/roadsense/<name>.sock` (SOCK_STREAM). Clients
