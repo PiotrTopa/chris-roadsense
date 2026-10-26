@@ -102,3 +102,40 @@ camerad-replay -> private ring (`ROADSENSE_RING=/dev/shm/roadsense-frames-l5`, r
 
 ### 5. Phase 2 commands (not run; the phone belongs to L4 now)
 See the hand-back report; copied here when phase 2 runs.
+
+### 6. Phase 2a: ride data on the phone (22:48-22:51 CET)
+One plain `scp` (single stream, 3 min 02 s, ~8.3 MB/s) to `user@192.168.0.86:~/rides/krakow-2024/`:
+`krakow-25-35.mjpeg` (1 508 884 969 B, md5 f2917ad4e104e7f84e7fbc6b4f4d3a00, matches the laptop),
+`camera-replay.json`, `calib.json`, `SOURCE.txt` (md5s match). Code (step 1) and the switch (step 3) wait
+for L4. Process note: stop downloads by PID, not `pkill` by name.
+
+### 7. Phase 2b: the phone runs the ride (23:16-23:21 CET)
+L4 safe point 23:16. Step 1: `git archive HEAD` of the replay files only into `~user/roadsense`
+(ring.h, jsonsock.h, camerad-replay/, config/camera-replay.json, config/calib-replay.json,
+scripts/use-replay.sh, the two units). Step 3: `use-replay.sh --enable
+/home/user/rides/krakow-2024/krakow-25-35.mjpeg` as root: first real run clean, no fixes needed. It built
+camerad-replay with `c++` (no build dir), recorded `dvr` as the source to restore, saved
+`calib.json.pre-replay`, disabled camerad-dvr, started the replay (index 483 ms) and try-restarted
+modeld / envd / signd. L4's runtime drop-ins `/run/systemd/system/roadsense-{modeld,signd}.service.d/l4.conf`
+are untouched and still apply.
+
+Verify (`/v1/*` at 23:17-23:20, the stack as L4 left it: modeld + signd from L4's drop-ins, envd, api):
+
+| | value |
+|---|---|
+| camera | source replay, 20.0 fps (api 19.56/s), sensor_drops 0, decode_fail 0, conv_ms 6.9-8.1 (decode + NV12 on the A55 cores, unpinned) |
+| road | 12.6-13.1 runs/s, model_ms ~55-60 |
+| signs | 4.5-5.0/s, detect_ms 95-112; live tracks e.g. regulatory--yield 0.81, end-of-priority-road 0.84, priority-road 0.67 |
+| envd | place city_street (0.78, highway 0.12), weather overcast, light dusk_dawn, 0.99/s, env_ms 327 |
+| cpu temp | 72.6 C |
+
+Overlays (`docs/lanes/L5-ride-replay/phone-overlay-{1,2}.jpg`, from `/preview` on the phone):
+- `phone-overlay-1` (t ~0:24, road works with chevron boards and red-white bollards): path in lane, the
+  right lane line on the dashed marking, lead box on the white car at 11.8 m p 1.00, sign track #14
+  priority-road 0.67. Its box sits ~40 px up-left of the diamond sign: the box belongs to an older frame
+  than the preview (sign latency ~100 ms at ~10 m/s plus the preview cadence), not a projection error.
+- `phone-overlay-2` (t ~1:24, straight 2x2 arterial next to an articulated bus): left and right lane
+  lines on the painted markings, road edges on the kerb lines, lead 89 m p 0.88. Good.
+
+Replay left RUNNING (user watches). Back to the DVR camera:
+`dotinfra vault exec poco_user_password -- ssh user@192.168.0.86 'cd ~/roadsense && sudo -S -p "" sh scripts/use-replay.sh --disable'`
