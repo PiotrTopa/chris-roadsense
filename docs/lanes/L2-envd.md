@@ -365,7 +365,7 @@ on the phone's ncnn build.
 
 ## 7. State at hand-back (18:2x CET)
 - roadsense commits: 2c03711 (envd + tools + api + docs), 135d8f9 (thermal-pause log, ring_replay),
-  08c4ba7 (class file, config), + this report's final commit. Nothing pushed yet / pushed (see hand-back).
+  08c4ba7 (class file, config), 645547d (final numbers); all pushed to origin.
 - Phone: untouched (the stress test ran the whole lane; die 80-84 C). envd is not installed there;
   `orders/L2-envd-phone.md` covers build, install, cost rows A-F and a 30-min run.
 - Laptop files outside the repo: `~/datasets/envd-cache/` (embeddings, class files incl.
