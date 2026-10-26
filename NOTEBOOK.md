@@ -15,6 +15,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 |---|---|---|---|
 | L1 signs-vulkan | Fable | done (2026-10-24 ~01:00 CEST) | docs/lanes/L1-signs-vulkan.md |
 | L1-soak | Opus | ordered, not started | orders/L1-soak.md |
+| L2 envd (environment/weather analyser, 1 fps) | Fable (user ruling 2026-10-26) | running | docs/lanes/L2-envd.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
 - [FAV] signd's detector runs on the Adreno 630 (ncnn/Vulkan) next to modeld: 5.0 signs/s at

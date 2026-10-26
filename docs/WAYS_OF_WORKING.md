@@ -29,6 +29,7 @@ Secrets: vault key `poco_user_password` via `dotinfra vault exec poco_user_passw
 ## User rulings (dated)
 - 2026-10-22: boot autostart of roadsense.target stays disabled (thermal); start by hand.
 - 2026-10-23: lane orchestration adopted for roadsense; first lane L1 = signs on Vulkan (Fable).
+- 2026-10-26: L2 = slow environment analyser (weather + place, <= 1 fps), built on Fable (user).
 
 ## Preferences
 - Times in CEST. Commits: add only own paths; co-author trailer per session reminder.
