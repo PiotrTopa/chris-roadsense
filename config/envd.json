@@ -1,0 +1,12 @@
+{
+  "backend": "ort",
+  "threads": 2,
+  "cpus": "0-3",
+  "max_hz": 1,
+  "window": 10,
+  "hysteresis": 0.10,
+  "min_hold": 3,
+  "ignore_bottom": 0,
+  "pause_temp": 92000,
+  "frame_scores": true
+}
