@@ -344,6 +344,7 @@ int main(int argc, char **argv) {
     auto next_temp = std::chrono::steady_clock::now();
     auto next_run = next_temp;
     Pair p;
+    int run_failures = 0;
     while (g_run) {
         srv.service();
         auto now = std::chrono::steady_clock::now();
@@ -380,8 +381,16 @@ int main(int argc, char **argv) {
         const auto t0 = std::chrono::steady_clock::now();
         if (!model->run(p.prev->med.data(), p.cur->med.data(), p.prev->big.data(), p.cur->big.data(), nullptr, &err)) {
             fprintf(stderr, "modeld: run failed: %s\n", err.c_str());
+            // A lost Vulkan device (e.g. after a GPU hang recovery) never comes back inside this
+            // process: exit so systemd restarts modeld with a fresh device instead of failing forever.
+            if (++run_failures >= 20) {
+                fprintf(stderr, "modeld: %d consecutive run failures, exiting\n", run_failures);
+                fflush(stderr);
+                std::_Exit(1);  // no teardown: destroying objects on a lost device can block
+            }
             continue;
         }
+        run_failures = 0;
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         RoadMeta m;
         m.seq = p.cur->seq;

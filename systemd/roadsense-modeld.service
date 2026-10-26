@@ -13,13 +13,21 @@ Environment=ROADSENSE_CONFIG_DIR=/etc/roadsense
 RuntimeDirectory=roadsense
 RuntimeDirectoryPreserve=yes
 StateDirectory=roadsense
-# Cap the gold cluster (cpu4-7) at 2.09 GHz: ~0.65x energy per inference for ~1.27x latency
-# (68 ms cold), which keeps the SoC off its 95 C thermal limiter. Restored on stop.
-ExecStartPre=-/bin/sh -c 'for c in 4 5 6 7; do echo 2092800 > /sys/devices/system/cpu/cpu$c/cpufreq/scaling_max_freq; done'
-ExecStopPost=-/bin/sh -c 'for c in 4 5 6 7; do cat /sys/devices/system/cpu/cpu$c/cpufreq/cpuinfo_max_freq > /sys/devices/system/cpu/cpu$c/cpufreq/scaling_max_freq; done'
+# Speed first (user ruling 2026-10-26: the fan holds the stack near 60 C on the bench; lane stop 95 C).
+# Pin every clock the stack depends on at its top step so nothing ramps down between runs: the
+# Adreno's devfreq floor (710 MHz), the silver cluster (cpu0-3: frame prep) and the gold cluster
+# (cpu4-7: model thread + ncnn's CPU layers, signd, envd; also uncapped, the old 2.09 GHz cap is gone).
+# Measured (docs/lanes/L3-speed.md): 9.6 -> 13.1 road/s with signd at 5 Hz and envd at 1 Hz. Restored on stop.
+ExecStartPre=-/bin/sh -c 'for c in 4 5 6 7; do f=/sys/devices/system/cpu/cpu$c/cpufreq; cat $f/cpuinfo_max_freq > $f/scaling_max_freq; cat $f/cpuinfo_max_freq > $f/scaling_min_freq; done'
+ExecStartPre=-/bin/sh -c 'for c in 0 1 2 3; do cat /sys/devices/system/cpu/cpu$c/cpufreq/cpuinfo_max_freq > /sys/devices/system/cpu/cpu$c/cpufreq/scaling_min_freq; done'
+ExecStartPre=-/bin/sh -c 'cat /sys/class/devfreq/5000000.gpu/max_freq > /sys/class/devfreq/5000000.gpu/min_freq'
+ExecStopPost=-/bin/sh -c 'for c in 0 1 2 3 4 5 6 7; do cat /sys/devices/system/cpu/cpu$c/cpufreq/cpuinfo_min_freq > /sys/devices/system/cpu/cpu$c/cpufreq/scaling_min_freq; done'
+ExecStopPost=-/bin/sh -c 'cut -d" " -f1 /sys/class/devfreq/5000000.gpu/available_frequencies > /sys/class/devfreq/5000000.gpu/min_freq'
 # GPU backend (ncnn/Vulkan, needs a build with -DROADSENSE_NCNN=ON). Accuracy vs ORT fp32 over a 119-run
 # replay: lane y mean 0.018 m, max 0.10 m within 100 m; leads within 0.8 m (p95). See docs/ROADMAP.md.
-ExecStart=/usr/local/bin/modeld --backend ncnn --cpus 0-3 --prep-cpus 4-7 --max-hz 20 --throttle-temp 80000 --stats 10
+# Model thread on the gold cores (model_ms 83 -> 78 vs the silver cores; signd and envd share them),
+# frame prep on the silver cores. The thermal guard halves the rate only at 95 C (the lane safety stop).
+ExecStart=/usr/local/bin/modeld --backend ncnn --cpus 4-7 --prep-cpus 0-3 --max-hz 20 --throttle-temp 95000 --stats 10
 # CPU fallback (ONNX Runtime fp32, exact but ~5 Hz and 90 C on this phone):
 # ExecStart=/usr/local/bin/modeld --backend ort --model /var/lib/roadsense/models/supercombo-fp32.onnx --cpus 4-7 --prep-cpus 0-3 --max-hz 5 --throttle-temp 75000 --stats 10
 Restart=always

@@ -1,7 +1,7 @@
 {
   "backend": "ort",
   "threads": 2,
-  "cpus": "0-3",
+  "cpus": "4-7",
   "max_hz": 1,
   "window": 10,
   "hysteresis": 0.10,
