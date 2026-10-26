@@ -30,6 +30,8 @@ Secrets: vault key `poco_user_password` via `dotinfra vault exec poco_user_passw
 - 2026-10-22: boot autostart of roadsense.target stays disabled (thermal); start by hand.
 - 2026-10-23: lane orchestration adopted for roadsense; first lane L1 = signs on Vulkan (Fable).
 - 2026-10-26: L2 = slow environment analyser (weather + place, <= 1 fps), built on Fable (user).
+- 2026-10-26 ~18:40: thermal headroom is ample with the fan (CPU+GPU stress plateaus around 80 C per the user);
+  optimise for SPEED and responsiveness, not for lower GPU/heat. Lane safety stop stays at 95 C.
 
 ## Preferences
 - Times in CEST. Commits: add only own paths; co-author trailer per session reminder.
