@@ -72,6 +72,20 @@ public:
     bool run(const float *med_prev, const float *med_cur, const float *big_prev, const float *big_cur,
              const float *desire, std::string *err);
 
+    // Two-stage run (ncnn, InferenceBackend::can_split): prefetch() packs the image pair and records the
+    // vision stage; submit() runs it on the GPU; run(Prefetch) does the rest exactly like run() above.
+    // prefetch() and submit() touch no Supercombo state, so they may run on another thread while
+    // run() of the previous pair is going.
+    struct Prefetch {
+        std::vector<float> img0, img1;
+        std::unique_ptr<Stage1Job> job;
+    };
+    bool can_prefetch() const;
+    std::unique_ptr<Prefetch> prefetch(const float *med_prev, const float *med_cur, const float *big_prev,
+                                       const float *big_cur, std::string *err);
+    bool submit(Prefetch &p, std::string *err);
+    bool run(Prefetch &p, const float *desire, std::string *err);
+
     const std::vector<float> &raw() const { return out_; }
     const RoadOutputs &outputs() const { return parsed_; }
     float v_ego() const { return v_ego_; }       // vEgo fed into the last run
@@ -85,6 +99,9 @@ public:
     const char *backend_name() const { return backend_->name(); }
 
 private:
+    void prepare_aux(const float *desire);  // desire FIFO, lateral params
+    void finish();                          // parse, FCW, feedback FIFOs
+
     std::unique_ptr<InferenceBackend> backend_;
     SupercomboOptions opt_;
     std::array<std::vector<float>, 7> in_;

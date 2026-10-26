@@ -30,7 +30,7 @@ void usage() {
             "usage: modeld_replay (DIR | FILE.nv12) [--width W --height H] [--fps F]\n"
             "         [--focal PX] [--cx PX] [--cy PX] [--calib FILE | --pitch R --yaw R --roll R --height-m M]\n"
             "         [--backend ort|ncnn] [--model PATH] [--threads N] [--ncnn-fp32] [--ncnn-no-flushall] [--rhd] [--steer-delay S]\n"
-            "         [--start N] [--max-frames N]\n"
+            "         [--start N] [--max-frames N] [--split]\n"
             "         [--dump-input DIR] [--dump-runs N] [--dump-tensors]\n"
             "  defaults: fps 20, focal 1470*W/1920 (camerad default), cx W/2, cy H/2, calib from\n"
             "  $ROADSENSE_CONFIG_DIR/calib.json if present, backend ort, model /var/lib/roadsense/models/supercombo-fp32.onnx\n"
@@ -38,7 +38,9 @@ void usage() {
             "  --dump-input DIR  write the packed model inputs of the first --dump-runs runs (default 3) as PGM:\n"
             "                    <run>_{input_imgs,big_input_imgs}_yuv.pgm (current frame, Y 512x256 over U|V)\n"
             "                    and <run>_{...}_ch.pgm (all 12 channels, 3x4 tiles of 256x128)\n"
-            "  --dump-tensors    also write <run>_in<i>.f32 (all 7 inputs) and <run>_out.f32 (raw 6504 outputs)\n");
+            "  --dump-tensors    also write <run>_in<i>.f32 (all 7 inputs) and <run>_out.f32 (raw 6504 outputs)\n"
+            "  --split           ncnn: two-stage run as modeld pipelines it (vision stage recorded + submitted, then the\n"
+            "                    rest); must give the same outputs as the default one-stage run\n");
 }
 
 struct Image {
@@ -146,6 +148,7 @@ int main(int argc, char **argv) {
     double fps = 20, focal = 0, cx = -1, cy = -1;
     Calib calib;
     bool calib_cli = false, dump_tensors = false;
+    bool split = false;  // --split: modeld's two-stage run (ncnn), for checking it against the one-stage run
     int dump_runs = 3;
     long start = 0, max_frames = -1;
     SupercomboOptions so;
@@ -182,6 +185,7 @@ int main(int argc, char **argv) {
         else if (a == "--dump-input") dump_dir = val();
         else if (a == "--dump-runs") dump_runs = atoi(val());
         else if (a == "--dump-tensors") dump_tensors = true;
+        else if (a == "--split") split = true;
         else if (a == "-h" || a == "--help") return usage(), 0;
         else if (a[0] != '-' && input.empty()) input = a;
         else return usage(), 2;
@@ -294,7 +298,14 @@ int main(int argc, char **argv) {
             continue;
         }
         const auto t0 = std::chrono::steady_clock::now();
-        if (!model->run(prev.med.data(), cur.med.data(), prev.big.data(), cur.big.data(), nullptr, &err))
+        bool run_ok;
+        if (split) {  // modeld's pipelined path, sequentially: record stage 1, submit it, run stage 2
+            auto pf = model->prefetch(prev.med.data(), cur.med.data(), prev.big.data(), cur.big.data(), &err);
+            run_ok = pf && model->submit(*pf, &err) && model->run(*pf, nullptr, &err);
+        } else {
+            run_ok = model->run(prev.med.data(), cur.med.data(), prev.big.data(), cur.big.data(), nullptr, &err);
+        }
+        if (!run_ok)
             return fprintf(stderr, "modeld_replay: run failed: %s\n", err.c_str()), 1;
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         RoadMeta m;

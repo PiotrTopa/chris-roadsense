@@ -50,7 +50,45 @@ bool Supercombo::run(const float *med_prev, const float *med_cur, const float *b
     std::memcpy(in_[0].data() + sc::kFramePacked, med_cur, sizeof(float) * sc::kFramePacked);
     std::memcpy(in_[1].data(), big_prev, sizeof(float) * sc::kFramePacked);
     std::memcpy(in_[1].data() + sc::kFramePacked, big_cur, sizeof(float) * sc::kFramePacked);
+    prepare_aux(desire);
+    std::array<const float *, 7> in;
+    for (int i = 0; i < 7; ++i) in[i] = in_[i].data();
+    if (!backend_->run(in, out_.data(), err)) return false;
+    finish();
+    return true;
+}
 
+bool Supercombo::can_prefetch() const { return backend_->can_split(); }
+
+std::unique_ptr<Supercombo::Prefetch> Supercombo::prefetch(const float *med_prev, const float *med_cur,
+                                                           const float *big_prev, const float *big_cur,
+                                                           std::string *err) {
+    auto p = std::make_unique<Prefetch>();
+    p->img0.resize(in_[0].size());
+    p->img1.resize(in_[1].size());
+    std::memcpy(p->img0.data(), med_prev, sizeof(float) * sc::kFramePacked);
+    std::memcpy(p->img0.data() + sc::kFramePacked, med_cur, sizeof(float) * sc::kFramePacked);
+    std::memcpy(p->img1.data(), big_prev, sizeof(float) * sc::kFramePacked);
+    std::memcpy(p->img1.data() + sc::kFramePacked, big_cur, sizeof(float) * sc::kFramePacked);
+    p->job = backend_->record_stage1(p->img0.data(), p->img1.data(), err);
+    if (!p->job) return nullptr;
+    return p;
+}
+
+bool Supercombo::submit(Prefetch &p, std::string *err) { return backend_->submit_stage1(p.job.get(), err); }
+
+bool Supercombo::run(Prefetch &p, const float *desire, std::string *err) {
+    prepare_aux(desire);
+    std::array<const float *, 7> in;
+    in[0] = p.img0.data();
+    in[1] = p.img1.data();
+    for (int i = 2; i < 7; ++i) in[i] = in_[i].data();
+    if (!backend_->run_stage2(p.job.get(), in, out_.data(), err)) return false;
+    finish();
+    return true;
+}
+
+void Supercombo::prepare_aux(const float *desire) {
     // desire: rising-edge pulse, index 0 forced 0, FIFO shift, newest at row 99 (spec 1.1)
     std::array<float, 8> d{};
     if (desire) std::copy(desire, desire + 8, d.begin());
@@ -67,10 +105,9 @@ bool Supercombo::run(const float *med_prev, const float *med_cur, const float *b
     if (!std::isfinite(v_ego_)) v_ego_ = 0;
     in_[4][0] = v_ego_;
     in_[4][1] = opt_.steer_delay;
+}
 
-    std::array<const float *, 7> in;
-    for (int i = 0; i < 7; ++i) in[i] = in_[i].data();
-    if (!backend_->run(in, out_.data(), err)) return false;
+void Supercombo::finish() {
     ++runs_;
     parsed_ = parse(out_.data());
 
@@ -92,7 +129,6 @@ bool Supercombo::run(const float *med_prev, const float *med_cur, const float *b
     float *pc = in_[5].data();
     std::memmove(pc, pc + 1, sizeof(float) * (sc::kPrevCurvLen - 1));
     pc[sc::kPrevCurvLen - 1] = out_[sc::kDesiredCurvMean];
-    return true;
 }
 
 RoadOutputs Supercombo::parse(const float *r) {

@@ -8,7 +8,9 @@ whole contract: a process that writes the ring as described below is a valid
 camerad (any camera, any device), and a process that reads the ring and serves
 `<rundir>/signd.sock` is a valid sign provider. Nothing else couples the
 processes; they share no libraries beyond the header-only `camerad/ring.h` and
-`camerad/jsonsock.h`, which exist for convenience.
+`camerad/jsonsock.h`, which exist for convenience. One optional addition, the GPU
+schedule (`<rundir>/gpu.sched`, below), lets a sign provider that runs on the same GPU
+as modeld take turns with it; every process still works alone without it.
 No message broker, no protobuf, no capnp. `nc -U /run/roadsense/modeld.sock`
 must always be a valid debugging tool.
 
@@ -219,6 +221,42 @@ and the mounting (`calib.json`) belong to the ride, not to the phone: keep a `ca
 `calib.json`), stops the current camera, starts the replay and restarts the running ring readers;
 `--disable` restores `calib.json` and the camera that ran before. Ride preparation, licences and the
 calibration guesses: `docs/lanes/L5-ride-replay.md`.
+
+## GPU schedule (`<rundir>/gpu.sched`, optional)
+
+modeld and a sign provider that runs its detector on the same GPU (the Adreno 630 has one ring and no
+preemption) collide: a detector submit that lands in the middle of a model run makes that run wait for
+the whole detector (model runs become bimodal, ~56 / ~105 ms on the Poco F1). This file lets the
+provider ask modeld for the GPU between two runs. Reference implementation: header-only
+`camerad/gpusched.h` (`GpuSched`); measurements and design: `docs/lanes/L4-gpu-sched.md`.
+
+```
+struct GpuSchedShm {     // offset 0 of <rundir>/gpu.sched (4096 bytes, MAP_SHARED), little-endian
+  char     magic[8];     // "RSGPU001", written by modeld after the fields below
+  uint32_t run_seq;      // futex word: modeld adds 1 at the end of every model run (FUTEX_WAKE all)
+  uint32_t turn;         // futex word: 1 = modeld granted the GPU to the provider; the provider sets 0
+                         //   (and wakes) when its detector is done
+  uint32_t want;         // 1 = the provider wants the next turn; it sets 0 when it stops waiting
+  uint32_t reserved;     // 0
+  int64_t  pid;          // modeld's pid (liveness: kill(pid, 0))
+  int64_t  run_end_ns;   // CLOCK_MONOTONIC at the end of modeld's last run
+  float    run_ms;       // wall time of modeld's last run
+  float    det_ms;       // provider: its detector's wall time in a turn (moving average), 0 = unknown
+};                       // 48 bytes
+```
+
+Protocol. modeld creates the file (`--gpu-sched PATH|none`, default `<rundir>/gpu.sched`), publishes
+its pid, and at the end of every run: if `want` is set and it runs with `--gpu-yield MS` > 0, it stores
+`turn = 1`; then it increments `run_seq` and wakes waiters. After a grant it starts its next run only
+when `turn` is back to 0, or `--gpu-lead MS` before the provider's `det_ms` runs out (so its own CPU
+preamble overlaps the end of the detector), and at the latest `MS` after the grant (then it resets
+`turn` itself). The provider (signd `--gpu-sync turn`) sets `want = 1`, waits on `run_seq` (timeout,
+signd `--gpu-sync-timeout`, default 150 ms), clears `want`, and if `turn == 1` submits its detector,
+then sets `turn = 0`, updates `det_ms` and wakes. `--gpu-sync after` only waits for the tick (no grant).
+
+Robustness: every wait has a timeout; a provider that finds no file, no magic, a dead pid or no run in
+the last second does not wait at all; a provider that dies holding a turn costs modeld one `--gpu-yield`
+timeout. Without the file (or with `--gpu-sync none`, `--gpu-yield 0`) both sides behave as before.
 
 ## JSON sockets
 
