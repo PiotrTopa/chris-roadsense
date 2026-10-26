@@ -18,17 +18,18 @@ separate project.
 | `road` | modeld: openpilot supercombo model (v0.9.7, MIT) | planned path, lane lines (4) + probabilities, road edges (2), lead vehicles (x,y,v,a with probability), ego pose (velocity, rotation rates), desire state, meta (blinkers, disengage probabilities) |
 | `camera` | camerad | frame metadata (exposure, gain, colour gains, fps), optional MJPEG preview with overlays |
 | `signs` | external sign provider (optional), e.g. [roadsense-signs](https://github.com/PiotrTopa/roadsense-signs) | per-frame detections with class, box, score; persistent track ids, first/last seen, best crop |
+| `env` | envd: zero-shot CLIP-type image encoder, 1 fps | place (highway, city street, residential, rural/forest road, tunnel, parking lot, underground parking, gas station, bridge), weather (clear, overcast, rain, snow, fog), light (day, dusk/dawn, night): smoothed scores, label, confidence |
 | `health` | all daemons | fps per stage, model latency, CPU temperature, battery |
 
 ## Architecture and contract
 
 ```
  camera ──> camerad ──> shared-memory frame ring (NV12 + intrinsics, 20-30 fps)
-                               ┌──────────────┴──────────────────────┐
-                               ▼                                     ▼
-                     modeld (C++, ONNX Runtime CPU)      sign provider (optional, external)
-                               │   newline-delimited JSON over Unix sockets  │
-                               └──────────────┬──────────────────────┘
+                               ┌──────────────┴───────────┬──────────────────────┐
+                               ▼                          ▼                      ▼
+                     modeld (C++, ONNX Runtime / ncnn)   envd (C++, 1 fps)   sign provider (optional, external)
+                               │   newline-delimited JSON over Unix sockets  │                      │
+                               └──────────────┬───────────┴──────────────────────┘
                                               ▼
                                     api (Python, aiohttp) ──> HTTP /v1/*, WebSocket /ws, MJPEG /preview
 ```

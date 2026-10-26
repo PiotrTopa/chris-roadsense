@@ -6,8 +6,8 @@ import os
 import struct
 import time
 
-DAEMONS = ("camerad", "modeld", "signd")
-TOPICS = ("camera", "road", "signs", "calib")
+DAEMONS = ("camerad", "modeld", "signd", "envd")
+TOPICS = ("camera", "road", "signs", "calib", "env")
 HISTORY_MAX = 500
 LIVE_TRACK_TIMEOUT_S = 2.0
 
@@ -156,11 +156,14 @@ class State:
                           "last_msg_age_s": round(now - last, 3) if last else None}
         road = self.latest.get("road") or {}
         signs = self.latest.get("signs") or {}
+        env = self.latest.get("env") or {}
         return {
             "daemons": daemons,
             "fps": {t: self.fps(t) for t in TOPICS},
             "model_ms": road.get("model_ms"),
             "detect_ms": signs.get("detect_ms"),
+            "env_ms": env.get("env_ms"),
+            "env": {g: (env.get(g) or {}).get("label") for g in ("place", "weather", "light")} if env else None,
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
             "battery": battery(),

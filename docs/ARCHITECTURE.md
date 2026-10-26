@@ -1,6 +1,6 @@
 # Architecture and inter-process contract
 
-Three core processes (camerad, modeld, api) plus any number of external
+Four core processes (camerad, modeld, envd, api) plus any number of external
 consumers such as a sign provider, all talking through two simple mechanisms: a
 shared-memory frame ring (camerad -> consumers) and newline-delimited JSON over
 Unix stream sockets (every daemon -> api / tools). These two mechanisms are the
@@ -14,6 +14,7 @@ must always be a valid debugging tool.
 
 ```
 camerad ──frame ring (shm)──┬──> modeld ─────────────────JSON──┐
+                            ├──> envd (1 fps) ─────────────JSON──┤
                             └──> sign provider (external) ─JSON──┼──> api ──> HTTP / WebSocket / MJPEG
 camerad ──JSON (frame meta)──────────────────────────────────────┘
 ```
@@ -272,6 +273,36 @@ The reference implementation's tracker is SORT-style (IoU association,
 constant-velocity Kalman per box, `max_age` 10 frames, `min_hits` 3) and reports
 a track in `detections` only once confirmed.
 
+### envd: `{"type":"env", ...}` about once per second
+`envd/` reads the ring at most `--max-hz` times per second (default 1, newest frame each time),
+squashes the whole frame to the image encoder's input (224x224 or so, no crop), runs a zero-shot
+CLIP-type image encoder (ONNX Runtime CPU on the little cores by default; `--backend ncnn` for the
+GPU when built with `-DROADSENSE_NCNN=ON`) and scores the embedding against precomputed text
+embeddings of three class groups (`/var/lib/roadsense/models/envd-classes.json`, from
+`tools/envd/text_embeddings.py`; the phone never runs a text encoder):
+
+* `place`: highway, city_street, residential, rural_road, forest_road, tunnel, parking_lot, underground_parking, gas_station, bridge
+* `weather`: clear, overcast, rain, snow, fog
+* `light`: day, dusk_dawn, night
+
+Per group, the per-frame softmax is averaged over a `--window` (10 s) and the published `label`
+only changes when another class's smoothed score exceeds the current label's by `--hysteresis`
+(0.10) and the label is at least `--min-hold` (3 s) old; `confidence` is the smoothed score of the
+label, `stable_s` the time since it last changed. Cheap frame statistics ride along (luma 0..255).
+
+```
+"env_ms": 180.0, "encode_ms": 160.0,
+"place":   {"label":"highway","confidence":0.81,"stable_s":42.0,
+            "scores":{"highway":0.81,"city_street":0.07, ...},       // smoothed, sums to 1 over the group
+            "frame_label":"highway","frame_scores":{...}},            // this frame only (omit with --no-frame-scores)
+"weather": {...}, "light": {...},
+"stats":   {"luma":112.5,"luma_top":170.2,"luma_bottom":80.1,"dark_frac":0.02,"bright_frac":0.01,"chroma":11.3},
+"model":   "ViT-B-32/openai ort"
+```
+The last message is sent to every client when it connects. Accuracy per class, the choice of
+encoder and the smoothing check: `docs/lanes/L2-envd.md`. Config `/etc/roadsense/envd.json`
+(keys as the CLI options, see `envd --help`); offline: `envd_replay` on JPEGs or an NV12 sequence.
+
 ## api (Python, aiohttp, port 8080)
 
 | Endpoint | Content |
@@ -279,11 +310,12 @@ a track in `detections` only once confirmed.
 | `GET /v1/road` | latest `road` message |
 | `GET /v1/signs` | latest `signs` message plus the list of currently live tracks |
 | `GET /v1/signs/history?limit=100` | ended tracks, newest first |
+| `GET /v1/env` | latest `env` message (place / weather / light with scores and confidence) |
 | `GET /v1/camera` | latest `camera` message + ring header fields |
-| `GET /v1/health` | per-daemon: connected, last message age, fps, latency; CPU temp, battery |
+| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels; CPU temp, battery |
 | `GET /v1/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes drawn on top |
-| `GET /ws` | WebSocket; every message from every daemon, as-is; `?topics=road,signs` filters |
+| `GET /ws` | WebSocket; every message from every daemon, as-is; `?topics=road,signs,env` filters |
 
 api never touches the camera or the models; it is a fan-out and overlay layer.
 Overlays project the 3D road outputs into the image with the pinhole model

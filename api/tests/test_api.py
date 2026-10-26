@@ -105,6 +105,17 @@ class ApiTest(unittest.TestCase):
         with open(os.path.join(self.datadir, "signs.jsonl")) as f:
             self.assertIn("track_id", json.loads(f.readline()))
 
+    def test_env(self):
+        e = self.get("/v1/env")
+        for k in ("type", "seq", "ts_mono_ns", "env_ms", "place", "weather", "light", "stats", "model"):
+            self.assertIn(k, e)
+        self.assertEqual(e["type"], "env")
+        for g in ("place", "weather", "light"):
+            for k in ("label", "confidence", "stable_s", "scores"):
+                self.assertIn(k, e[g])
+            self.assertIn(e[g]["label"], e[g]["scores"])
+        self.assertIn(b"/v1/env", self.fetch("/")[2])
+
     def test_camera(self):
         c = self.get("/v1/camera")
         for k in ("type", "seq", "exposure_us", "analogue_gain", "colour_gains", "fps", "dropped", "ring"):
@@ -114,8 +125,10 @@ class ApiTest(unittest.TestCase):
 
     def test_health(self):
         h = self.get("/v1/health")
-        for k in ("daemons", "fps", "model_ms", "detect_ms", "cpu_temp_c", "battery"):
+        for k in ("daemons", "fps", "model_ms", "detect_ms", "env_ms", "env", "cpu_temp_c", "battery"):
             self.assertIn(k, h)
+        self.assertIn("envd", h["daemons"])
+        self.assertEqual(set(h["env"]), {"place", "weather", "light"})
         self.assertGreater(h["fps"]["camera"], 20)
         self.assertGreater(h["fps"]["road"], 3)
         self.assertGreater(h["fps"]["signs"], 7)
@@ -156,15 +169,16 @@ class ApiTest(unittest.TestCase):
         async def run():
             got = []
             async with aiohttp.ClientSession() as s:
-                async with s.ws_connect(self.base + "/ws?topics=road,signs") as ws:
-                    while len(got) < 12:
+                async with s.ws_connect(self.base + "/ws?topics=road,signs,env") as ws:
+                    while len(got) < 30:
                         msg = await asyncio.wait_for(ws.receive(), 5)
                         got.append(json.loads(msg.data)["type"])
             return got
 
         types = asyncio.run(run())
-        self.assertTrue(set(types) <= {"road", "signs"})
+        self.assertTrue(set(types) <= {"road", "signs", "env"})
         self.assertIn("signs", types)
+        self.assertIn("env", types)
 
     def test_zz_reconnect(self):
         self.fake.terminate()

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Synthetic camerad/modeld/signd publishers for exercising the api without hardware.
 
-Creates <rundir>/{camerad,modeld,signd}.sock, emits contract-shaped JSON at
-30/5/10 Hz, writes <rundir>/preview.jpg (960x540, every 3rd frame) and a
+Creates <rundir>/{camerad,modeld,signd,envd}.sock, emits contract-shaped JSON at
+30/5/10/1 Hz, writes <rundir>/preview.jpg (960x540, every 3rd frame) and a
 header-only frame ring <rundir>/roadsense-frames (pass --ring to the api).
 
     python3 tools/fake_daemons.py --rundir /tmp/roadsense-fake
@@ -76,6 +76,8 @@ class Fake:
         self.cam = Publisher(os.path.join(rundir, "camerad.sock"))
         self.model = Publisher(os.path.join(rundir, "modeld.sock"), on_connect=self.calib)
         self.sign = Publisher(os.path.join(rundir, "signd.sock"))
+        self.env_pub = Publisher(os.path.join(rundir, "envd.sock"), on_connect=self.env)
+        self.env_n = 0
         self.sign_frame = 0
         self.track_id = 0
         self.preview_bg = self._background()
@@ -198,12 +200,37 @@ class Fake:
             await asyncio.sleep(0.1)
             self.sign.send(self.signs())
 
+    # ---- envd ---------------------------------------------------------------
+    ENV_GROUPS = {"place": ["highway", "city_street", "residential", "rural_road", "forest_road", "tunnel",
+                            "parking_lot", "underground_parking", "gas_station", "bridge"],
+                  "weather": ["clear", "overcast", "rain", "snow", "fog"],
+                  "light": ["day", "dusk_dawn", "night"]}
+
+    def env(self):
+        n = self.env_n
+        msg = {**self.hdr("env"), "env_ms": 180.0, "encode_ms": 160.0}
+        for g, classes in self.ENV_GROUPS.items():
+            k = (n // 30) % len(classes) if g == "place" else 0
+            scores = {c: round(0.9 if i == k else 0.1 / (len(classes) - 1), 3) for i, c in enumerate(classes)}
+            msg[g] = {"label": classes[k], "confidence": 0.9, "stable_s": float(n % 30), "scores": scores,
+                      "frame_label": classes[k], "frame_scores": scores}
+        msg["stats"] = {"luma": 120.0, "luma_top": 180.0, "luma_bottom": 80.0, "dark_frac": 0.02, "bright_frac": 0.01,
+                        "chroma": 12.0}
+        msg["model"] = "fake"
+        return msg
+
+    async def envd(self):
+        while True:
+            await asyncio.sleep(1.0)
+            self.env_n += 1
+            self.env_pub.send(self.env())
+
     async def run(self):
-        for p in (self.cam, self.model, self.sign):
+        for p in (self.cam, self.model, self.sign, self.env_pub):
             await p.start()
         self.write_preview()
         self.write_ring()
-        await asyncio.gather(self.camerad(), self.modeld(), self.signd())
+        await asyncio.gather(self.camerad(), self.modeld(), self.signd(), self.envd())
 
 
 def main():

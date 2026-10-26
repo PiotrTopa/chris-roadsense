@@ -87,6 +87,12 @@ async def h_signs_history(req):
     return _json({"count": len(hist), "tracks": hist})
 
 
+async def h_env(req):
+    st = req.app["state"]
+    msg = st.latest.get("env")
+    return _json(msg or {"error": "no env message yet"}, 200 if msg else 503)
+
+
 async def h_camera(req):
     st = req.app["state"]
     msg = dict(st.latest.get("camera") or {})
@@ -214,6 +220,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True):
     app.router.add_get("/v1/road", h_road)
     app.router.add_get("/v1/signs", h_signs)
     app.router.add_get("/v1/signs/history", h_signs_history)
+    app.router.add_get("/v1/env", h_env)
     app.router.add_get("/v1/camera", h_camera)
     app.router.add_get("/v1/health", h_health)
     app.router.add_get("/v1/frame.jpg", h_frame)
@@ -238,7 +245,8 @@ pre{margin:0;white-space:pre-wrap}
 <img src="/preview" alt="preview">
 <section><h2>health</h2><pre id="health">...</pre>
 <h2>road</h2><pre id="road">...</pre>
-<h2>signs (live)</h2><pre id="signs">...</pre></section>
+<h2>signs (live)</h2><pre id="signs">...</pre>
+<h2>environment</h2><pre id="env">...</pre></section>
 </main><script>
 const $ = id => document.getElementById(id);
 const f = (v, d=1) => v == null ? "-" : Number(v).toFixed(d);
@@ -251,7 +259,7 @@ async function tick(){
       for (const [d, v] of Object.entries(h.daemons))
         s += `<span class="${v.connected ? "ok" : "bad"}">${d.padEnd(8)}</span> age ${f(v.last_msg_age_s, 2)} s\\n`;
       s += "fps " + Object.entries(h.fps).map(([k, v]) => k + " " + f(v)).join("  ") + "\\n";
-      s += `model ${f(h.model_ms, 0)} ms  detect ${f(h.detect_ms, 0)} ms\\n`;
+      s += `model ${f(h.model_ms, 0)} ms  detect ${f(h.detect_ms, 0)} ms  env ${f(h.env_ms, 0)} ms\\n`;
       s += `cpu ${f(h.cpu_temp_c)} C  ` + h.battery.map(b => `${b.name} ${b.capacity}% ${b.status || ""}`).join("  ");
       $("health").innerHTML = s;
     }
@@ -267,6 +275,13 @@ async function tick(){
     const sg = await get("/v1/signs");
     $("signs").textContent = sg && sg.live_tracks.length
       ? sg.live_tracks.map(t => `#${t.track_id} ${t.cls} ${f(t.score, 2)} hits ${t.hits}`).join("\\n") : "none";
+    const ev = await get("/v1/env");
+    $("env").textContent = ev ? ["place", "weather", "light"].map(g => {
+        const r = ev[g] || {};
+        const top = Object.entries(r.scores || {}).sort((a, b) => b[1] - a[1]).slice(0, 3)
+          .map(([k, v]) => `${k} ${f(v, 2)}`).join(", ");
+        return `${g.padEnd(8)} ${(r.label || "-").padEnd(20)} conf ${f(r.confidence, 2)}  stable ${f(r.stable_s, 0)} s  [${top}]`;
+      }).join("\\n") + `\\nluma ${f(ev.stats && ev.stats.luma, 0)}  ${ev.model || ""}  ${f(ev.env_ms, 0)} ms` : "no data";
   } catch (e) { $("health").textContent = "api unreachable"; }
 }
 tick(); setInterval(tick, 1000);

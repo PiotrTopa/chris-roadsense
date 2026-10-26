@@ -11,11 +11,11 @@ BUILD=${BUILD:-build}
 cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release ${CMAKE_ARGS:-} >/dev/null
 cmake --build "$BUILD" -j"$(nproc)"
 install -m 755 "$BUILD/camerad/camerad" "$BUILD/modeld/modeld" /usr/local/bin/
-for t in modeld/modeld_replay tools/ringdump camerad-dvr/camerad-dvr; do [ -x "$BUILD/$t" ] && install -m 755 "$BUILD/$t" /usr/local/bin/ || true; done
+for t in modeld/modeld_replay tools/ringdump camerad-dvr/camerad-dvr envd/envd envd/envd_replay; do [ -x "$BUILD/$t" ] && install -m 755 "$BUILD/$t" /usr/local/bin/ || true; done
 mkdir -p /usr/local/lib/roadsense /var/lib/roadsense/models /etc/roadsense
 rm -rf /usr/local/lib/roadsense/api && cp -r api /usr/local/lib/roadsense/api
-for m in models/*.onnx models/*.param models/*.bin models/*.txt; do [ -f "$m" ] && install -m 644 "$m" /var/lib/roadsense/models/; done
-for c in camera.json calib.json modeld.json; do
+for m in models/*.onnx models/*.param models/*.bin models/*.txt models/*.json; do [ -f "$m" ] && install -m 644 "$m" /var/lib/roadsense/models/; done
+for c in camera.json calib.json modeld.json envd.json; do
     [ -f "/etc/roadsense/$c" ] || { [ -f "config/$c" ] && install -m 644 "config/$c" /etc/roadsense/; }
 done
 [ -d /etc/nftables.d ] && install -m 644 phone/50_roadsense.nft /etc/nftables.d/ && systemctl try-restart nftables
