@@ -149,7 +149,9 @@ mount + calibration; envd place stability; own recordings; boost auto-recovery.
   envd at confidence 0.45, zone guessed for <= 30 km/h), plates (served unconditional, flagged), junctions
   (proxies: junction signs, >= 50 deg turn, distance cap; ends limits ~5-7 s late). B-33 70 missed in 2 of 3
   passes (detector recall: signd sees every 4th frame, small sign). Untested off-city (no open clip).
-  Conservative choices: dual carriageway outside town served 90 (law 100), single-carriageway expressway 120 (law 100).
+  Road-type gaps: dual carriageway outside town served 90 (law 100: safe side); single-carriageway
+  expressway served 120 (law 100: ABOVE the legal limit; the lane called both "low side", which is wrong for
+  this one; open fix).
 - [INSTR] Design: pure state module in the api (also runs offline: tools/speedlimit_replay.py); sign
   acceptance needs >= 5 hits, vote >= 0.6, mean score >= 0.45, lateral position checks.
 Deviation: two api restarts on the phone instead of one (env prior fix). L7 later installed its api build
