@@ -19,7 +19,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L2-envd-phone | Opus | folded into L3 | orders/L2-envd-phone.md |
 | L3 speed-tune + envd on phone | Opus | done (2026-10-26 21:40 CET) | docs/lanes/L3-speed.md |
 | L4 GPU turn-taking (signd/modeld) | Opus | done (2026-10-27 00:28 CET) | docs/lanes/L4-gpu-sched.md |
-| L6 speed-limit state from sign tracks | Opus | running (2026-10-27) | docs/lanes/L6-speed-limit.md |
+| L6 speed-limit state from sign tracks | Opus | done (2026-10-27 ~07:15 CET) | docs/lanes/L6-speed-limit.md |
 | L7 traffic lights (detector + state) | Opus | running (2026-10-27) | docs/lanes/L7-traffic-lights.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
@@ -137,3 +137,21 @@ Changes: roadsense d9ace97, roadsense-signs 26183d1; phone runs the new binaries
 (old ones kept as *.pre-l4); replay still the camera source; autostart disabled.
 Roadmap: idle-power policy for --cpu-latency-us in the car; policy-stage op conversion (small);
 mount + calibration; envd place stability; own recordings; boost auto-recovery.
+
+## Fold 6 (2026-10-27): speed-limit state (L6, Opus)
+- [FAV] api serves `speed_limit` (/v1/speed_limit, /ws, health, status page): limit, source (sign track or
+  default rule), confidence, since (time + distance from v_ego), expiry rule, area, zone, pending/ignored.
+  Polish rule table from primary texts (PoRD art. 20; sign regulation Dz.U. 2019 poz. 2310). 34/34 api
+  tests; 42 us per message. Live on the phone (verified 07:1x CET: 50 km/h, built-up from env).
+- [FAV] Krakow loop: ~90 % agreement with a human reading (98 % with the area known); B-33 40 on the
+  bridge caught every pass; false D-9 / D-40 rejected; never served a value above the human reading.
+- [UNFAV] Not observable by the camera: D-42 built-up entry and B-43 zones (not in the 400 classes; area from
+  envd at confidence 0.45, zone guessed for <= 30 km/h), plates (served unconditional, flagged), junctions
+  (proxies: junction signs, >= 50 deg turn, distance cap; ends limits ~5-7 s late). B-33 70 missed in 2 of 3
+  passes (detector recall: signd sees every 4th frame, small sign). Untested off-city (no open clip).
+  Conservative choices: dual carriageway outside town served 90 (law 100), single-carriageway expressway 120 (law 100).
+- [INSTR] Design: pure state module in the api (also runs offline: tools/speedlimit_replay.py); sign
+  acceptance needs >= 5 hits, vote >= 0.6, mean score >= 0.45, lateral position checks.
+Deviation: two api restarts on the phone instead of one (env prior fix). L7 later installed its api build
+containing the same speedlimit.py.
+Changes: roadsense 723d9f9..794162d.
