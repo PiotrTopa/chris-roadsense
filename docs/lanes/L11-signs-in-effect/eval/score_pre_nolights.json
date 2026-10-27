@@ -1,0 +1,2604 @@
+{
+ "rides": [
+  {
+   "ride": "forest-vistula-spit",
+   "duration_s": 900.0,
+   "rules": {
+    "built_up_area": {
+     "agreement": 0.455,
+     "human_n": 1,
+     "engine_n": 0,
+     "human_s": 490.5,
+     "engine_s": 0
+    },
+    "no_overtaking": {
+     "agreement": 0.889,
+     "human_n": 2,
+     "engine_n": 2,
+     "human_s": 73.8,
+     "engine_s": 230.2
+    },
+    "no_stopping": {
+     "agreement": 0.759,
+     "human_n": 11,
+     "engine_n": 13,
+     "human_s": 185.5,
+     "engine_s": 379.5
+    },
+    "priority_road": {
+     "agreement": 0.901,
+     "human_n": 3,
+     "engine_n": 4,
+     "human_s": 356.5,
+     "engine_s": 422.3
+    }
+   },
+   "momentary": {
+    "end_of_priority_road": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "no_left_turn": {
+     "tp": 0,
+     "engine": 2,
+     "human": 0
+    },
+    "no_right_turn": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "pedestrian_crossing": {
+     "tp": 16,
+     "engine": 21,
+     "human": 25
+    },
+    "road_closed": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "roundabout": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "yield": {
+     "tp": 4,
+     "engine": 5,
+     "human": 4
+    }
+   },
+   "warnings": {
+    "animals_ahead": {
+     "tp": 1,
+     "engine": 3,
+     "human": 1
+    },
+    "children_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "crossroads_ahead": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "curve_ahead": {
+     "tp": 2,
+     "engine": 3,
+     "human": 2
+    },
+    "falling_rocks_ahead": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "other_danger_ahead": {
+     "tp": 0,
+     "engine": 3,
+     "human": 0
+    },
+    "pedestrian_crossing_ahead": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "side_road_ahead": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "uneven_road_ahead": {
+     "tp": 1,
+     "engine": 2,
+     "human": 2
+    },
+    "warning_other": {
+     "tp": 0,
+     "engine": 0,
+     "human": 3
+    }
+   },
+   "misses": [
+    {
+     "rule": "built_up_area",
+     "start_t": 409.5,
+     "end_t": 900.0,
+     "cause": "detector"
+    }
+   ],
+   "false": [
+    {
+     "rule": "no_overtaking",
+     "start_t": 15.8,
+     "end_t": 39.3,
+     "track": 8085,
+     "end_reason": "intersection (sign A-5..A-8/A-29, track 8093)",
+     "cause": "?"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 28.6,
+     "end_t": 39.3,
+     "track": 8095,
+     "end_reason": "intersection (sign A-5..A-8/A-29, track 8093)",
+     "cause": "?"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 43.6,
+     "end_t": 124.2,
+     "track": 8106,
+     "end_reason": "intersection (sign A-5..A-8/A-29, track 8111)",
+     "cause": "?"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 567.4,
+     "end_t": 575.4,
+     "track": 8294,
+     "end_reason": "intersection (sign D-1/D-2, track 8297)",
+     "cause": "?"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 579.0,
+     "end_t": 600.4,
+     "track": 8305,
+     "end_reason": "intersection (turn)",
+     "cause": "?"
+    },
+    {
+     "rule": "priority_road",
+     "start_t": 649.4,
+     "end_t": 653.8,
+     "track": 8348,
+     "end_reason": "A-7 (regulatory--yield, track 8349)",
+     "cause": "?"
+    }
+   ],
+   "delays": [
+    {
+     "rule": "no_overtaking",
+     "start": 1.6,
+     "end": 203.0,
+     "end_reason": "distance cap 3000 m without a repeat",
+     "human_end": "unclear",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": 1.7,
+     "end": 44.6,
+     "end_reason": "intersection (sign D-1/D-2, track 8232)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "start": 1.9,
+     "end": 1.5,
+     "end_reason": "intersection (sign D-1/D-2, track 8246)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "start": 2.0,
+     "end": 3.8,
+     "end_reason": "intersection (sign D-1/D-2, track 8251)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "start": -0.7,
+     "end": 3.4,
+     "end_reason": "intersection (sign D-1/D-2, track 8285)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "start": -13.8,
+     "end": 10.7,
+     "end_reason": "intersection (sign D-1/D-2, track 8450)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -1.1,
+     "end": 11.8,
+     "end_reason": "intersection (sign D-1/D-2, track 8467)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "start": -1.1,
+     "end": 5.2,
+     "end_reason": "intersection (turn)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -1.4,
+     "end": 1.7,
+     "end_reason": "intersection (sign D-1/D-2, track 8492)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": 2.2,
+     "end": 1.3,
+     "end_reason": "intersection (sign D-1/D-2, track 8524)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "start": 2.1,
+     "end": 35.1,
+     "end_reason": "A-7 (regulatory--yield, track 8329)",
+     "human_end": "unclear",
+     "end_unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "start": 11.9,
+     "end": 40.2,
+     "end_reason": "A-7 (regulatory--yield, track 8482)",
+     "human_end": "unclear",
+     "end_unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "start": -1.1,
+     "end": -1.0,
+     "end_reason": "A-7 (regulatory--yield, track 8525)",
+     "human_end": "yield",
+     "end_unclear": false
+    }
+   ],
+   "ends": [
+    {
+     "rule": "no_overtaking",
+     "source": "distance cap 3000 m without a repeat",
+     "delay": 203.0,
+     "human_end": "unclear",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 44.6,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 1.5,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 3.8,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 3.4,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 10.7,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 11.8,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 5.2,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 1.7,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 1.3,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": 35.1,
+     "human_end": "unclear",
+     "unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": 40.2,
+     "human_end": "unclear",
+     "unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": -1.0,
+     "human_end": "yield",
+     "unclear": false
+    }
+   ],
+   "merged": [
+    {
+     "rule": "no_overtaking",
+     "human": [
+      168.5,
+      237.0
+     ],
+     "engine": [
+      128.1,
+      334.8
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      469.0,
+      482.0
+     ],
+     "engine": [
+      422.7,
+      479.6
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      716.0,
+      724.0
+     ],
+     "engine": [
+      686.7,
+      724.7
+     ]
+    }
+   ],
+   "junction_cues": {
+    "human": 27,
+    "engine": 29,
+    "by_source": {
+     "sign": 21,
+     "traffic": 0,
+     "turn": 8
+    },
+    "engine_hit": 20,
+    "human_found": 18
+   }
+  },
+  {
+   "ride": "katowice-rain",
+   "duration_s": 900.0,
+   "rules": {
+    "built_up_area": {
+     "agreement": 0.143,
+     "human_n": 1,
+     "engine_n": 0,
+     "human_s": 771.0,
+     "engine_s": 0
+    },
+    "no_parking": {
+     "agreement": 0.992,
+     "human_n": 1,
+     "engine_n": 2,
+     "human_s": 5.5,
+     "engine_s": 8.6
+    },
+    "no_stopping": {
+     "agreement": 0.779,
+     "human_n": 16,
+     "engine_n": 7,
+     "human_s": 183.5,
+     "engine_s": 462.7
+    },
+    "one_way": {
+     "agreement": 0.671,
+     "human_n": 2,
+     "engine_n": 4,
+     "human_s": 24.0,
+     "engine_s": 319.4
+    },
+    "priority_road": {
+     "agreement": 0.855,
+     "human_n": 2,
+     "engine_n": 2,
+     "human_s": 525.5,
+     "engine_s": 469.6
+    },
+    "weight_limit": {
+     "agreement": 0.998,
+     "human_n": 1,
+     "engine_n": 1,
+     "human_s": 1.5,
+     "engine_s": 6.9
+    }
+   },
+   "momentary": {
+    "end_of_priority_road": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "end_of_prohibitions": {
+     "tp": 0,
+     "engine": 0,
+     "human": 1
+    },
+    "mandatory_direction": {
+     "tp": 3,
+     "engine": 8,
+     "human": 4
+    },
+    "no_entry": {
+     "tp": 0,
+     "engine": 1,
+     "human": 3
+    },
+    "no_left_turn": {
+     "tp": 6,
+     "engine": 6,
+     "human": 9
+    },
+    "no_overtaking_hgv": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "no_right_turn": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "no_trucks": {
+     "tp": 0,
+     "engine": 1,
+     "human": 1
+    },
+    "no_u_turn": {
+     "tp": 1,
+     "engine": 2,
+     "human": 1
+    },
+    "one_way_side": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "pedestrian_crossing": {
+     "tp": 11,
+     "engine": 19,
+     "human": 13
+    },
+    "priority_over_oncoming": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "road_closed": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "roundabout": {
+     "tp": 2,
+     "engine": 3,
+     "human": 2
+    },
+    "yield": {
+     "tp": 7,
+     "engine": 8,
+     "human": 8
+    }
+   },
+   "warnings": {
+    "curve_ahead": {
+     "tp": 1,
+     "engine": 2,
+     "human": 1
+    },
+    "lane_change_ahead": {
+     "tp": 0,
+     "engine": 4,
+     "human": 0
+    },
+    "road_narrows_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "traffic_signals_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "warning_other": {
+     "tp": 0,
+     "engine": 0,
+     "human": 3
+    }
+   },
+   "misses": [
+    {
+     "rule": "built_up_area",
+     "start_t": 0.0,
+     "end_t": 771.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 132.5,
+     "end_t": 135.5,
+     "cause": "classifier: B-35/B-36 confusion"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 242.5,
+     "end_t": 258.0,
+     "cause": "detector"
+    }
+   ],
+   "false": [
+    {
+     "rule": "no_parking",
+     "start_t": 134.1,
+     "end_t": 136.4,
+     "track": 3944,
+     "end_reason": "intersection (sign D-1/D-2, track 3945)",
+     "cause": "classifier: B-35/B-36 confusion"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 170.0,
+     "end_t": 186.6,
+     "track": 3983,
+     "end_reason": "intersection (sign D-1/D-2, track 4007)",
+     "cause": "?"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 420.9,
+     "end_t": 689.5,
+     "track": 4200,
+     "end_reason": "intersection (sign A-7/B-20, track 4236)",
+     "cause": "?"
+    }
+   ],
+   "delays": [
+    {
+     "rule": "no_parking",
+     "start": -3.2,
+     "end": -2.4,
+     "end_reason": "B-36 (regulatory--no-stopping, track 3979)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -9.7,
+     "end": 14.3,
+     "end_reason": "intersection (sign D-1/D-2, track 3935)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -0.8,
+     "end": 14.8,
+     "end_reason": "B-35 (regulatory--no-parking, track 3973)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -0.9,
+     "end": 79.4,
+     "end_reason": "intersection (turn)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -1.7,
+     "end": 2.1,
+     "end_reason": "intersection (sign A-7/B-20, track 4104)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "start": -1.3,
+     "end": 13.9,
+     "end_reason": "intersection (sign D-1/D-2, track 4157)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -2.0,
+     "end": 20.3,
+     "end_reason": "intersection (sign D-1/D-2, track 4195)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -1.5,
+     "end": 259.5,
+     "end_reason": "intersection (sign A-7/B-20, track 4236)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "one_way",
+     "start": -0.5,
+     "end": 2.1,
+     "end_reason": "intersection (sign A-7/B-20, track 4104)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "one_way",
+     "start": -4.7,
+     "end": 2.9,
+     "end_reason": "intersection (sign A-7/B-20, track 4297)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "start": -24.7,
+     "end": 11.8,
+     "end_reason": "A-7 (regulatory--yield, track 4103)",
+     "human_end": "unclear",
+     "end_unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "start": -1.0,
+     "end": -93.4,
+     "end_reason": "A-7 (regulatory--yield, track 4237)",
+     "human_end": "yield",
+     "end_unclear": true
+    },
+    {
+     "rule": "weight_limit",
+     "start": 2.0,
+     "end": 7.4,
+     "end_reason": "intersection (turn)",
+     "human_end": "junction",
+     "end_unclear": true
+    }
+   ],
+   "ends": [
+    {
+     "rule": "no_parking",
+     "source": "B-36",
+     "delay": -2.4,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 14.3,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "B-35",
+     "delay": 14.8,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 79.4,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 2.1,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 13.9,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 20.3,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 259.5,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "one_way",
+     "source": "intersection",
+     "delay": 2.1,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "one_way",
+     "source": "intersection",
+     "delay": 2.9,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": 11.8,
+     "human_end": "unclear",
+     "unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": -93.4,
+     "human_end": "yield",
+     "unclear": true
+    },
+    {
+     "rule": "weight_limit",
+     "source": "intersection",
+     "delay": 7.4,
+     "human_end": "junction",
+     "unclear": true
+    }
+   ],
+   "merged": [
+    {
+     "rule": "no_stopping",
+     "human": [
+      114.5,
+      124.0
+     ],
+     "engine": [
+      94.8,
+      124.8
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      185.5,
+      186.5
+     ],
+     "engine": [
+      165.6,
+      247.4
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      335.5,
+      337.5
+     ],
+     "engine": [
+      326.3,
+      339.6
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      403.5,
+      408.0
+     ],
+     "engine": [
+      384.0,
+      419.8
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      413.5,
+      420.0
+     ],
+     "engine": [
+      384.0,
+      419.8
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      419.5,
+      420.0
+     ],
+     "engine": [
+      384.0,
+      419.8
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      588.5,
+      689.0
+     ],
+     "engine": [
+      420.5,
+      689.5
+     ]
+    }
+   ],
+   "junction_cues": {
+    "human": 36,
+    "engine": 27,
+    "by_source": {
+     "sign": 25,
+     "traffic": 0,
+     "turn": 2
+    },
+    "engine_hit": 25,
+    "human_found": 19
+   }
+  },
+  {
+   "ride": "krakow-2024",
+   "duration_s": 600.0,
+   "rules": {
+    "height_limit": {
+     "agreement": 0.991,
+     "human_n": 0,
+     "engine_n": 1,
+     "human_s": 0,
+     "engine_s": 5.7
+    },
+    "no_parking": {
+     "agreement": 0.989,
+     "human_n": 1,
+     "engine_n": 1,
+     "human_s": 3.0,
+     "engine_s": 9.5
+    },
+    "no_stopping": {
+     "agreement": 0.75,
+     "human_n": 7,
+     "engine_n": 7,
+     "human_s": 58.0,
+     "engine_s": 159.5
+    },
+    "one_way": {
+     "agreement": 0.775,
+     "human_n": 5,
+     "engine_n": 3,
+     "human_s": 62.0,
+     "engine_s": 108.3
+    },
+    "priority_road": {
+     "agreement": 0.7,
+     "human_n": 3,
+     "engine_n": 2,
+     "human_s": 370.5,
+     "engine_s": 423.4
+    },
+    "weight_limit": {
+     "agreement": 0.962,
+     "human_n": 1,
+     "engine_n": 0,
+     "human_s": 22.5,
+     "engine_s": 0
+    }
+   },
+   "momentary": {
+    "dead_end": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "mandatory_direction": {
+     "tp": 1,
+     "engine": 4,
+     "human": 1
+    },
+    "no_entry": {
+     "tp": 2,
+     "engine": 3,
+     "human": 2
+    },
+    "no_left_turn": {
+     "tp": 3,
+     "engine": 3,
+     "human": 6
+    },
+    "no_right_turn": {
+     "tp": 1,
+     "engine": 3,
+     "human": 2
+    },
+    "no_straight": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "no_trucks": {
+     "tp": 0,
+     "engine": 2,
+     "human": 0
+    },
+    "pedestrian_crossing": {
+     "tp": 14,
+     "engine": 29,
+     "human": 20
+    },
+    "road_closed": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "roundabout": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "stop": {
+     "tp": 0,
+     "engine": 0,
+     "human": 1
+    },
+    "yield": {
+     "tp": 2,
+     "engine": 5,
+     "human": 2
+    }
+   },
+   "warnings": {
+    "crossroads_ahead": {
+     "tp": 0,
+     "engine": 2,
+     "human": 0
+    },
+    "cyclists_ahead": {
+     "tp": 0,
+     "engine": 0,
+     "human": 2
+    },
+    "road_narrows_ahead": {
+     "tp": 0,
+     "engine": 1,
+     "human": 1
+    },
+    "roadworks_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "uneven_road_ahead": {
+     "tp": 0,
+     "engine": 0,
+     "human": 1
+    },
+    "warning_other": {
+     "tp": 0,
+     "engine": 0,
+     "human": 1
+    }
+   },
+   "misses": [
+    {
+     "rule": "no_stopping",
+     "start_t": 347.5,
+     "end_t": 354.0,
+     "cause": "engine: lateral 9.1 m (other roadway / exit lane?)"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 365.0,
+     "end_t": 370.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 316.0,
+     "end_t": 330.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 365.0,
+     "end_t": 384.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "weight_limit",
+     "start_t": 174.5,
+     "end_t": 197.0,
+     "cause": "detector"
+    }
+   ],
+   "false": [
+    {
+     "rule": "height_limit",
+     "start_t": 109.1,
+     "end_t": 114.8,
+     "track": 7024,
+     "end_reason": "intersection (sign A-7/B-20, track 7043)",
+     "cause": "?"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 194.8,
+     "end_t": 210.0,
+     "track": 7124,
+     "end_reason": "intersection (sign D-1/D-2, track 7148)",
+     "cause": "?"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 217.2,
+     "end_t": 226.0,
+     "track": 7176,
+     "end_reason": "intersection (sign D-1/D-2, track 7179)",
+     "cause": "?"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 529.5,
+     "end_t": 562.7,
+     "track": 7453,
+     "end_reason": "intersection (turn)",
+     "cause": "?"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 28.8,
+     "end_t": 82.5,
+     "track": 6980,
+     "end_reason": "intersection (sign D-1/D-2, track 7007)",
+     "cause": "?"
+    }
+   ],
+   "delays": [
+    {
+     "rule": "no_parking",
+     "start": -4.1,
+     "end": 2.4,
+     "end_reason": "B-36 (regulatory--no-stopping, track 7225)",
+     "human_end": "B-36",
+     "end_unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "start": -0.8,
+     "end": 19.9,
+     "end_reason": "B-35 (regulatory--no-parking, track 7212)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": 2.4,
+     "end": -0.3,
+     "end_reason": "intersection (sign A-5..A-8/A-29, track 7210)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": 3.4,
+     "end": 7.1,
+     "end_reason": "intersection (sign D-1/D-2, track 7261)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -40.5,
+     "end": 3.6,
+     "end_reason": "intersection (sign A-5..A-8/A-29, track 7407)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "one_way",
+     "start": 1.8,
+     "end": 31.2,
+     "end_reason": "intersection (sign A-5..A-8/A-29, track 7210)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "one_way",
+     "start": 3.4,
+     "end": 7.1,
+     "end_reason": "intersection (sign D-1/D-2, track 7261)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "start": 56.4,
+     "end": -7.3,
+     "end_reason": "A-7 (regulatory--yield, track 7043)",
+     "human_end": "yield",
+     "end_unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "start": -0.6,
+     "end": 238.0,
+     "end_reason": "ride end",
+     "human_end": "unclear",
+     "end_unclear": true
+    }
+   ],
+   "ends": [
+    {
+     "rule": "no_parking",
+     "source": "B-36",
+     "delay": 2.4,
+     "human_end": "B-36",
+     "unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "source": "B-35",
+     "delay": 19.9,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": -0.3,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 7.1,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 3.6,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "one_way",
+     "source": "intersection",
+     "delay": 31.2,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "one_way",
+     "source": "intersection",
+     "delay": 7.1,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": -7.3,
+     "human_end": "yield",
+     "unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "source": "ride end",
+     "delay": 238.0,
+     "human_end": "unclear",
+     "unclear": true
+    }
+   ],
+   "merged": [
+    {
+     "rule": "no_stopping",
+     "human": [
+      243.5,
+      253.0
+     ],
+     "engine": [
+      230.7,
+      259.9
+     ]
+    },
+    {
+     "rule": "one_way",
+     "human": [
+      264.0,
+      271.5
+     ],
+     "engine": [
+      233.3,
+      271.2
+     ]
+    },
+    {
+     "rule": "priority_road",
+     "human": [
+      478.0,
+      600.0
+     ],
+     "engine": [
+      206.4,
+      600.0
+     ]
+    }
+   ],
+   "junction_cues": {
+    "human": 24,
+    "engine": 34,
+    "by_source": {
+     "sign": 27,
+     "traffic": 0,
+     "turn": 7
+    },
+    "engine_hit": 30,
+    "human_found": 13
+   }
+  },
+  {
+   "ride": "rural-zloczew",
+   "duration_s": 900.0,
+   "rules": {
+    "built_up_area": {
+     "agreement": 0.711,
+     "human_n": 3,
+     "engine_n": 0,
+     "human_s": 260.4,
+     "engine_s": 0
+    },
+    "no_overtaking": {
+     "agreement": 0.972,
+     "human_n": 0,
+     "engine_n": 1,
+     "human_s": 0,
+     "engine_s": 25.6
+    },
+    "no_stopping": {
+     "agreement": 0.978,
+     "human_n": 1,
+     "engine_n": 1,
+     "human_s": 3.2,
+     "engine_s": 33.2
+    },
+    "priority_road": {
+     "agreement": 0.846,
+     "human_n": 1,
+     "engine_n": 2,
+     "human_s": 840.2,
+     "engine_s": 701.6
+    }
+   },
+   "momentary": {
+    "pedestrian_crossing": {
+     "tp": 6,
+     "engine": 8,
+     "human": 10
+    },
+    "yield": {
+     "tp": 1,
+     "engine": 2,
+     "human": 1
+    }
+   },
+   "warnings": {
+    "animals_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 2
+    },
+    "children_ahead": {
+     "tp": 3,
+     "engine": 4,
+     "human": 4
+    },
+    "crossroads_ahead": {
+     "tp": 0,
+     "engine": 4,
+     "human": 0
+    },
+    "curve_ahead": {
+     "tp": 2,
+     "engine": 4,
+     "human": 2
+    },
+    "other_danger_ahead": {
+     "tp": 2,
+     "engine": 3,
+     "human": 3
+    },
+    "pedestrian_crossing_ahead": {
+     "tp": 2,
+     "engine": 5,
+     "human": 3
+    },
+    "roadworks_ahead": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "side_road_ahead": {
+     "tp": 2,
+     "engine": 4,
+     "human": 3
+    },
+    "traffic_signals_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "uneven_road_ahead": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "warning_other": {
+     "tp": 0,
+     "engine": 0,
+     "human": 2
+    }
+   },
+   "misses": [
+    {
+     "rule": "built_up_area",
+     "start_t": 0.0,
+     "end_t": 65.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "built_up_area",
+     "start_t": 597.8,
+     "end_t": 664.6,
+     "cause": "detector"
+    },
+    {
+     "rule": "built_up_area",
+     "start_t": 771.4,
+     "end_t": 900.0,
+     "cause": "detector"
+    }
+   ],
+   "false": [
+    {
+     "rule": "no_overtaking",
+     "start_t": 703.8,
+     "end_t": 729.4,
+     "track": 7727,
+     "end_reason": "intersection (sign A-5..A-8/A-29, track 7730)",
+     "cause": "?"
+    },
+    {
+     "rule": "priority_road",
+     "start_t": 659.2,
+     "end_t": 852.4,
+     "track": 7707,
+     "end_reason": "A-7 (regulatory--yield, track 7815)",
+     "cause": "?"
+    }
+   ],
+   "delays": [
+    {
+     "rule": "no_stopping",
+     "start": 3.6,
+     "end": 33.6,
+     "end_reason": "intersection (sign D-1/D-2, track 7809)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "start": 2.4,
+     "end": -329.4,
+     "end_reason": "distance cap 10000 m without a repeat",
+     "human_end": "yield",
+     "end_unclear": true
+    }
+   ],
+   "ends": [
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 33.6,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "source": "distance cap 10000 m without a repeat",
+     "delay": -329.4,
+     "human_end": "yield",
+     "unclear": true
+    }
+   ],
+   "junction_cues": {
+    "human": 46,
+    "engine": 19,
+    "by_source": {
+     "sign": 15,
+     "traffic": 0,
+     "turn": 4
+    },
+    "engine_hit": 15,
+    "human_found": 17
+   }
+  },
+  {
+   "ride": "s1-roadworks",
+   "duration_s": 456.9,
+   "rules": {
+    "expressway": {
+     "agreement": 0.147,
+     "human_n": 1,
+     "engine_n": 0,
+     "human_s": 390.0,
+     "engine_s": 0
+    },
+    "one_way": {
+     "agreement": 0.978,
+     "human_n": 1,
+     "engine_n": 1,
+     "human_s": 53.5,
+     "engine_s": 59.5
+    },
+    "priority_road": {
+     "agreement": 0.249,
+     "human_n": 1,
+     "engine_n": 2,
+     "human_s": 6.5,
+     "engine_s": 349.3
+    }
+   },
+   "momentary": {
+    "give_way_oncoming": {
+     "tp": 0,
+     "engine": 0,
+     "human": 1
+    },
+    "mandatory_direction": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "no_u_turn": {
+     "tp": 0,
+     "engine": 1,
+     "human": 0
+    },
+    "road_closed": {
+     "tp": 0,
+     "engine": 2,
+     "human": 0
+    },
+    "yield": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    }
+   },
+   "warnings": {
+    "animals_ahead": {
+     "tp": 0,
+     "engine": 1,
+     "human": 2
+    },
+    "curve_ahead": {
+     "tp": 1,
+     "engine": 2,
+     "human": 1
+    },
+    "cyclists_ahead": {
+     "tp": 0,
+     "engine": 2,
+     "human": 0
+    },
+    "lane_change_ahead": {
+     "tp": 0,
+     "engine": 2,
+     "human": 0
+    },
+    "other_danger_ahead": {
+     "tp": 2,
+     "engine": 4,
+     "human": 3
+    },
+    "road_narrows_ahead": {
+     "tp": 0,
+     "engine": 0,
+     "human": 2
+    },
+    "roadworks_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "traffic_signals_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "two_way_ahead": {
+     "tp": 1,
+     "engine": 3,
+     "human": 1
+    },
+    "uneven_road_ahead": {
+     "tp": 1,
+     "engine": 3,
+     "human": 4
+    },
+    "warning_other": {
+     "tp": 0,
+     "engine": 0,
+     "human": 2
+    }
+   },
+   "misses": [
+    {
+     "rule": "expressway",
+     "start_t": 67.0,
+     "end_t": 457.0,
+     "cause": "detector"
+    }
+   ],
+   "false": [
+    {
+     "rule": "priority_road",
+     "start_t": 100.0,
+     "end_t": 419.8,
+     "track": 2609,
+     "end_reason": "distance cap 10000 m without a repeat",
+     "cause": "?"
+    }
+   ],
+   "delays": [
+    {
+     "rule": "one_way",
+     "start": 1.6,
+     "end": 7.6,
+     "end_reason": "distance cap 2000 m without a repeat",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "start": -0.2,
+     "end": 22.8,
+     "end_reason": "A-7 (regulatory--yield, track 2591)",
+     "human_end": "junction",
+     "end_unclear": true
+    }
+   ],
+   "ends": [
+    {
+     "rule": "one_way",
+     "source": "distance cap 2000 m without a repeat",
+     "delay": 7.6,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": 22.8,
+     "human_end": "junction",
+     "unclear": true
+    }
+   ],
+   "junction_cues": {
+    "human": 7,
+    "engine": 6,
+    "by_source": {
+     "sign": 5,
+     "traffic": 0,
+     "turn": 1
+    },
+    "engine_hit": 4,
+    "human_found": 4
+   }
+  },
+  {
+   "ride": "warsaw-city",
+   "duration_s": 900.0,
+   "rules": {
+    "no_stopping": {
+     "agreement": 0.708,
+     "human_n": 22,
+     "engine_n": 7,
+     "human_s": 302.5,
+     "engine_s": 305.6
+    },
+    "one_way": {
+     "agreement": 0.662,
+     "human_n": 12,
+     "engine_n": 5,
+     "human_s": 184.5,
+     "engine_s": 236.1
+    },
+    "priority_road": {
+     "agreement": 0.822,
+     "human_n": 6,
+     "engine_n": 3,
+     "human_s": 393.0,
+     "engine_s": 232.6
+    }
+   },
+   "momentary": {
+    "end_of_priority_road": {
+     "tp": 0,
+     "engine": 4,
+     "human": 0
+    },
+    "mandatory_direction": {
+     "tp": 0,
+     "engine": 6,
+     "human": 2
+    },
+    "no_entry": {
+     "tp": 0,
+     "engine": 0,
+     "human": 2
+    },
+    "no_left_turn": {
+     "tp": 1,
+     "engine": 2,
+     "human": 7
+    },
+    "no_right_turn": {
+     "tp": 0,
+     "engine": 0,
+     "human": 2
+    },
+    "no_trucks": {
+     "tp": 0,
+     "engine": 0,
+     "human": 1
+    },
+    "one_way_side": {
+     "tp": 0,
+     "engine": 0,
+     "human": 13
+    },
+    "pedestrian_crossing": {
+     "tp": 6,
+     "engine": 8,
+     "human": 37
+    },
+    "roundabout": {
+     "tp": 3,
+     "engine": 6,
+     "human": 7
+    },
+    "yield": {
+     "tp": 5,
+     "engine": 5,
+     "human": 18
+    }
+   },
+   "warnings": {
+    "children_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "other_danger_ahead": {
+     "tp": 1,
+     "engine": 1,
+     "human": 1
+    },
+    "tram_crossing_ahead": {
+     "tp": 0,
+     "engine": 0,
+     "human": 1
+    },
+    "two_way_ahead": {
+     "tp": 0,
+     "engine": 9,
+     "human": 0
+    }
+   },
+   "misses": [
+    {
+     "rule": "no_stopping",
+     "start_t": 2.0,
+     "end_t": 15.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 2.5,
+     "end_t": 15.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 56.5,
+     "end_t": 63.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 76.0,
+     "end_t": 86.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 123.0,
+     "end_t": 152.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 234.5,
+     "end_t": 249.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 265.0,
+     "end_t": 273.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 317.5,
+     "end_t": 338.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 413.5,
+     "end_t": 425.0,
+     "cause": "engine: lateral 10.2 m (other roadway / exit lane?)"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 729.5,
+     "end_t": 735.5,
+     "cause": "engine: lateral 9.9 m (other roadway / exit lane?)"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 1.5,
+     "end_t": 15.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 123.0,
+     "end_t": 152.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 226.5,
+     "end_t": 249.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 413.5,
+     "end_t": 425.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 428.0,
+     "end_t": 436.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 438.5,
+     "end_t": 444.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 493.0,
+     "end_t": 500.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 809.0,
+     "end_t": 813.0,
+     "cause": "detector"
+    },
+    {
+     "rule": "priority_road",
+     "start_t": 41.5,
+     "end_t": 54.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "priority_road",
+     "start_t": 113.5,
+     "end_t": 150.5,
+     "cause": "detector"
+    },
+    {
+     "rule": "priority_road",
+     "start_t": 260.0,
+     "end_t": 270.0,
+     "cause": "detector"
+    }
+   ],
+   "false": [
+    {
+     "rule": "no_stopping",
+     "start_t": 316.7,
+     "end_t": 320.6,
+     "track": 5386,
+     "end_reason": "intersection (sign A-7/B-20, track 5402)",
+     "cause": "?"
+    },
+    {
+     "rule": "no_stopping",
+     "start_t": 481.8,
+     "end_t": 490.3,
+     "track": 5688,
+     "end_reason": "intersection (sign D-1/D-2, track 5707)",
+     "cause": "?"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 387.0,
+     "end_t": 405.3,
+     "track": 5561,
+     "end_reason": "intersection (sign C-12, track 5554)",
+     "cause": "?"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 579.0,
+     "end_t": 585.8,
+     "track": 5772,
+     "end_reason": "intersection (sign D-1/D-2, track 5782)",
+     "cause": "?"
+    },
+    {
+     "rule": "one_way",
+     "start_t": 637.5,
+     "end_t": 723.9,
+     "track": 5807,
+     "end_reason": "intersection (turn)",
+     "cause": "?"
+    }
+   ],
+   "delays": [
+    {
+     "rule": "no_stopping",
+     "start": -10.9,
+     "end": 39.6,
+     "end_reason": "intersection (sign D-1/D-2, track 5544)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -1.3,
+     "end": 24.2,
+     "end_reason": "intersection (sign D-1/D-2, track 5647)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": 1.8,
+     "end": 74.6,
+     "end_reason": "intersection (sign D-1/D-2, track 5747)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "start": -0.3,
+     "end": 35.2,
+     "end_reason": "intersection (sign D-1/D-2, track 5920)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "start": -1.2,
+     "end": 76.2,
+     "end_reason": "intersection (sign D-1/D-2, track 6067)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "one_way",
+     "start": 1.9,
+     "end": 27.4,
+     "end_reason": "intersection (sign D-1/D-2, track 5488)",
+     "human_end": "junction",
+     "end_unclear": true
+    },
+    {
+     "rule": "one_way",
+     "start": -19.9,
+     "end": 38.2,
+     "end_reason": "intersection (sign D-1/D-2, track 6067)",
+     "human_end": "junction",
+     "end_unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "start": 2.6,
+     "end": -0.7,
+     "end_reason": "A-7 (regulatory--yield, track 5546)",
+     "human_end": "D-2",
+     "end_unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "start": 52.9,
+     "end": -1.3,
+     "end_reason": "A-7 (regulatory--yield, track 5777)",
+     "human_end": "D-2",
+     "end_unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "start": 42.7,
+     "end": -0.2,
+     "end_reason": "A-7 (regulatory--yield, track 6062)",
+     "human_end": "D-2",
+     "end_unclear": false
+    }
+   ],
+   "ends": [
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 39.6,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 24.2,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 74.6,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 35.2,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "no_stopping",
+     "source": "intersection",
+     "delay": 76.2,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "one_way",
+     "source": "intersection",
+     "delay": 27.4,
+     "human_end": "junction",
+     "unclear": true
+    },
+    {
+     "rule": "one_way",
+     "source": "intersection",
+     "delay": 38.2,
+     "human_end": "junction",
+     "unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": -0.7,
+     "human_end": "D-2",
+     "unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": -1.3,
+     "human_end": "D-2",
+     "unclear": false
+    },
+    {
+     "rule": "priority_road",
+     "source": "A-7",
+     "delay": -0.2,
+     "human_end": "D-2",
+     "unclear": false
+    }
+   ],
+   "merged": [
+    {
+     "rule": "no_stopping",
+     "human": [
+      348.5,
+      377.0
+     ],
+     "engine": [
+      330.1,
+      385.1
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      438.5,
+      444.0
+     ],
+     "engine": [
+      426.7,
+      460.7
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      451.0,
+      455.5
+     ],
+     "engine": [
+      426.7,
+      460.7
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      509.5,
+      572.0
+     ],
+     "engine": [
+      494.8,
+      574.6
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      813.5,
+      816.0
+     ],
+     "engine": [
+      807.8,
+      889.2
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      831.0,
+      851.0
+     ],
+     "engine": [
+      807.8,
+      889.2
+     ]
+    },
+    {
+     "rule": "no_stopping",
+     "human": [
+      863.5,
+      876.0
+     ],
+     "engine": [
+      807.8,
+      889.2
+     ]
+    },
+    {
+     "rule": "one_way",
+     "human": [
+      348.5,
+      377.0
+     ],
+     "engine": [
+      319.4,
+      365.9
+     ]
+    },
+    {
+     "rule": "one_way",
+     "human": [
+      863.5,
+      876.0
+     ],
+     "engine": [
+      811.1,
+      889.2
+     ]
+    }
+   ],
+   "junction_cues": {
+    "human": 38,
+    "engine": 33,
+    "by_source": {
+     "sign": 31,
+     "traffic": 0,
+     "turn": 2
+    },
+    "engine_hit": 23,
+    "human_found": 11
+   }
+  }
+ ],
+ "pooled": {
+  "rules": {
+   "built_up_area": {
+    "agreement_mean": 0.436,
+    "human_n": 5,
+    "engine_n": 0,
+    "matched": 0,
+    "misses": 5,
+    "merged": 0,
+    "false": 0
+   },
+   "expressway": {
+    "agreement_mean": 0.147,
+    "human_n": 1,
+    "engine_n": 0,
+    "matched": 0,
+    "misses": 1,
+    "merged": 0,
+    "false": 0
+   },
+   "height_limit": {
+    "agreement_mean": 0.991,
+    "human_n": 0,
+    "engine_n": 1,
+    "matched": 0,
+    "misses": 0,
+    "merged": 0,
+    "false": 1
+   },
+   "no_overtaking": {
+    "agreement_mean": 0.93,
+    "human_n": 2,
+    "engine_n": 3,
+    "matched": 1,
+    "misses": 0,
+    "merged": 1,
+    "false": 2
+   },
+   "no_parking": {
+    "agreement_mean": 0.99,
+    "human_n": 2,
+    "engine_n": 3,
+    "matched": 2,
+    "misses": 0,
+    "merged": 0,
+    "false": 1
+   },
+   "no_stopping": {
+    "agreement_mean": 0.795,
+    "human_n": 57,
+    "engine_n": 35,
+    "matched": 26,
+    "misses": 14,
+    "merged": 17,
+    "false": 9
+   },
+   "one_way": {
+    "agreement_mean": 0.772,
+    "human_n": 20,
+    "engine_n": 13,
+    "matched": 7,
+    "misses": 10,
+    "merged": 3,
+    "false": 6
+   },
+   "priority_road": {
+    "agreement_mean": 0.729,
+    "human_n": 16,
+    "engine_n": 15,
+    "matched": 12,
+    "misses": 3,
+    "merged": 1,
+    "false": 3
+   },
+   "weight_limit": {
+    "agreement_mean": 0.98,
+    "human_n": 2,
+    "engine_n": 1,
+    "matched": 1,
+    "misses": 1,
+    "merged": 0,
+    "false": 0
+   }
+  },
+  "momentary": {
+   "dead_end": {
+    "tp": 0,
+    "engine": 1,
+    "human": 0,
+    "precision": 0.0,
+    "recall": null
+   },
+   "end_of_priority_road": {
+    "tp": 0,
+    "engine": 6,
+    "human": 0,
+    "precision": 0.0,
+    "recall": null
+   },
+   "end_of_prohibitions": {
+    "tp": 0,
+    "engine": 0,
+    "human": 1,
+    "precision": null,
+    "recall": 0.0
+   },
+   "give_way_oncoming": {
+    "tp": 0,
+    "engine": 0,
+    "human": 1,
+    "precision": null,
+    "recall": 0.0
+   },
+   "mandatory_direction": {
+    "tp": 5,
+    "engine": 19,
+    "human": 8,
+    "precision": 0.26,
+    "recall": 0.62
+   },
+   "no_entry": {
+    "tp": 2,
+    "engine": 4,
+    "human": 7,
+    "precision": 0.5,
+    "recall": 0.29
+   },
+   "no_left_turn": {
+    "tp": 10,
+    "engine": 13,
+    "human": 22,
+    "precision": 0.77,
+    "recall": 0.45
+   },
+   "no_overtaking_hgv": {
+    "tp": 0,
+    "engine": 1,
+    "human": 0,
+    "precision": 0.0,
+    "recall": null
+   },
+   "no_right_turn": {
+    "tp": 1,
+    "engine": 5,
+    "human": 4,
+    "precision": 0.2,
+    "recall": 0.25
+   },
+   "no_straight": {
+    "tp": 0,
+    "engine": 1,
+    "human": 0,
+    "precision": 0.0,
+    "recall": null
+   },
+   "no_trucks": {
+    "tp": 0,
+    "engine": 3,
+    "human": 2,
+    "precision": 0.0,
+    "recall": 0.0
+   },
+   "no_u_turn": {
+    "tp": 1,
+    "engine": 3,
+    "human": 1,
+    "precision": 0.33,
+    "recall": 1.0
+   },
+   "one_way_side": {
+    "tp": 0,
+    "engine": 1,
+    "human": 13,
+    "precision": 0.0,
+    "recall": 0.0
+   },
+   "pedestrian_crossing": {
+    "tp": 53,
+    "engine": 85,
+    "human": 105,
+    "precision": 0.62,
+    "recall": 0.5
+   },
+   "priority_over_oncoming": {
+    "tp": 0,
+    "engine": 1,
+    "human": 0,
+    "precision": 0.0,
+    "recall": null
+   },
+   "road_closed": {
+    "tp": 0,
+    "engine": 5,
+    "human": 0,
+    "precision": 0.0,
+    "recall": null
+   },
+   "roundabout": {
+    "tp": 6,
+    "engine": 11,
+    "human": 10,
+    "precision": 0.55,
+    "recall": 0.6
+   },
+   "stop": {
+    "tp": 0,
+    "engine": 0,
+    "human": 1,
+    "precision": null,
+    "recall": 0.0
+   },
+   "yield": {
+    "tp": 20,
+    "engine": 26,
+    "human": 34,
+    "precision": 0.77,
+    "recall": 0.59
+   }
+  },
+  "warnings": {
+   "animals_ahead": {
+    "tp": 2,
+    "engine": 5,
+    "human": 5,
+    "precision": 0.4,
+    "recall": 0.4
+   },
+   "children_ahead": {
+    "tp": 5,
+    "engine": 6,
+    "human": 6,
+    "precision": 0.83,
+    "recall": 0.83
+   },
+   "crossroads_ahead": {
+    "tp": 0,
+    "engine": 7,
+    "human": 0,
+    "precision": 0.0,
+    "recall": null
+   },
+   "curve_ahead": {
+    "tp": 6,
+    "engine": 11,
+    "human": 6,
+    "precision": 0.55,
+    "recall": 1.0
+   },
+   "cyclists_ahead": {
+    "tp": 0,
+    "engine": 2,
+    "human": 2,
+    "precision": 0.0,
+    "recall": 0.0
+   },
+   "falling_rocks_ahead": {
+    "tp": 0,
+    "engine": 1,
+    "human": 0,
+    "precision": 0.0,
+    "recall": null
+   },
+   "lane_change_ahead": {
+    "tp": 0,
+    "engine": 6,
+    "human": 0,
+    "precision": 0.0,
+    "recall": null
+   },
+   "other_danger_ahead": {
+    "tp": 5,
+    "engine": 11,
+    "human": 7,
+    "precision": 0.45,
+    "recall": 0.71
+   },
+   "pedestrian_crossing_ahead": {
+    "tp": 2,
+    "engine": 6,
+    "human": 3,
+    "precision": 0.33,
+    "recall": 0.67
+   },
+   "road_narrows_ahead": {
+    "tp": 1,
+    "engine": 2,
+    "human": 4,
+    "precision": 0.5,
+    "recall": 0.25
+   },
+   "roadworks_ahead": {
+    "tp": 2,
+    "engine": 3,
+    "human": 2,
+    "precision": 0.67,
+    "recall": 1.0
+   },
+   "side_road_ahead": {
+    "tp": 2,
+    "engine": 5,
+    "human": 3,
+    "precision": 0.4,
+    "recall": 0.67
+   },
+   "traffic_signals_ahead": {
+    "tp": 3,
+    "engine": 3,
+    "human": 3,
+    "precision": 1.0,
+    "recall": 1.0
+   },
+   "tram_crossing_ahead": {
+    "tp": 0,
+    "engine": 0,
+    "human": 1,
+    "precision": null,
+    "recall": 0.0
+   },
+   "two_way_ahead": {
+    "tp": 1,
+    "engine": 12,
+    "human": 1,
+    "precision": 0.08,
+    "recall": 1.0
+   },
+   "uneven_road_ahead": {
+    "tp": 2,
+    "engine": 6,
+    "human": 7,
+    "precision": 0.33,
+    "recall": 0.29
+   },
+   "warning_other": {
+    "tp": 0,
+    "engine": 0,
+    "human": 11,
+    "precision": null,
+    "recall": 0.0
+   }
+  },
+  "delays": {
+   "n": 49,
+   "start_median": -0.6,
+   "end_median_clear": 8.899999999999999,
+   "end_abs_median_clear": 9.0
+  },
+  "ends": {
+   "A-7": {
+    "n": 10,
+    "abs_delay_median": 9.55,
+    "delay_median": -0.44999999999999996
+   },
+   "B-35": {
+    "n": 2,
+    "abs_delay_median": 17.35,
+    "delay_median": 17.35
+   },
+   "B-36": {
+    "n": 2,
+    "abs_delay_median": 2.4,
+    "delay_median": 0.0
+   },
+   "distance cap 10000 m without a repeat": {
+    "n": 1,
+    "abs_delay_median": 329.4,
+    "delay_median": -329.4
+   },
+   "distance cap 2000 m without a repeat": {
+    "n": 1,
+    "abs_delay_median": 7.6,
+    "delay_median": 7.6
+   },
+   "distance cap 3000 m without a repeat": {
+    "n": 1,
+    "abs_delay_median": 203.0,
+    "delay_median": 203.0
+   },
+   "intersection": {
+    "n": 31,
+    "abs_delay_median": 11.8,
+    "delay_median": 11.8
+   },
+   "ride end": {
+    "n": 1,
+    "abs_delay_median": 238.0,
+    "delay_median": 238.0
+   }
+  }
+ }
+}

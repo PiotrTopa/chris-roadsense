@@ -1,0 +1,565 @@
+== forest-vistula-spit (900 s)
+  built_up_area    agree 0.455  human 1 (490.5 s)  engine 0 (0 s)
+  no_overtaking    agree 0.889  human 2 (73.8 s)  engine 2 (230.2 s)
+  no_stopping      agree 0.759  human 11 (185.5 s)  engine 14 (379.4 s)
+  priority_road    agree 0.962  human 3 (356.5 s)  engine 4 (330.2 s)
+  MISS  built_up_area 409.5-900.0: detector
+  FALSE no_overtaking 15.8-39.3 track 8085: intersection (sign A-5..A-8/A-29, track 8093)  [?]
+  FALSE no_stopping 28.6-39.3 track 8095: intersection (sign A-5..A-8/A-29, track 8093)  [?]
+  FALSE no_stopping 43.6-124.2 track 8106: intersection (sign A-5..A-8/A-29, track 8111)  [?]
+  FALSE no_stopping 567.4-575.4 track 8294: intersection (sign D-1/D-2, track 8297)  [?]
+  FALSE no_stopping 579.0-600.4 track 8305: intersection (turn)  [?]
+  FALSE priority_road 649.4-653.8 track 8348: A-7 (regulatory--yield, track 8349)  [?]
+  merged no_overtaking: human [168.5, 237.0] inside engine [128.1, 334.8]
+  merged no_stopping: human [469.0, 482.0] inside engine [422.7, 479.6]
+  delay no_overtaking: start +1.6 s  end +203.0 s  (distance cap 3000 m without a repeat | human unclear)
+  delay no_stopping: start +1.7 s  end +44.6 s  (intersection (sign D-1/D-2, track 8232) | human junction unclear)
+  delay no_stopping: start +1.9 s  end +1.5 s  (intersection (sign D-1/D-2, track 8246) | human junction unclear)
+  delay no_stopping: start +2.0 s  end +3.8 s  (intersection (sign D-1/D-2, track 8251) | human junction unclear)
+  delay no_stopping: start -0.7 s  end +3.4 s  (intersection (sign D-1/D-2, track 8285) | human junction unclear)
+  delay no_stopping: start -13.8 s  end +0.4 s  (intersection (traffic light) | human junction)
+  delay no_stopping: start -1.5 s  end +0.7 s  (intersection (sign D-1/D-2, track 8450) | human junction)
+  delay no_stopping: start -1.1 s  end +11.8 s  (intersection (sign D-1/D-2, track 8467) | human junction unclear)
+  delay no_stopping: start -1.1 s  end +5.2 s  (intersection (turn) | human junction)
+  delay no_stopping: start -1.4 s  end +1.7 s  (intersection (sign D-1/D-2, track 8492) | human junction)
+  delay no_stopping: start +2.2 s  end +1.3 s  (intersection (sign D-1/D-2, track 8524) | human junction)
+  delay priority_road: start +2.1 s  end +2.4 s  (turned off the road (50 deg) | human unclear unclear)
+  delay priority_road: start +11.9 s  end -19.2 s  (turned off the road (50 deg) | human unclear unclear)
+  delay priority_road: start -1.1 s  end -1.0 s  (A-7 (regulatory--yield, track 8525) | human yield)
+  momentary: {'end_of_priority_road': (0, 1, 0), 'no_left_turn': (0, 2, 0), 'no_right_turn': (0, 1, 0), 'pedestrian_crossing': (16, 21, 25), 'road_closed': (0, 1, 0), 'roundabout': (1, 1, 1), 'yield': (4, 5, 4)}
+  warnings:  {'animals_ahead': (1, 3, 1), 'children_ahead': (1, 1, 1), 'crossroads_ahead': (0, 1, 0), 'curve_ahead': (2, 3, 2), 'falling_rocks_ahead': (0, 1, 0), 'other_danger_ahead': (0, 3, 0), 'pedestrian_crossing_ahead': (0, 1, 0), 'side_road_ahead': (0, 1, 0), 'uneven_road_ahead': (1, 2, 2), 'warning_other': (0, 0, 3)}
+  junctions: {'human': 27, 'engine': 31, 'by_source': {'sign': 21, 'traffic': 1, 'turn': 9}, 'engine_hit': 22, 'human_found': 19}
+== katowice-rain (900 s)
+  built_up_area    agree 0.143  human 1 (771.0 s)  engine 0 (0 s)
+  no_parking       agree 0.992  human 1 (5.5 s)  engine 2 (8.6 s)
+  no_stopping      agree 0.801  human 16 (183.5 s)  engine 10 (332.9 s)
+  one_way          agree 0.776  human 2 (24.0 s)  engine 5 (224.2 s)
+  priority_road    agree 0.855  human 2 (525.5 s)  engine 2 (469.6 s)
+  weight_limit     agree 0.998  human 1 (1.5 s)  engine 1 (6.9 s)
+  MISS  built_up_area 0.0-771.0: detector
+  MISS  no_stopping 104.5-110.5: detector
+  MISS  no_stopping 132.5-135.5: classifier: B-35/B-36 confusion
+  MISS  no_stopping 588.5-689.0: detector
+  FALSE no_parking 134.1-136.4 track 3944: intersection (sign D-1/D-2, track 3945)  [classifier: B-35/B-36 confusion]
+  FALSE no_stopping 94.8-99.6 track 3864: intersection (traffic light)  [?]
+  FALSE one_way 170.0-186.6 track 3983: intersection (sign D-1/D-2, track 4007)  [?]
+  FALSE one_way 420.9-594.8 track 4200: intersection (traffic light)  [?]
+  FALSE one_way 698.3-704.6 track 4252: intersection (traffic light)  [?]
+  merged no_stopping: human [335.5, 337.5] inside engine [326.3, 339.6]
+  merged no_stopping: human [403.5, 408.0] inside engine [384.0, 419.8]
+  merged no_stopping: human [413.5, 420.0] inside engine [384.0, 419.8]
+  merged no_stopping: human [419.5, 420.0] inside engine [384.0, 419.8]
+  delay no_parking: start -3.2 s  end -2.4 s  (B-36 (regulatory--no-stopping, track 3979) | human junction)
+  delay no_stopping: start +1.7 s  end +0.8 s  (intersection (sign D-1/D-2, track 3935) | human junction unclear)
+  delay no_stopping: start -0.8 s  end +13.3 s  (intersection (traffic light) | human junction)
+  delay no_stopping: start -0.9 s  end +1.7 s  (intersection (traffic light) | human junction)
+  delay no_stopping: start -1.1 s  end +52.3 s  (intersection (traffic light) | human junction unclear)
+  delay no_stopping: start -1.4 s  end -10.6 s  (intersection (turn) | human junction)
+  delay no_stopping: start -1.7 s  end +2.1 s  (intersection (sign A-7/B-20, track 4104) | human junction unclear)
+  delay no_stopping: start -1.3 s  end +13.9 s  (intersection (sign D-1/D-2, track 4157) | human junction)
+  delay no_stopping: start -2.0 s  end +20.3 s  (intersection (sign D-1/D-2, track 4195) | human junction)
+  delay no_stopping: start -1.5 s  end +164.8 s  (intersection (traffic light) | human junction unclear)
+  delay one_way: start -0.5 s  end +2.1 s  (intersection (sign A-7/B-20, track 4104) | human junction)
+  delay one_way: start +2.1 s  end +2.9 s  (intersection (sign A-7/B-20, track 4297) | human junction unclear)
+  delay priority_road: start -24.7 s  end +11.8 s  (A-7 (regulatory--yield, track 4103) | human unclear unclear)
+  delay priority_road: start -1.0 s  end -93.4 s  (A-7 (regulatory--yield, track 4237) | human yield unclear)
+  delay weight_limit: start +2.0 s  end +7.4 s  (intersection (turn) | human junction unclear)
+  momentary: {'end_of_priority_road': (0, 1, 0), 'end_of_prohibitions': (0, 0, 1), 'mandatory_direction': (3, 8, 4), 'no_entry': (0, 1, 3), 'no_left_turn': (6, 6, 9), 'no_overtaking_hgv': (0, 1, 0), 'no_right_turn': (0, 1, 0), 'no_trucks': (0, 1, 1), 'no_u_turn': (1, 2, 1), 'one_way_side': (0, 1, 0), 'pedestrian_crossing': (11, 19, 13), 'priority_over_oncoming': (0, 1, 0), 'road_closed': (0, 1, 0), 'roundabout': (2, 3, 2), 'yield': (7, 8, 8)}
+  warnings:  {'curve_ahead': (1, 2, 1), 'lane_change_ahead': (0, 4, 0), 'road_narrows_ahead': (1, 1, 1), 'traffic_signals_ahead': (1, 1, 1), 'warning_other': (0, 0, 3)}
+  junctions: {'human': 36, 'engine': 41, 'by_source': {'sign': 26, 'traffic': 13, 'turn': 2}, 'engine_hit': 37, 'human_found': 25}
+== krakow-2024 (600 s)
+  height_limit     agree 0.991  human 0 (0 s)  engine 1 (5.7 s)
+  no_parking       agree 0.989  human 1 (3.0 s)  engine 1 (9.5 s)
+  no_stopping      agree 0.767  human 7 (58.0 s)  engine 7 (150.4 s)
+  one_way          agree 0.809  human 5 (62.0 s)  engine 3 (89.4 s)
+  priority_road    agree 0.851  human 3 (370.5 s)  engine 4 (282.6 s)
+  weight_limit     agree 0.962  human 1 (22.5 s)  engine 0 (0 s)
+  MISS  no_stopping 347.5-354.0: engine: lateral 9.1 m (other roadway / exit lane?)
+  MISS  no_stopping 365.0-370.5: detector
+  MISS  one_way 316.0-330.0: detector
+  MISS  one_way 365.0-384.0: detector
+  MISS  weight_limit 174.5-197.0: detector
+  FALSE height_limit 109.1-114.8 track 7024: intersection (sign A-7/B-20, track 7043)  [?]
+  FALSE no_stopping 194.8-210.0 track 7124: intersection (sign D-1/D-2, track 7148)  [?]
+  FALSE no_stopping 217.2-226.0 track 7176: intersection (sign D-1/D-2, track 7179)  [?]
+  FALSE no_stopping 529.5-553.6 track 7453: intersection (traffic light)  [?]
+  FALSE one_way 28.8-63.6 track 6980: intersection (traffic light)  [?]
+  FALSE priority_road 584.2-600.0 track 7476: ride end  [?]
+  merged no_stopping: human [243.5, 253.0] inside engine [230.7, 259.9]
+  merged one_way: human [264.0, 271.5] inside engine [233.3, 271.2]
+  delay no_parking: start -4.1 s  end +2.4 s  (B-36 (regulatory--no-stopping, track 7225) | human B-36 unclear)
+  delay no_stopping: start -0.8 s  end +19.9 s  (B-35 (regulatory--no-parking, track 7212) | human junction)
+  delay no_stopping: start +2.4 s  end -0.3 s  (intersection (sign A-5..A-8/A-29, track 7210) | human junction)
+  delay no_stopping: start +3.4 s  end +7.1 s  (intersection (sign D-1/D-2, track 7261) | human junction)
+  delay no_stopping: start -40.5 s  end +3.6 s  (intersection (sign A-5..A-8/A-29, track 7407) | human junction unclear)
+  delay one_way: start +1.8 s  end +31.2 s  (intersection (sign A-5..A-8/A-29, track 7210) | human junction)
+  delay one_way: start +3.4 s  end +7.1 s  (intersection (sign D-1/D-2, track 7261) | human junction)
+  delay priority_road: start +56.4 s  end -7.3 s  (A-7 (regulatory--yield, track 7043) | human yield)
+  delay priority_road: start -0.6 s  end -3.9 s  (turned off the road (50 deg) | human unclear unclear)
+  delay priority_road: start -0.6 s  end -37.3 s  (turned off the road (51 deg) | human ride end unclear)
+  momentary: {'dead_end': (0, 1, 0), 'mandatory_direction': (1, 4, 1), 'no_entry': (2, 3, 2), 'no_left_turn': (3, 3, 6), 'no_right_turn': (1, 3, 2), 'no_straight': (0, 1, 0), 'no_trucks': (0, 2, 0), 'pedestrian_crossing': (14, 29, 20), 'road_closed': (0, 1, 0), 'roundabout': (0, 1, 0), 'stop': (0, 0, 1), 'yield': (2, 5, 2)}
+  warnings:  {'crossroads_ahead': (0, 2, 0), 'cyclists_ahead': (0, 0, 2), 'road_narrows_ahead': (0, 1, 1), 'roadworks_ahead': (1, 1, 1), 'uneven_road_ahead': (0, 0, 1), 'warning_other': (0, 0, 1)}
+  junctions: {'human': 24, 'engine': 36, 'by_source': {'sign': 23, 'traffic': 7, 'turn': 6}, 'engine_hit': 32, 'human_found': 14}
+== rural-zloczew (900 s)
+  built_up_area    agree 0.711  human 3 (260.4 s)  engine 0 (0 s)
+  no_overtaking    agree 0.974  human 0 (0 s)  engine 1 (23.2 s)
+  no_stopping      agree 0.978  human 1 (3.2 s)  engine 1 (33.2 s)
+  priority_road    agree 0.996  human 1 (840.2 s)  engine 1 (836.2 s)
+  MISS  built_up_area 0.0-65.0: detector
+  MISS  built_up_area 597.8-664.6: detector
+  MISS  built_up_area 771.4-900.0: detector
+  FALSE no_overtaking 703.8-727.0 track 7727: intersection (traffic light)  [?]
+  delay no_stopping: start +3.6 s  end +33.6 s  (intersection (sign D-1/D-2, track 7809) | human junction unclear)
+  delay priority_road: start +2.4 s  end -1.6 s  (A-7 (regulatory--yield, track 7815) | human yield unclear)
+  momentary: {'pedestrian_crossing': (6, 8, 10), 'yield': (1, 2, 1)}
+  warnings:  {'animals_ahead': (1, 1, 2), 'children_ahead': (3, 4, 4), 'crossroads_ahead': (0, 4, 0), 'curve_ahead': (2, 4, 2), 'other_danger_ahead': (2, 3, 3), 'pedestrian_crossing_ahead': (2, 5, 3), 'roadworks_ahead': (0, 1, 0), 'side_road_ahead': (2, 4, 3), 'traffic_signals_ahead': (1, 1, 1), 'uneven_road_ahead': (0, 1, 0), 'warning_other': (0, 0, 2)}
+  junctions: {'human': 46, 'engine': 20, 'by_source': {'sign': 16, 'traffic': 1, 'turn': 3}, 'engine_hit': 16, 'human_found': 16}
+== s1-roadworks (457 s)
+  expressway       agree 0.147  human 1 (390.0 s)  engine 0 (0 s)
+  one_way          agree 0.978  human 1 (53.5 s)  engine 1 (59.5 s)
+  priority_road    agree 0.249  human 1 (6.5 s)  engine 2 (349.3 s)
+  MISS  expressway 67.0-457.0: detector
+  FALSE priority_road 100.0-419.8 track 2609: distance cap 10000 m without a repeat  [?]
+  delay one_way: start +1.6 s  end +7.6 s  (distance cap 2000 m without a repeat | human junction unclear)
+  delay priority_road: start -0.2 s  end +22.8 s  (A-7 (regulatory--yield, track 2591) | human junction unclear)
+  momentary: {'give_way_oncoming': (0, 0, 1), 'mandatory_direction': (1, 1, 1), 'no_u_turn': (0, 1, 0), 'road_closed': (0, 2, 0), 'yield': (1, 1, 1)}
+  warnings:  {'animals_ahead': (0, 1, 2), 'curve_ahead': (1, 2, 1), 'cyclists_ahead': (0, 2, 0), 'lane_change_ahead': (0, 2, 0), 'other_danger_ahead': (2, 4, 3), 'road_narrows_ahead': (0, 0, 2), 'roadworks_ahead': (1, 1, 1), 'traffic_signals_ahead': (1, 1, 1), 'two_way_ahead': (1, 3, 1), 'uneven_road_ahead': (1, 3, 4), 'warning_other': (0, 0, 2)}
+  junctions: {'human': 7, 'engine': 6, 'by_source': {'sign': 5, 'traffic': 0, 'turn': 1}, 'engine_hit': 4, 'human_found': 4}
+== warsaw-city (900 s)
+  no_stopping      agree 0.787  human 22 (302.5 s)  engine 11 (172.4 s)
+  one_way          agree 0.671  human 12 (184.5 s)  engine 8 (196.0 s)
+  priority_road    agree 0.822  human 6 (393.0 s)  engine 3 (232.6 s)
+  MISS  no_stopping 2.0-15.5: detector
+  MISS  no_stopping 2.5-15.5: detector
+  MISS  no_stopping 56.5-63.5: detector
+  MISS  no_stopping 76.0-86.5: detector
+  MISS  no_stopping 123.0-152.0: detector
+  MISS  no_stopping 234.5-249.5: detector
+  MISS  no_stopping 265.0-273.5: detector
+  MISS  no_stopping 413.5-425.0: engine: lateral 10.2 m (other roadway / exit lane?)
+  MISS  no_stopping 438.5-444.0: engine: lateral 9.4 m (other roadway / exit lane?)
+  MISS  no_stopping 451.0-455.5: detector
+  MISS  no_stopping 729.5-735.5: engine: lateral 9.9 m (other roadway / exit lane?)
+  MISS  one_way 1.5-15.5: detector
+  MISS  one_way 123.0-152.0: detector
+  MISS  one_way 226.5-249.5: detector
+  MISS  one_way 413.5-425.0: detector
+  MISS  one_way 428.0-436.5: detector
+  MISS  one_way 438.5-444.0: detector
+  MISS  one_way 493.0-500.0: detector
+  MISS  priority_road 41.5-54.5: detector
+  MISS  priority_road 113.5-150.5: detector
+  MISS  priority_road 260.0-270.0: detector
+  FALSE no_stopping 316.7-320.6 track 5386: intersection (sign A-7/B-20, track 5402)  [?]
+  FALSE no_stopping 481.8-483.7 track 5688: intersection (traffic light)  [?]
+  FALSE no_stopping 879.7-889.2 track 6058: intersection (sign D-1/D-2, track 6067)  [?]
+  FALSE one_way 387.0-405.3 track 5561: intersection (sign C-12, track 5554)  [?]
+  FALSE one_way 579.0-586.2 track 5772: intersection (sign A-7/B-20, track 5781)  [?]
+  FALSE one_way 637.5-723.9 track 5807: intersection (turn)  [?]
+  merged no_stopping: human [341.0, 345.5] inside engine [330.1, 346.9]
+  merged no_stopping: human [509.5, 572.0] inside engine [494.8, 525.2]
+  merged no_stopping: human [813.5, 816.0] inside engine [807.8, 818.5]
+  delay no_stopping: start +12.6 s  end +8.4 s  (intersection (traffic light) | human junction unclear)
+  delay no_stopping: start +2.3 s  end +8.1 s  (intersection (sign D-1/D-2, track 5544) | human junction)
+  delay no_stopping: start -1.3 s  end +1.6 s  (intersection (traffic light) | human junction)
+  delay no_stopping: start +1.8 s  end +25.2 s  (intersection (traffic light) | human junction unclear)
+  delay no_stopping: start -0.3 s  end +1.2 s  (intersection (traffic light) | human junction)
+  delay no_stopping: start -1.2 s  end +5.5 s  (intersection (traffic light) | human junction unclear)
+  delay no_stopping: start -0.4 s  end +10.1 s  (intersection (traffic light) | human junction)
+  delay no_stopping: start -0.5 s  end +1.0 s  (intersection (sign D-1/D-2, track 6051) | human junction)
+  delay one_way: start +1.9 s  end -6.3 s  (intersection (traffic light) | human junction unclear)
+  delay one_way: start +2.3 s  end -12.8 s  (intersection (traffic light) | human junction)
+  delay one_way: start +2.1 s  end +1.9 s  (intersection (sign D-1/D-2, track 5941) | human junction unclear)
+  delay one_way: start -12.9 s  end +10.1 s  (intersection (traffic light) | human junction)
+  delay one_way: start +2.4 s  end +1.0 s  (intersection (sign D-1/D-2, track 6051) | human junction)
+  delay priority_road: start +2.6 s  end -0.7 s  (A-7 (regulatory--yield, track 5546) | human D-2)
+  delay priority_road: start +52.9 s  end -1.3 s  (A-7 (regulatory--yield, track 5777) | human D-2)
+  delay priority_road: start +42.7 s  end -0.2 s  (A-7 (regulatory--yield, track 6062) | human D-2)
+  momentary: {'end_of_priority_road': (0, 4, 0), 'mandatory_direction': (0, 6, 2), 'no_entry': (0, 0, 2), 'no_left_turn': (1, 2, 7), 'no_right_turn': (0, 0, 2), 'no_trucks': (0, 0, 1), 'one_way_side': (0, 0, 13), 'pedestrian_crossing': (6, 8, 37), 'roundabout': (3, 6, 7), 'yield': (5, 5, 18)}
+  warnings:  {'children_ahead': (1, 1, 1), 'other_danger_ahead': (1, 1, 1), 'tram_crossing_ahead': (0, 0, 1), 'two_way_ahead': (0, 9, 0)}
+  junctions: {'human': 38, 'engine': 47, 'by_source': {'sign': 31, 'traffic': 14, 'turn': 2}, 'engine_hit': 37, 'human_found': 20}
+== pooled
+{
+ "rules": {
+  "built_up_area": {
+   "agreement_mean": 0.436,
+   "human_n": 5,
+   "engine_n": 0,
+   "matched": 0,
+   "misses": 5,
+   "merged": 0,
+   "false": 0
+  },
+  "expressway": {
+   "agreement_mean": 0.147,
+   "human_n": 1,
+   "engine_n": 0,
+   "matched": 0,
+   "misses": 1,
+   "merged": 0,
+   "false": 0
+  },
+  "height_limit": {
+   "agreement_mean": 0.991,
+   "human_n": 0,
+   "engine_n": 1,
+   "matched": 0,
+   "misses": 0,
+   "merged": 0,
+   "false": 1
+  },
+  "no_overtaking": {
+   "agreement_mean": 0.931,
+   "human_n": 2,
+   "engine_n": 3,
+   "matched": 1,
+   "misses": 0,
+   "merged": 1,
+   "false": 2
+  },
+  "no_parking": {
+   "agreement_mean": 0.99,
+   "human_n": 2,
+   "engine_n": 3,
+   "matched": 2,
+   "misses": 0,
+   "merged": 0,
+   "false": 1
+  },
+  "no_stopping": {
+   "agreement_mean": 0.818,
+   "human_n": 57,
+   "engine_n": 43,
+   "matched": 32,
+   "misses": 16,
+   "merged": 9,
+   "false": 11
+  },
+  "one_way": {
+   "agreement_mean": 0.808,
+   "human_n": 20,
+   "engine_n": 17,
+   "matched": 10,
+   "misses": 9,
+   "merged": 1,
+   "false": 7
+  },
+  "priority_road": {
+   "agreement_mean": 0.789,
+   "human_n": 16,
+   "engine_n": 16,
+   "matched": 13,
+   "misses": 3,
+   "merged": 0,
+   "false": 3
+  },
+  "weight_limit": {
+   "agreement_mean": 0.98,
+   "human_n": 2,
+   "engine_n": 1,
+   "matched": 1,
+   "misses": 1,
+   "merged": 0,
+   "false": 0
+  }
+ },
+ "momentary": {
+  "dead_end": {
+   "tp": 0,
+   "engine": 1,
+   "human": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "end_of_priority_road": {
+   "tp": 0,
+   "engine": 6,
+   "human": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "end_of_prohibitions": {
+   "tp": 0,
+   "engine": 0,
+   "human": 1,
+   "precision": null,
+   "recall": 0.0
+  },
+  "give_way_oncoming": {
+   "tp": 0,
+   "engine": 0,
+   "human": 1,
+   "precision": null,
+   "recall": 0.0
+  },
+  "mandatory_direction": {
+   "tp": 5,
+   "engine": 19,
+   "human": 8,
+   "precision": 0.26,
+   "recall": 0.62
+  },
+  "no_entry": {
+   "tp": 2,
+   "engine": 4,
+   "human": 7,
+   "precision": 0.5,
+   "recall": 0.29
+  },
+  "no_left_turn": {
+   "tp": 10,
+   "engine": 13,
+   "human": 22,
+   "precision": 0.77,
+   "recall": 0.45
+  },
+  "no_overtaking_hgv": {
+   "tp": 0,
+   "engine": 1,
+   "human": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "no_right_turn": {
+   "tp": 1,
+   "engine": 5,
+   "human": 4,
+   "precision": 0.2,
+   "recall": 0.25
+  },
+  "no_straight": {
+   "tp": 0,
+   "engine": 1,
+   "human": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "no_trucks": {
+   "tp": 0,
+   "engine": 3,
+   "human": 2,
+   "precision": 0.0,
+   "recall": 0.0
+  },
+  "no_u_turn": {
+   "tp": 1,
+   "engine": 3,
+   "human": 1,
+   "precision": 0.33,
+   "recall": 1.0
+  },
+  "one_way_side": {
+   "tp": 0,
+   "engine": 1,
+   "human": 13,
+   "precision": 0.0,
+   "recall": 0.0
+  },
+  "pedestrian_crossing": {
+   "tp": 53,
+   "engine": 85,
+   "human": 105,
+   "precision": 0.62,
+   "recall": 0.5
+  },
+  "priority_over_oncoming": {
+   "tp": 0,
+   "engine": 1,
+   "human": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "road_closed": {
+   "tp": 0,
+   "engine": 5,
+   "human": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "roundabout": {
+   "tp": 6,
+   "engine": 11,
+   "human": 10,
+   "precision": 0.55,
+   "recall": 0.6
+  },
+  "stop": {
+   "tp": 0,
+   "engine": 0,
+   "human": 1,
+   "precision": null,
+   "recall": 0.0
+  },
+  "yield": {
+   "tp": 20,
+   "engine": 26,
+   "human": 34,
+   "precision": 0.77,
+   "recall": 0.59
+  }
+ },
+ "warnings": {
+  "animals_ahead": {
+   "tp": 2,
+   "engine": 5,
+   "human": 5,
+   "precision": 0.4,
+   "recall": 0.4
+  },
+  "children_ahead": {
+   "tp": 5,
+   "engine": 6,
+   "human": 6,
+   "precision": 0.83,
+   "recall": 0.83
+  },
+  "crossroads_ahead": {
+   "tp": 0,
+   "engine": 7,
+   "human": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "curve_ahead": {
+   "tp": 6,
+   "engine": 11,
+   "human": 6,
+   "precision": 0.55,
+   "recall": 1.0
+  },
+  "cyclists_ahead": {
+   "tp": 0,
+   "engine": 2,
+   "human": 2,
+   "precision": 0.0,
+   "recall": 0.0
+  },
+  "falling_rocks_ahead": {
+   "tp": 0,
+   "engine": 1,
+   "human": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "lane_change_ahead": {
+   "tp": 0,
+   "engine": 6,
+   "human": 0,
+   "precision": 0.0,
+   "recall": null
+  },
+  "other_danger_ahead": {
+   "tp": 5,
+   "engine": 11,
+   "human": 7,
+   "precision": 0.45,
+   "recall": 0.71
+  },
+  "pedestrian_crossing_ahead": {
+   "tp": 2,
+   "engine": 6,
+   "human": 3,
+   "precision": 0.33,
+   "recall": 0.67
+  },
+  "road_narrows_ahead": {
+   "tp": 1,
+   "engine": 2,
+   "human": 4,
+   "precision": 0.5,
+   "recall": 0.25
+  },
+  "roadworks_ahead": {
+   "tp": 2,
+   "engine": 3,
+   "human": 2,
+   "precision": 0.67,
+   "recall": 1.0
+  },
+  "side_road_ahead": {
+   "tp": 2,
+   "engine": 5,
+   "human": 3,
+   "precision": 0.4,
+   "recall": 0.67
+  },
+  "traffic_signals_ahead": {
+   "tp": 3,
+   "engine": 3,
+   "human": 3,
+   "precision": 1.0,
+   "recall": 1.0
+  },
+  "tram_crossing_ahead": {
+   "tp": 0,
+   "engine": 0,
+   "human": 1,
+   "precision": null,
+   "recall": 0.0
+  },
+  "two_way_ahead": {
+   "tp": 1,
+   "engine": 12,
+   "human": 1,
+   "precision": 0.08,
+   "recall": 1.0
+  },
+  "uneven_road_ahead": {
+   "tp": 2,
+   "engine": 6,
+   "human": 7,
+   "precision": 0.33,
+   "recall": 0.29
+  },
+  "warning_other": {
+   "tp": 0,
+   "engine": 0,
+   "human": 11,
+   "precision": null,
+   "recall": 0.0
+  }
+ },
+ "delays": {
+  "n": 59,
+  "start_median": -0.3,
+  "end_median_clear": 1.6,
+  "end_abs_median_clear": 2.4
+ },
+ "ends": {
+  "A-7": {
+   "n": 9,
+   "abs_delay_median": 1.6,
+   "delay_median": -1.0
+  },
+  "B-35": {
+   "n": 1,
+   "abs_delay_median": 19.9,
+   "delay_median": 19.9
+  },
+  "B-36": {
+   "n": 2,
+   "abs_delay_median": 2.4,
+   "delay_median": 0.0
+  },
+  "distance cap 2000 m without a repeat": {
+   "n": 1,
+   "abs_delay_median": 7.6,
+   "delay_median": 7.6
+  },
+  "distance cap 3000 m without a repeat": {
+   "n": 1,
+   "abs_delay_median": 203.0,
+   "delay_median": 203.0
+  },
+  "intersection": {
+   "n": 41,
+   "abs_delay_median": 5.5,
+   "delay_median": 3.6
+  },
+  "turned off the road": {
+   "n": 4,
+   "abs_delay_median": 11.549999999999999,
+   "delay_median": -11.549999999999999
+  }
+ }
+}

@@ -10,6 +10,61 @@ as data. The L6 speed-limit engine is generalised; `/v1/speed_limit` and its tes
 Laptop scratch `~/l11/` (recordings, frames, labels; nothing committed). Phone: untouched until the deploy
 step at the end; the ride playlist keeps running.
 
+## Result
+* Topic **`rules`** (`/ws`, on change and >= 1/s), **`GET /v1/rules`** (+ `pending`, `recent_changes`, `ignored`),
+  `rules` summary in `/v1/health`, a "rules in effect" panel on the status page, IN EFFECT / RECENT / AHEAD HUD
+  lines on `/preview`. Engine `api/roadsense_api/rules.py` wrapping the unchanged L6 `SpeedLimit` (one hook
+  added); rules as data in `rules/pl.json` -> `effects` (62 entries, legal sources per entry, guesses marked).
+  Traffic lights are a junction cue for every "until the next intersection" rule, the speed limit included.
+  Schema: `docs/ARCHITECTURE.md` "api-derived topic: rules". Offline runner `tools/rules_replay.py`.
+* Tests: 16 synthetic scenarios (`api/tests/test_rules.py`), api end-to-end (`test_api.py::test_rules`, `/ws`
+  with `rules`), status-page script guard (`test_index_js.py`); whole suite 69/69.
+* Offline evaluation on six labelled Polish rides (pre-registered, section 6): time agreement no stopping 0.82,
+  one-way 0.81, priority road 0.79, no parking 0.99, no overtaking 0.93; starts within 1 s of the sign, ends
+  within ~2-4 s where a junction cue exists; 30 of 35 misses are detector misses, 25 false rules mostly
+  classifier confusions (warning triangles as D-1, C-5 discs as D-3, B-35/B-36). The traffic-light cue raises
+  junction recall 82 -> 98 of 178 and cuts the median end delay 12 -> 4 s.
+* Phone: installed (14:55, 18:40, 18:42), `api.pre-l11` backup; road 13.2-14.0/s, signs 4.5-5.0/s unchanged.
+  Live example (offline from the katowice-rain recording at 423 s, abbreviated):
+
+```
+"in_effect": [
+ {"id":"speed_limit","sign":"default","name":"speed limit (built_up)","value":50,"unit":"km/h","confidence":0.45,
+  "source":{"kind":"default","rule":"built_up","area_source":"env"},"since":{"age_s":62.1,"distance_m":438.4}},
+ {"id":"built_up_area","sign":"D-42","source":{"kind":"env"},"uncertain":["entry sign D-42 not observable; area from envd"],...},
+ {"id":"priority_road","sign":"D-1","name":"priority road","category":"lasting","confidence":0.857,
+  "source":{"kind":"sign","track_id":4157,"cls":"regulatory--priority-road","hits":12,"vote":0.92,"score":0.555,"lateral_m":6.3,"plate":null},
+  "since":{"age_s":44.1,"distance_m":349.1},"ends":"D-2, a yield/stop facing the car, or turning off the road","remaining_m":2959.8},
+ {"id":"no_stopping","sign":"B-36","name":"no stopping","side":"right","confidence":0.925,"since":{"age_s":2.6,"distance_m":23.5},
+  "ends":"next intersection (par. 32 ust. 2), B-35 or an end plate","remaining_m":685.0,"uncertain":[],...},
+ {"id":"no_left_turn","sign":"B-21","name":"no left turn (and no U-turn)","category":"momentary","confidence":0.854,
+  "ends":"the next intersection (par. 22 ust. 2)","remaining_m":304.7,...} ],
+"recent": [ {"id":"no_left_turn","sign":"B-21","passed":{"age_s":24.9,"distance_m":139.6},"ended":"intersection (sign D-1/D-2, track 4195)",...},
+            {"id":"pedestrian_crossing","sign":"D-6","passed":{"age_s":8.6,"distance_m":79.7},"lateral_m":6.3,...} ],
+"ahead": [], "junction": {"last":{"odo":2341.0,"source":"sign D-1/D-2","detail":4195,"age_m":39.2},"count":17},
+"area": {"type":"built_up","source":"env","confidence":0.45}, "road_class":"ordinary", "zone":{"type":"none"}, "v_ego_kmh":31.0, "rules":"PL"
+```
+Health: `"rules": {"in_effect": ["default 50", "D-42 built-up area?", "D-1 priority road", "B-36 no stopping (R)", "B-21 no left turn"], "recent": [...], "ahead": [...]}`.
+
+## Limitations / nulls
+* **Not observable**: D-42 built-up entry (area only from envd's weak prior, which never voted built-up in the
+  villages: 5 of 5 built-up intervals missed), B-43/B-44 zones, B-27/B-28 and B-24 end signs, T-25 and all text
+  plates (rules served unconditionally and flagged), dimension-limit values (served without a number).
+* **Detector recall bounds everything** (30 of 35 lasting-rule misses, D-6 recall 0.50, A-7 0.59): every 4th
+  frame at 5/s, small or far signs, kerbside signs leaving the narrow-FOV warsaw camera early.
+* **Classifier confusions become rules**: warning triangles as D-1 (10 km of false priority road on s1), C-5
+  discs as D-3, a blue sign as B-16, B-35 vs B-36; no appearance check exists for these classes (L8's verifier
+  covers round red signs only).
+* **Junctions are still proxies**: junction signs, turns, lights, caps. Lights at mid-block pedestrian crossings
+  end rules early (2 cases); unsignalised side streets without signs end nothing until the cap (the "merged"
+  intervals: 9 of 57 B-36). False lights at night (motorway lamps) make false junctions.
+* **Lateral window**: B-36 on wide arterials at +9 to +10 m is rejected (4 misses); widening it would admit
+  service-road signs. Not tuned (pre-registration).
+* **Labels**: single labeller per ride, 2-s sheets (+-1-2 s on some times), 11 unnamed warning signs, D-2 only in
+  interval ends; "unclear" stretches excluded from agreement. The two D-1 inferences of the final engine are
+  in-sample for rural-zloczew and krakow-2024 (table in section 6 shows pre and final).
+* Vehicle classes other than a passenger car, time/day windows, E-17a town-wide prohibitions: not modelled.
+
 ## Journal
 
 ### 0. Reading (14:25-14:45)
@@ -156,6 +211,108 @@ Pre-existing (earlier lanes restarted without a ws client); the recorder reconne
 `a1-night` missing from the recording (not an evaluation ride). 14:56: all five units active, road 13.3/s, signs
 4.9/s, lights 2.8/s, `rules` at 0.5/s (heartbeat), `/v1/rules` served; first live cue: a "traffic light" junction
 at odo 1110 m on the A1 at night (false light, see above).
+
+### 5. Labels (15:00-15:36)
+Six Opus labellers (one ride each, two in parallel; brief `docs/lanes/L11-signs-in-effect/labels/BRIEF.md`), each
+with the ride's contact sheets (one frame every 2 s, 12 per sheet, direct MJPEG indexing: `sheets.py`) and a
+full-resolution frame tool (`frame.py`, any ride time, ~2 s per call); they never saw detector or engine output.
+Labels committed 15:36 (55c44fe) before any engine run on these rides:
+
+| ride | intervals | momentary | warnings | junctions | full frames viewed | labeller's main doubts |
+|---|---|---|---|---|---|---|
+| krakow-2024 | 17 (D-1 x3, B-36 x7, B-35, D-3 x5, B-18) | 40 | 6 | 24 | 122 | whether a turn at a signalised junction ends D-1; which side roads are public |
+| rural-zloczew | 5 (D-1 13.8-854, D-42/43 x3, B-36) | 12 | 20 | 47 | 309 | one D-42 read from a blurry frame; B-36 end street |
+| forest-vistula-spit | 17 (B-25 x2, D-42, D-1 x3, B-36 x11) | 30 | 9 | 30 | 182 | B-25 -> B-27 5 s apart; no D-43 seen |
+| s1-roadworks | 3 (D-1, D-7 to ride end, D-3) | 3 | 17 | 9 | 70 | what an intersection is on an expressway |
+| warsaw-city | 40 (D-1 x6, B-36 x22, D-3 x12) | 103 | 3 | 39 | 157 | median openings as intersections; B-35 vs B-36 at a distance |
+| katowice-rain | 23 (B-36 x16, D-1 x2, D-3 x2, B-35, B-18, D-42 area) | 42 | 6 | 37 | 208 | built-up start never seen (only the D-43 at 771 s) |
+
+The labellers put D-2 under the interval's `end_reason`, not in `momentary`, so the engine's D-2 passes score as
+unmatched below (6 of them); `one_way_side` (D-3 of a cross street, 13 human) is likewise a class the labellers
+used and the engine rarely accepts (lateral window).
+
+### 6. Evaluation (18:00-18:45; rides recorded 15:43-18:38, one pass of the phone's real pipeline)
+Three engine variants, all from the same recording (`~/l11/scripts/eval_all.sh`, scores in `~/l11/rec/eval/`):
+**pre** = the pre-registered engine (commit ddc6b57 behaviour) with the traffic-light junction cue;
+**pre, no lights** = the same without it (`--no-lights`); **final** = pre + two D-1 inferences added after the
+first scoring of rural-zloczew and krakow-2024 (IN-SAMPLE for those two rides, out of sample for the other four,
+switchable: `priority_inference`): a turn of >= 50 deg at a junction ends the priority road (the car left the
+road; where the priority road itself bends a D-1 with a T-6 plate is repeated and restarts it), and an A-6
+side-road warning (par. 5 ust. 2: the side road is subordinate) refreshes the D-1 distance cap. No other
+threshold was touched after the labels existed.
+
+Pooled over the six rides (time agreement = share of ride time, outside the labellers' "unclear" stretches, in
+which engine and human agree whether the rule is in effect; matched = human intervals with a matching engine
+interval; merged = human intervals that fall inside an engine interval already matched by an earlier one, i.e.
+the engine kept one rule across a junction the human counted as an end + restart):
+
+| rule | human n | pre: agreement | pre, no lights | **final** | matched / merged / missed / false (final) |
+|---|---|---|---|---|---|
+| no_stopping B-36 | 57 | 0.818 | 0.795 | **0.818** | 32 / 9 / 16 / 11 |
+| one_way D-3 | 20 | 0.808 | 0.772 | **0.808** | 10 / 1 / 9 / 7 |
+| priority_road D-1 | 16 | 0.729 | 0.729 | **0.789** | 13 / 0 / 3 / 3 |
+| no_parking B-35 | 2 | 0.990 | 0.990 | **0.990** | 2 / 0 / 0 / 1 |
+| no_overtaking B-25 | 2 | 0.931 | 0.930 | **0.931** | 1 / 1 / 0 / 2 |
+| weight_limit B-18 | 2 | 0.980 | 0.980 | **0.980** | 1 / 0 / 1 / 0 |
+| height_limit B-16 | 0 | 0.991 | 0.991 | **0.991** | 0 / 0 / 0 / 1 (a blue sign read as height-limit) |
+| built_up_area D-42 | 5 | 0.436 | 0.436 | **0.436** | 0 / 0 / 5 / 0 (D-42 not a class; envd never voted built-up in the villages) |
+| expressway D-7 | 1 | 0.147 | 0.147 | **0.147** | 0 / 0 / 1 / 0 (far small sign, no track) |
+
+Per ride (final; agreement, human/engine interval counts):
+
+| ride | no_stopping | one_way | priority_road | other | junctions: human / found by engine (lights cues) |
+|---|---|---|---|---|---|
+| krakow-2024 | 0.77 (7/7) | 0.81 (5/3) | 0.85 (3/4; pre 0.70) | B-35 0.99, B-18 0.96 (missed), B-16 0.99 (false) | 24 / 14 (7) |
+| rural-zloczew | 0.98 (1/1) | - | 1.00 (1/1; pre 0.85) | D-42 0.71 (3 missed), B-25 0.97 (1 false) | 46 / 16 (1) |
+| forest-vistula-spit | 0.76 (11/14) | - | 0.96 (3/4) | B-25 0.89 (2/2), D-42 0.46 (missed) | 27 / 19 (1) |
+| s1-roadworks | - | 0.98 (1/1) | 0.25 (1/2) | D-7 0.15 (missed) | 7 / 4 (0) |
+| warsaw-city | 0.79 (22/11) | 0.67 (12/8) | 0.82 (6/3) | - | 38 / 20 (14) |
+| katowice-rain | 0.80 (16/10) | 0.78 (2/5) | 0.85 (2/2) | B-35 0.99, B-18 1.00, D-42 0.14 (missed) | 36 / 25 (13) |
+
+Delays (final, 59 matched intervals): start median -0.3 s (the engine commits a lasting rule when the sign's
+track ends, i.e. as the sign is passed); end median +1.6 s, |end| median 2.4 s on intervals whose end the
+human was sure of. Ends by cause (n, median delay): junction cue 41 (+3.6 s), facing A-7 9 (-1.0 s), B-36 -> B-35
+and back 3 (0 / +20 s), turned off the road 4 (-12 s), distance caps 2 (+8 s, +203 s).
+
+**Lights as a junction cue** (pre vs pre-no-lights, out of sample): 36 of 184 junction cues came from the ego
+traffic light; human junctions found by any cue 98 vs 82 of 178; median end delay of junction-ended rules
+11.8 s -> 3.6 s (|delay| 11.8 -> 5.5 s); no_stopping agreement 0.795 -> 0.818, one_way 0.772 -> 0.808 (warsaw
+0.71 -> 0.79, katowice 0.78 -> 0.80); false rules +2 (two B-36 ended by a light at a mid-block crossing after a
+real one had ended). Ends by the cue were right at the stop line (city) and wrong where the light belonged to a
+pedestrian crossing without a junction (expected; 2 cases found).
+
+**Misses** (final, 35): 30 detector (no confirmed track of the class within +-5 s: far or small signs, the narrow
+1100 px warsaw camera that loses kerbside signs early, D-42 absent from the classes, D-7 tiny), 4 engine (B-36 at
+lateral +9.1 to +10.2 m on wide arterials, outside the +8 m window inherited from L6), 1 classifier (B-36 read as
+B-35). **False rules** (25): 11 B-36, 7 D-3, 3 D-1, 2 B-25, 1 B-16, 1 B-35. Inspected causes: classifier
+confusions (two deer-warning triangles read as `priority-road` at 0.81 -> 10 km of false D-1 on s1-roadworks;
+blue C-5 "straight ahead" discs on medians read as `one-way-straight` D-3; a blue sign as `height-limit`; B-35
+vs B-36), signs for the other carriageway or a service road inside the lateral window, and a few timing
+disagreements with the labeller (engine B-36 at 94.8 s vs human 104.5 s in katowice). On a dual carriageway a
+median D-3 is legally correct for that carriageway, so part of the D-3 "false" rules are label disagreements.
+
+**Momentary signs** (pooled, +-6 s): D-6 pedestrian crossing 53 tp / 85 engine / 105 human (P 0.62, R 0.50);
+A-7 yield 20/26/34 (P 0.77, R 0.59); B-21 no left turn 10/13/22 (P 0.77, R 0.45); C-12 roundabout 6/11/10;
+B-2 no entry 2/4/7 (all human B-2 were for side roads; the engine flags them "side road?" when beyond +8 m);
+C-2..C-8 mandatory direction 5/19/8 (median C-5 discs at every big junction fire on the engine's side too);
+B-23 1/3/1. Recall is bounded by the detector seeing every 4th frame at 5/s; precision by the lateral window
+(signs for cross streets at junctions). **Warnings** (ahead): A-17 children 5/6/6, A-29 traffic signals 3/3/3,
+A-14 roadworks 2/3/2, A-30 other danger 5/11/7, A-1..A-4 curves 6/11/6, A-18 animals 2/5/5, A-16 2/6/3;
+false classes: A-20 two-way traffic 11 false of 12 (tram / lane boards), A-5 crossroads 7/0, lane-layout 6/0;
+11 human "A-?" signs the labellers could not name scored as misses.
+
+**Cost**: 19-32 us per message offline (laptop; city rides highest); phone road 13.2-14.0/s, signs 4.5-5.0/s,
+lights 2.5-2.8/s before and after the install (14:30 vs 18:13-18:42), die 85-91 C in the sunny forest ride with
+one 93.6 C reading (18:13), 72 C at 18:42.
+
+### 7. Phone deploy #2 and #3 (18:40-18:42)
+Recorder stopped 18:38 (one full loop, 618 242 messages, 2.75 GB in `~/l11/rec/loop.jsonl`; per-ride files for the
+six rides next to it). 18:40: final engine (rules.py with the D-1 inferences, pl.json, server.py with the `/ws`
+close-on-shutdown) installed, restart took 1 s (was 90 s); all units active, road 13.2/s. 18:41: the
+coordinator reported the status page stuck at "..." - a raw newline inside the rules panel's `join("\n")`
+(the same bug class as fold 7; this lane's own check had only looked at one of the two places). Fixed, regression
+test `api/tests/test_index_js.py` (scans the page's `<script>` for newlines inside quoted literals), installed
+18:42 with one more restart, the served page verified clean. The 21-ride playlist was never touched.
 
 ## Polish rules (sources)
 Primary text: **Rozporządzenie w sprawie znaków i sygnałów drogowych**, consolidated text Dz.U. 2019
