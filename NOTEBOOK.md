@@ -19,6 +19,8 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L2-envd-phone | Opus | folded into L3 | orders/L2-envd-phone.md |
 | L3 speed-tune + envd on phone | Opus | done (2026-10-26 21:40 CET) | docs/lanes/L3-speed.md |
 | L4 GPU turn-taking (signd/modeld) | Opus | done (2026-10-27 00:28 CET) | docs/lanes/L4-gpu-sched.md |
+| L6 speed-limit state from sign tracks | Opus | running (2026-10-27) | docs/lanes/L6-speed-limit.md |
+| L7 traffic lights (detector + state) | Opus | running (2026-10-27) | docs/lanes/L7-traffic-lights.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
