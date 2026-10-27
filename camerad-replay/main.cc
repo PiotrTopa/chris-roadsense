@@ -20,10 +20,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <memory>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -75,14 +78,15 @@ bool json_number(const std::string &s, const char *key, double *out) {
     return true;
 }
 
-void load_config(Config &c, bool verbose) {
+std::string config_dir() {
     const char *d = getenv("ROADSENSE_CONFIG_DIR");
-    const std::string path = std::string(d && *d ? d : "/etc/roadsense") + "/camera-replay.json";
+    return d && *d ? d : "/etc/roadsense";
+}
+
+// Reads focal_px, cx, cy, fps, preview_every from a camera-replay.json; false if absent/empty.
+bool load_config(Config &c, const std::string &path, bool verbose) {
     const std::string s = read_file(path);
-    if (s.empty()) {
-        fprintf(stderr, "camerad-replay: no config at %s, defaults\n", path.c_str());
-        return;
-    }
+    if (s.empty()) return false;
     double v;
     if (json_number(s, "focal_px", &v)) c.focal_px = float(v);
     if (json_number(s, "cx", &v)) c.cx = float(v);
@@ -90,6 +94,7 @@ void load_config(Config &c, bool verbose) {
     if (json_number(s, "fps", &v) && v > 0) c.fps = v;
     if (json_number(s, "preview_every", &v)) c.preview_every = int(v);
     if (verbose) fprintf(stderr, "camerad-replay: config %s loaded\n", path.c_str());
+    return true;
 }
 
 std::string rundir() {
@@ -140,8 +145,13 @@ class Ride {
 public:
     ~Ride() {
         if (base_) munmap(const_cast<uint8_t *>(base_), size_);
+        if (!path_.empty()) {  // drop the played file from the page cache: it comes back in hours at the earliest
+            int fd = ::open(path_.c_str(), O_RDONLY | O_CLOEXEC);
+            if (fd >= 0) posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED), ::close(fd);
+        }
     }
     bool open(const std::string &path, std::string *err) {
+        path_ = path;
         int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
         if (fd < 0) return *err = path + ": " + strerror(errno), false;
         struct stat st;
@@ -178,6 +188,7 @@ public:
     double mean_bytes() const { return double(size_) / double(frames_.size()); }
 
 private:
+    std::string path_;
     const uint8_t *base_ = nullptr;
     size_t size_ = 0, skipped_ = 0;
     std::vector<Frame> frames_;
@@ -306,28 +317,177 @@ bool write_preview(const std::string &path, const uint8_t *jpg, size_t n) {
     return ok;
 }
 
+// --------------------------------------------------------------- playlist ---
+
+struct RideEntry {
+    std::string dir, file, slug, author, licence;
+};
+
+bool is_dir(const std::string &p) {
+    struct stat st;
+    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+std::string dirname_of(const std::string &p) {
+    const size_t i = p.rfind('/');
+    return i == std::string::npos ? "." : i == 0 ? "/" : p.substr(0, i);
+}
+std::string basename_of(std::string p) {
+    while (p.size() > 1 && p.back() == '/') p.pop_back();
+    const size_t i = p.rfind('/');
+    return i == std::string::npos ? p : p.substr(i + 1);
+}
+std::string trim(const std::string &s) {
+    size_t a = 0, b = s.size();
+    while (a < b && isspace((unsigned char)s[a])) ++a;
+    while (b > a && isspace((unsigned char)s[b - 1])) --b;
+    return s.substr(a, b - a);
+}
+std::vector<std::string> list_dir(const std::string &dir) {
+    std::vector<std::string> out;
+    if (DIR *d = opendir(dir.c_str())) {
+        while (dirent *e = readdir(d))
+            if (e->d_name[0] != '.') out.push_back(e->d_name);
+        closedir(d);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+bool ends_with(const std::string &s, const char *suf) {
+    const size_t n = strlen(suf);
+    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+}
+
+// SOURCE.txt (docs/RIDES.md): line 1 "<title> -- <author> (<url>)"; the licence is the first "CC BY..." token.
+void read_source(RideEntry &r) {
+    std::ifstream f(r.dir + "/SOURCE.txt");
+    std::string line;
+    for (int ln = 0; std::getline(f, line); ++ln) {
+        if (ln == 0) {
+            const size_t p = line.rfind(" -- ");
+            if (p != std::string::npos) {
+                std::string a = line.substr(p + 4);
+                const size_t q = a.find(" (");
+                r.author = trim(q == std::string::npos ? a : a.substr(0, q));
+            }
+        }
+        const size_t p = line.find("CC BY");
+        if (r.licence.empty() && p != std::string::npos) {
+            size_t e = p;
+            while (e < line.size() && (isalnum((unsigned char)line[e]) || strchr(" .-", line[e]))) ++e;
+            r.licence = trim(line.substr(p, e - p));
+        }
+    }
+}
+
+// A ride directory (its first *.mjpeg, sorted) or an .mjpeg file (its directory is the ride's).
+bool make_entry(const std::string &path, RideEntry *r) {
+    *r = RideEntry();
+    if (is_dir(path)) {
+        r->dir = path;
+        for (const std::string &n : list_dir(path))
+            if (ends_with(n, ".mjpeg")) {
+                r->file = path + "/" + n;
+                break;
+            }
+        if (r->file.empty()) return false;
+    } else {
+        r->file = path;
+        r->dir = dirname_of(path);
+    }
+    r->slug = basename_of(r->dir);
+    read_source(*r);
+    return true;
+}
+
+// FILE: one ride directory or .mjpeg per line ('#' comments, relative to the list's directory);
+// DIR: every subdirectory with an .mjpeg, in name order.
+bool load_playlist(const std::string &src, std::vector<RideEntry> *out, bool verbose) {
+    out->clear();
+    std::vector<std::string> paths;
+    if (is_dir(src)) {
+        for (const std::string &n : list_dir(src)) paths.push_back(src + "/" + n);
+    } else {
+        std::ifstream f(src);
+        if (!f) return false;
+        std::string line;
+        while (std::getline(f, line)) {
+            line = trim(line.substr(0, line.find('#')));
+            if (line.empty()) continue;
+            paths.push_back(line[0] == '/' ? line : dirname_of(src) + "/" + line);
+        }
+    }
+    for (const std::string &p : paths) {
+        RideEntry e;
+        if (make_entry(p, &e)) out->push_back(e);
+        else if (verbose || !is_dir(src)) fprintf(stderr, "camerad-replay: playlist: %s: no .mjpeg, skipped\n", p.c_str());
+    }
+    return true;
+}
+
+std::string json_escape(const std::string &s) {
+    std::string o;
+    for (unsigned char c : s) {
+        if (c == '"' || c == '\\') o += '\\', o += char(c);
+        else if (c < 0x20) {
+            char b[8];
+            snprintf(b, sizeof(b), "\\u%04x", c);
+            o += b;
+        } else o += char(c);
+    }
+    return o;
+}
+
+// Atomic copy (tmp + rename): modeld re-reads calib.json when its mtime changes.
+bool install_file(const std::string &src, const std::string &dst, std::string *err) {
+    const std::string s = read_file(src);
+    if (s.empty()) return *err = src + ": missing or empty", false;
+    const std::string tmp = dst + ".tmp";
+    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) return *err = tmp + ": " + strerror(errno), false;
+    bool ok = write(fd, s.data(), s.size()) == ssize_t(s.size());
+    fchmod(fd, 0644);
+    close(fd);
+    if (ok) ok = rename(tmp.c_str(), dst.c_str()) == 0;
+    if (!ok) {
+        unlink(tmp.c_str());
+        return *err = dst + ": " + strerror(errno), false;
+    }
+    return true;
+}
+
 // ----------------------------------------------------------------- daemon ---
 
 struct Options {
-    std::string file;
-    bool verbose = false, no_preview = false, once = false;
+    std::string file, playlist, calib_out;
+    bool verbose = false, no_preview = false, once = false, shuffle = false, no_calib = false;
     uint64_t frames = 0;
-    double fps = 0, start_s = 0;
-    int gap_ms = 1000;
+    double fps = 0, start_s = 0, max_s_per_ride = 0;
+    int gap_ms = -1;  // default: 1000 (one file), 2500 (playlist)
 };
 
 void usage() {
     fprintf(stderr,
-            "usage: camerad-replay --file RIDE.mjpeg [--fps N] [--start SECONDS] [--once] [--gap-ms MS]\n"
+            "usage: camerad-replay --file RIDE.mjpeg | --playlist LIST|DIR  [--fps N] [--start SECONDS] [--once]\n"
+            "                      [--gap-ms MS] [--shuffle] [--max-seconds-per-ride S] [--calib-out PATH | --no-calib]\n"
             "                      [--verbose] [--frames N] [--no-preview]\n"
-            "  --file    concatenated baseline JPEGs, YCbCr 4:2:0, W and H multiples of 16\n"
-            "            (ffmpeg ... -pix_fmt yuvj420p -f mjpeg RIDE.mjpeg, see tools/make_ride.sh)\n"
-            "  --fps     source frame rate (default: camera-replay.json \"fps\", else 20)\n"
-            "  --start   first frame at this time in the file (seconds)\n"
-            "  --once    stop at the end of the file instead of looping\n"
-            "  --gap-ms  pause at the loop seam (default 1000: > modeld's 500 ms pairing limit)\n"
-            "env: ROADSENSE_RUNDIR (default /run/roadsense), ROADSENSE_CONFIG_DIR (default /etc/roadsense,\n"
-            "     file camera-replay.json: focal_px, cx, cy, fps, preview_every), ROADSENSE_RING\n");
+            "  --file      concatenated baseline JPEGs, YCbCr 4:2:0, W and H multiples of 16\n"
+            "              (ffmpeg ... -pix_fmt yuvj420p -f mjpeg RIDE.mjpeg, see tools/make_ride.sh); loops\n"
+            "  --playlist  rides one after another, looping the list: LIST = one ride directory (or .mjpeg) per\n"
+            "              line, '#' comments, relative to the list's directory; DIR = its subdirectories in name\n"
+            "              order. Per ride: <dir>/*.mjpeg, camera-replay.json (focal_px, cx, cy, fps), calib.json\n"
+            "              (copied to --calib-out, default $ROADSENSE_CONFIG_DIR/calib.json), SOURCE.txt\n"
+            "              (author, licence). Every ride gets a new ring (seq restarts at 1). The list is re-read\n"
+            "              at every wrap.\n"
+            "  --shuffle   playlist in random order, reshuffled at every wrap\n"
+            "  --max-seconds-per-ride  (testing) play at most S seconds of each ride\n"
+            "  --fps       source frame rate (default: camera-replay.json \"fps\", else 20)\n"
+            "  --start     first frame at this time in the (first) file (seconds)\n"
+            "  --once      stop at the end of the file / of the playlist instead of looping\n"
+            "  --gap-ms    pause at a loop seam or ride change (default 1000 for a file: > modeld's 500 ms pairing\n"
+            "              limit; 2500 for a playlist: > modeld's 2 s calib.json check, so the first frame of a\n"
+            "              ride already uses its calibration)\n"
+            "env: ROADSENSE_RUNDIR (default /run/roadsense), ROADSENSE_CONFIG_DIR (default /etc/roadsense; with\n"
+            "     --file its camera-replay.json: focal_px, cx, cy, fps, preview_every), ROADSENSE_RING\n");
 }
 
 void sleep_until(int64_t t_ns) {
@@ -336,144 +496,268 @@ void sleep_until(int64_t t_ns) {
     }
 }
 
-int run(const Options &opt, Config cfg) {
-    Ride ride;
-    Decoder dec;
-    std::string err;
-    const int64_t t_open = clock_ns(CLOCK_MONOTONIC);
-    if (!ride.open(opt.file, &err)) {
-        fprintf(stderr, "camerad-replay: %s\n", err.c_str());
-        return 1;
-    }
-    int W = 0, H = 0;
-    if (!dec.probe(ride.data(0), ride.len(0), &W, &H, &err)) {
-        fprintf(stderr, "camerad-replay: first frame: %s\n", err.c_str());
-        return 1;
-    }
-    if (opt.fps > 0) cfg.fps = opt.fps;
-    if (cfg.focal_px <= 0) cfg.focal_px = float(W) * 975.0f / 1280.0f;  // camerad-dvr's lens, scaled: a placeholder
-    if (cfg.cx < 0) cfg.cx = W / 2.0f;
-    if (cfg.cy < 0) cfg.cy = H / 2.0f;
-    const size_t n = ride.count();
-    fprintf(stderr,
-            "camerad-replay: %s: %zu frames %dx%d (%.1f min at %.2f fps, %.0f KB/frame, %zu resyncs), "
-            "indexed in %.0f ms; focal %.1f cx %.1f cy %.1f\n",
-            opt.file.c_str(), n, W, H, double(n) / cfg.fps / 60.0, cfg.fps, ride.mean_bytes() / 1024.0,
-            ride.skipped(), ms_since(t_open), cfg.focal_px, cfg.cx, cfg.cy);
+class Player {
+public:
+    Player(const Options &opt, const Config &base) : opt_(opt), base_(base) {}
 
-    const std::string rd = rundir(), preview_path = rd + "/preview.jpg";
-    RingWriter ring;
-    JsonLineServer server;
-    if (!mkdir_p(rd)) {
-        fprintf(stderr, "camerad-replay: cannot create %s: %s\n", rd.c_str(), strerror(errno));
-        return 1;
-    }
-    if (!ring.create(ring_path(), uint32_t(W), uint32_t(H), cfg.focal_px, cfg.cx, cfg.cy, &err) ||
-        !server.listen(rd + "/camerad.sock", &err)) {
-        fprintf(stderr, "camerad-replay: %s\n", err.c_str());
-        return 1;
-    }
-
-    const int64_t period = int64_t(1e9 / cfg.fps + 0.5);
-    size_t idx = std::min(n - 1, size_t(std::max(0.0, opt.start_s) * cfg.fps));
-    uint64_t seq = 0, skipped = 0, decode_fail = 0, warnings_total = 0, loops = 0;
-    int64_t deadline = clock_ns(CLOCK_MONOTONIC), rt_off = 0, next_rt = 0, next_stat = 0;
-    int64_t fps_t0 = 0;
-    uint64_t fps_seq0 = 0;
-    double fps = 0;
-    int st_n = 0;
-    double st_dec = 0, st_dec_max = 0;
-
-    while (g_run) {
-        if (idx >= n) {  // end of the ride
-            if (opt.once) break;
-            idx = 0;
-            ++loops;
-            deadline += int64_t(opt.gap_ms) * 1000000;
-            fprintf(stderr, "camerad-replay: loop %" PRIu64 " (pause %d ms)\n", loops, opt.gap_ms);
+    int run() {
+        playlist_ = !opt_.playlist.empty();
+        gap_ms_ = opt_.gap_ms >= 0 ? opt_.gap_ms : (playlist_ ? 2500 : 1000);
+        calib_out_ = opt_.calib_out.empty() ? config_dir() + "/calib.json" : opt_.calib_out;
+        if (!reload_list() || list_.empty()) {
+            fprintf(stderr, "camerad-replay: %s: no rides\n", playlist_ ? opt_.playlist.c_str() : opt_.file.c_str());
+            return 1;
         }
-        // wait for this frame's slot in time, serving clients meanwhile
+        rng_.seed(uint32_t(clock_ns(CLOCK_REALTIME)));
+        make_order(false);
+        rd_ = rundir();
+        if (!mkdir_p(rd_)) {
+            fprintf(stderr, "camerad-replay: cannot create %s: %s\n", rd_.c_str(), strerror(errno));
+            return 1;
+        }
+        std::string err;
+        if (!server_.listen(rd_ + "/camerad.sock", &err)) {
+            fprintf(stderr, "camerad-replay: %s\n", err.c_str());
+            return 1;
+        }
+        if (playlist_)
+            fprintf(stderr, "camerad-replay: playlist %s: %zu rides%s, gap %d ms, calib -> %s\n", opt_.playlist.c_str(),
+                    list_.size(), opt_.shuffle ? " (shuffled)" : "", gap_ms_, opt_.no_calib ? "(off)" : calib_out_.c_str());
+        pos_ = 0;
+        if (!start_ride(true)) return playlist_ ? 0 : 1;
+        loop();
+        server_.close();
+        unlink((rd_ + "/camerad.sock").c_str());
+        fprintf(stderr,
+                "camerad-replay: stopped after %" PRIu64 " frames (skipped %" PRIu64 ", decode_fail %" PRIu64
+                ", loops %" PRIu64 ", rides %" PRIu64 ")\n",
+                total_, skipped_, decode_fail_, loops_, rides_started_);
+        return 0;
+    }
+
+private:
+    bool reload_list() {
+        if (!playlist_) {
+            RideEntry e;
+            if (!make_entry(opt_.file, &e)) return false;
+            list_ = {e};
+            return true;
+        }
+        std::vector<RideEntry> l;
+        if (!load_playlist(opt_.playlist, &l, opt_.verbose) || l.empty()) return !list_.empty();  // keep the old list
+        list_.swap(l);
+        return true;
+    }
+    void make_order(bool avoid_repeat) {
+        order_.resize(list_.size());
+        for (size_t i = 0; i < order_.size(); ++i) order_[i] = i;
+        if (opt_.shuffle) {
+            std::shuffle(order_.begin(), order_.end(), rng_);
+            if (avoid_repeat && order_.size() > 1 && list_[order_[0]].slug == cur_slug_) std::swap(order_[0], order_[1]);
+        }
+    }
+
+    void wait_serving(int64_t until) {
         for (;;) {
-            server.service();
+            server_.service();
             const int64_t now = clock_ns(CLOCK_MONOTONIC);
-            if (now >= deadline || !g_run) break;
-            sleep_until(std::min(deadline, now + 20000000));
+            if (now >= until || !g_run) return;
+            sleep_until(std::min(until, now + 20000000));
         }
-        if (!g_run) break;
-        int64_t now = clock_ns(CLOCK_MONOTONIC);
-        if (now - deadline > period) {  // fell behind by more than a frame: skip to stay real time
-            const int64_t k = (now - deadline) / period;
-            skipped += uint64_t(k), idx += size_t(k), deadline += k * period;
-            if (idx >= n) continue;
-        }
-        if (now >= next_rt) {
-            int64_t best = INT64_MAX;
-            for (int i = 0; i < 5; ++i) {
-                int64_t m0 = clock_ns(CLOCK_MONOTONIC), r = clock_ns(CLOCK_REALTIME), m1 = clock_ns(CLOCK_MONOTONIC);
-                if (m1 - m0 < best) best = m1 - m0, rt_off = r - (m0 + (m1 - m0) / 2);
-            }
-            next_rt = now + 1000000000;
-        }
-        if (opt.verbose && now >= next_stat) {
-            if (next_stat && st_n)
-                fprintf(stderr,
-                        "camerad-replay: seq %" PRIu64 " frame %zu/%zu fps %.1f decode+nv12 %.2f ms avg %.2f max, "
-                        "skipped %" PRIu64 " decode_fail %" PRIu64 " loops %" PRIu64 "\n",
-                        seq, idx, n, fps, st_dec / st_n, st_dec_max, skipped, decode_fail, loops);
-            st_n = 0, st_dec = st_dec_max = 0;
-            next_stat = now + 1000000000;
-        }
-
-        const int64_t t_frame = deadline;  // the frame's nominal capture time
-        const int64_t t1 = clock_ns(CLOCK_MONOTONIC);
-        uint8_t *dst = ring.begin(seq + 1);
-        int warn = 0;
-        const uint8_t *jpg = ride.data(idx);
-        const size_t jlen = ride.len(idx);
-        if (dec.decode(jpg, jlen, W, H, dst, dst + size_t(W) * H, &err, &warn)) {
-            ++seq;
-            SlotHeader *s = ring.slot_for(seq);
-            s->ts_mono_ns = t_frame;
-            s->ts_real_ns = t_frame + rt_off;
-            s->exposure_us = 0;
-            s->analogue_gain = s->colour_gain_r = s->colour_gain_b = 0;
-            ring.commit(seq);
-            const double dec_ms = ms_since(t1);
-            warnings_total += uint64_t(warn);
-            if (!fps_t0) fps_t0 = t_frame, fps_seq0 = seq;
-            if (t_frame - fps_t0 >= 1000000000) {
-                fps = double(seq - fps_seq0) * 1e9 / double(t_frame - fps_t0);
-                fps_t0 = t_frame, fps_seq0 = seq;
-            }
-            ++st_n, st_dec += dec_ms, st_dec_max = std::max(st_dec_max, dec_ms);
-            char line[512];
-            snprintf(line, sizeof(line),
-                     "{\"type\":\"camera\",\"seq\":%" PRIu64 ",\"ts_mono_ns\":%" PRId64 ",\"ts_real_ns\":%" PRId64
-                     ",\"exposure_us\":0,\"analogue_gain\":0,\"colour_gains\":[0,0],\"fps\":%.2f,\"dropped\":0,"
-                     "\"sensor_drops\":%" PRIu64 ",\"conv_ms\":%.2f,\"source\":\"replay\",\"file_frame\":%zu,"
-                     "\"file_frames\":%zu,\"file_t_s\":%.2f,\"loops\":%" PRIu64 ",\"jpeg_bytes\":%zu,"
-                     "\"decode_fail\":%" PRIu64 ",\"jpeg_warnings\":%" PRIu64 "}",
-                     seq, t_frame, t_frame + rt_off, fps, skipped, dec_ms, idx, n, double(idx) / cfg.fps, loops, jlen,
-                     decode_fail, warnings_total);
-            server.publish(line);
-            if (!opt.no_preview && cfg.preview_every > 0 && seq % uint64_t(cfg.preview_every) == 0)
-                write_preview(preview_path, jpg, jlen);
-            if (opt.frames && seq >= opt.frames) g_run = 0;
-        } else {
-            ++decode_fail;
-            if (opt.verbose) fprintf(stderr, "camerad-replay: frame %zu: decode failed: %s\n", idx, err.c_str());
-        }
-        ++idx;
-        deadline += period;
     }
-    server.close();
-    unlink((rd + "/camerad.sock").c_str());
-    fprintf(stderr,
-            "camerad-replay: stopped after %" PRIu64 " frames (skipped %" PRIu64 ", decode_fail %" PRIu64
-            ", loops %" PRIu64 ")\n",
-            seq, skipped, decode_fail, loops);
-    return 0;
-}
+
+    // Opens order_[pos_] (or the next playable one), writes its calib.json, makes a new ring.
+    bool start_ride(bool first) {
+        for (int attempt = 0; g_run; ++attempt) {
+            if (pos_ >= order_.size()) {  // wrap: re-read the list
+                if (opt_.once) return false;
+                ++loops_;
+                reload_list();
+                make_order(true);
+                pos_ = 0;
+                fprintf(stderr, "camerad-replay: playlist loop %" PRIu64 " (%zu rides)\n", loops_, list_.size());
+            }
+            if (attempt > 0 && attempt % int(std::max<size_t>(1, list_.size())) == 0) {
+                fprintf(stderr, "camerad-replay: no playable ride, retrying in 10 s\n");
+                wait_serving(clock_ns(CLOCK_MONOTONIC) + 10000000000LL);
+                if (!g_run) return false;
+            }
+            const size_t k = order_[pos_++];
+            if (open_ride(k, first)) return true;
+        }
+        return false;
+    }
+
+    bool open_ride(size_t k, bool first) {
+        const RideEntry &e = list_[k];
+        const int64_t t0 = clock_ns(CLOCK_MONOTONIC);
+        std::string err;
+        // calibration first: modeld picks it up on the first frame after the gap (>= its 2 s check)
+        if (playlist_ && !opt_.no_calib && !install_file(e.dir + "/calib.json", calib_out_, &err))
+            fprintf(stderr, "camerad-replay: %s: calib not switched: %s\n", e.slug.c_str(), err.c_str());
+        auto r = std::make_unique<Ride>();
+        ride_.reset();  // unmap (and uncache) the previous file first
+        int W = 0, H = 0;
+        if (!r->open(e.file, &err) || !dec_.probe(r->data(0), r->len(0), &W, &H, &err)) {
+            fprintf(stderr, "camerad-replay: %s: %s\n", e.slug.c_str(), err.c_str());
+            return false;
+        }
+        Config c = base_;
+        if (playlist_) {
+            c = Config();
+            if (!load_config(c, e.dir + "/camera-replay.json", opt_.verbose))
+                fprintf(stderr, "camerad-replay: %s: no camera-replay.json, default intrinsics\n", e.slug.c_str());
+        }
+        if (opt_.fps > 0) c.fps = opt_.fps;
+        if (c.focal_px <= 0) c.focal_px = float(W) * 975.0f / 1280.0f;  // camerad-dvr's lens, scaled: a placeholder
+        if (c.cx < 0) c.cx = W / 2.0f;
+        if (c.cy < 0) c.cy = H / 2.0f;
+        // A new ring per ride: the intrinsics (and maybe the size) change; seq restarts at 1, which every
+        // reader treats as a camera restart (modeld pairing, envd smoother, signd tracks reset).
+        if (!ring_.create(ring_path(), uint32_t(W), uint32_t(H), c.focal_px, c.cx, c.cy, &err)) {
+            fprintf(stderr, "camerad-replay: ring: %s\n", err.c_str());
+            return false;
+        }
+        ride_ = std::move(r);
+        cfg_ = c, W_ = W, H_ = H, n_ = ride_->count(), cur_ = k, cur_slug_ = e.slug;
+        seq_ = 0, fps_t0_ = 0, ride_skipped0_ = skipped_;
+        idx_ = first ? std::min(n_ - 1, size_t(std::max(0.0, opt_.start_s) * cfg_.fps)) : 0;
+        end_idx_ = n_;
+        if (opt_.max_s_per_ride > 0) end_idx_ = std::min(n_, idx_ + size_t(opt_.max_s_per_ride * cfg_.fps));
+        period_ = int64_t(1e9 / cfg_.fps + 0.5);
+        ++rides_started_;
+        fprintf(stderr,
+                "camerad-replay: ride %zu/%zu %s: %s: %zu frames %dx%d (%.1f min at %.2f fps, %.0f KB/frame, %zu "
+                "resyncs), opened in %.0f ms; focal %.1f cx %.1f cy %.1f; %s, %s\n",
+                pos_, order_.size(), e.slug.c_str(), e.file.c_str(), n_, W, H, double(n_) / cfg_.fps / 60.0,
+                cfg_.fps, ride_->mean_bytes() / 1024.0, ride_->skipped(), ms_since(t0), cfg_.focal_px, cfg_.cx,
+                cfg_.cy, e.author.empty() ? "author ?" : e.author.c_str(), e.licence.empty() ? "licence ?" : e.licence.c_str());
+        // gap before the first frame (also on the very first ride of a playlist: a running modeld must see the
+        // new calib.json before frames come)
+        deadline_ = clock_ns(CLOCK_MONOTONIC) + (playlist_ ? int64_t(gap_ms_) * 1000000 : 0);
+        return true;
+    }
+
+    void loop() {
+        int64_t rt_off = 0, next_rt = 0, next_stat = 0;
+        int st_n = 0;
+        double st_dec = 0, st_dec_max = 0, fps = 0;
+        uint64_t fps_seq0 = 0;
+        while (g_run) {
+            if (idx_ >= end_idx_) {  // end of the ride (or of its test window)
+                if (!playlist_) {
+                    if (opt_.once) break;
+                    idx_ = 0, end_idx_ = n_;
+                    ++loops_;
+                    deadline_ += int64_t(gap_ms_) * 1000000;
+                    fprintf(stderr, "camerad-replay: loop %" PRIu64 " (pause %d ms)\n", loops_, gap_ms_);
+                } else {
+                    if (!start_ride(false)) break;
+                    fps = 0;
+                }
+            }
+            wait_serving(deadline_);
+            if (!g_run) break;
+            int64_t now = clock_ns(CLOCK_MONOTONIC);
+            if (now - deadline_ > period_) {  // fell behind by more than a frame: skip to stay real time
+                const int64_t k = (now - deadline_) / period_;
+                skipped_ += uint64_t(k), idx_ += size_t(k), deadline_ += k * period_;
+                if (idx_ >= end_idx_) continue;
+            }
+            if (now >= next_rt) {
+                int64_t best = INT64_MAX;
+                for (int i = 0; i < 5; ++i) {
+                    int64_t m0 = clock_ns(CLOCK_MONOTONIC), r = clock_ns(CLOCK_REALTIME), m1 = clock_ns(CLOCK_MONOTONIC);
+                    if (m1 - m0 < best) best = m1 - m0, rt_off = r - (m0 + (m1 - m0) / 2);
+                }
+                next_rt = now + 1000000000;
+            }
+            if (opt_.verbose && now >= next_stat) {
+                if (next_stat && st_n)
+                    fprintf(stderr,
+                            "camerad-replay: %s seq %" PRIu64 " frame %zu/%zu fps %.1f decode+nv12 %.2f ms avg %.2f max, "
+                            "skipped %" PRIu64 " decode_fail %" PRIu64 " loops %" PRIu64 "\n",
+                            cur_slug_.c_str(), seq_, idx_, n_, fps, st_dec / st_n, st_dec_max, skipped_, decode_fail_,
+                            loops_);
+                st_n = 0, st_dec = st_dec_max = 0;
+                next_stat = now + 1000000000;
+            }
+
+            const int64_t t_frame = deadline_;  // the frame's nominal capture time
+            const int64_t t1 = clock_ns(CLOCK_MONOTONIC);
+            uint8_t *dst = ring_.begin(seq_ + 1);
+            int warn = 0;
+            std::string err;
+            const uint8_t *jpg = ride_->data(idx_);
+            const size_t jlen = ride_->len(idx_);
+            if (dec_.decode(jpg, jlen, W_, H_, dst, dst + size_t(W_) * H_, &err, &warn)) {
+                ++seq_, ++total_;
+                SlotHeader *s = ring_.slot_for(seq_);
+                s->ts_mono_ns = t_frame;
+                s->ts_real_ns = t_frame + rt_off;
+                s->exposure_us = 0;
+                s->analogue_gain = s->colour_gain_r = s->colour_gain_b = 0;
+                ring_.commit(seq_);
+                const double dec_ms = ms_since(t1);
+                warnings_total_ += uint64_t(warn);
+                if (!fps_t0_) fps_t0_ = t_frame, fps_seq0 = seq_;
+                if (t_frame - fps_t0_ >= 1000000000) {
+                    fps = double(seq_ - fps_seq0) * 1e9 / double(t_frame - fps_t0_);
+                    fps_t0_ = t_frame, fps_seq0 = seq_;
+                }
+                ++st_n, st_dec += dec_ms, st_dec_max = std::max(st_dec_max, dec_ms);
+                server_.publish(message(t_frame, t_frame + rt_off, fps, dec_ms, jlen));
+                if (!opt_.no_preview && cfg_.preview_every > 0 && seq_ % uint64_t(cfg_.preview_every) == 0)
+                    write_preview(rd_ + "/preview.jpg", jpg, jlen);
+                if (opt_.frames && total_ >= opt_.frames) g_run = 0;
+            } else {
+                ++decode_fail_;
+                if (opt_.verbose) fprintf(stderr, "camerad-replay: %s frame %zu: decode failed: %s\n", cur_slug_.c_str(), idx_, err.c_str());
+            }
+            ++idx_;
+            deadline_ += period_;
+        }
+    }
+
+    std::string message(int64_t t_mono, int64_t t_real, double fps, double dec_ms, size_t jlen) {
+        const RideEntry &e = list_[cur_];
+        char line[640];
+        snprintf(line, sizeof(line),
+                 "{\"type\":\"camera\",\"seq\":%" PRIu64 ",\"ts_mono_ns\":%" PRId64 ",\"ts_real_ns\":%" PRId64
+                 ",\"exposure_us\":0,\"analogue_gain\":0,\"colour_gains\":[0,0],\"fps\":%.2f,\"dropped\":0,"
+                 "\"sensor_drops\":%" PRIu64 ",\"conv_ms\":%.2f,\"source\":\"replay\",\"file_frame\":%zu,"
+                 "\"file_frames\":%zu,\"file_t_s\":%.2f,\"loops\":%" PRIu64 ",\"jpeg_bytes\":%zu,"
+                 "\"decode_fail\":%" PRIu64 ",\"jpeg_warnings\":%" PRIu64 ",\"playlist\":%s,\"ride_index\":%zu,"
+                 "\"ride_count\":%zu,\"ride_t_s\":%.2f,\"ride_duration_s\":%.2f,",
+                 seq_, t_mono, t_real, fps, skipped_ - ride_skipped0_, dec_ms, idx_, n_, double(idx_) / cfg_.fps,
+                 loops_, jlen, decode_fail_, warnings_total_, playlist_ ? "true" : "false", playlist_ ? pos_ - 1 : 0,
+                 playlist_ ? order_.size() : 1, double(idx_) / cfg_.fps, double(n_) / cfg_.fps);
+        std::string m = line;
+        m += "\"ride\":\"" + json_escape(e.slug) + "\",\"author\":\"" + json_escape(e.author) + "\",\"licence\":\"" +
+             json_escape(e.licence) + "\"}";
+        return m;
+    }
+
+    const Options &opt_;
+    const Config base_;
+    bool playlist_ = false;
+    int gap_ms_ = 1000;
+    std::string calib_out_, rd_, cur_slug_;
+    std::vector<RideEntry> list_;
+    std::vector<size_t> order_;
+    size_t pos_ = 0, cur_ = 0;
+    std::mt19937 rng_;
+    JsonLineServer server_;
+    RingWriter ring_;
+    Decoder dec_;
+    std::unique_ptr<Ride> ride_;
+    Config cfg_;
+    int W_ = 0, H_ = 0;
+    size_t n_ = 0, idx_ = 0, end_idx_ = 0;
+    int64_t period_ = 50000000, deadline_ = 0, fps_t0_ = 0;
+    uint64_t seq_ = 0, total_ = 0, skipped_ = 0, ride_skipped0_ = 0, decode_fail_ = 0, warnings_total_ = 0,
+             loops_ = 0, rides_started_ = 0;
+};
 
 }  // namespace
 
@@ -482,9 +766,14 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--file" && i + 1 < argc) opt.file = argv[++i];
+        else if (a == "--playlist" && i + 1 < argc) opt.playlist = argv[++i];
         else if (a == "--fps" && i + 1 < argc) opt.fps = atof(argv[++i]);
         else if (a == "--start" && i + 1 < argc) opt.start_s = atof(argv[++i]);
         else if (a == "--gap-ms" && i + 1 < argc) opt.gap_ms = std::max(0, atoi(argv[++i]));
+        else if (a == "--max-seconds-per-ride" && i + 1 < argc) opt.max_s_per_ride = atof(argv[++i]);
+        else if (a == "--calib-out" && i + 1 < argc) opt.calib_out = argv[++i];
+        else if (a == "--no-calib") opt.no_calib = true;
+        else if (a == "--shuffle") opt.shuffle = true;
         else if (a == "--once") opt.once = true;
         else if (a == "--verbose" || a == "-v") opt.verbose = true;
         else if (a == "--no-preview") opt.no_preview = true;
@@ -494,16 +783,19 @@ int main(int argc, char **argv) {
             return a == "--help" || a == "-h" ? 0 : 2;
         }
     }
-    if (opt.file.empty()) {
+    if (opt.file.empty() == opt.playlist.empty()) {
         usage();
         return 2;
     }
     Config cfg;
-    load_config(cfg, opt.verbose);
+    if (opt.file.size()) {
+        const std::string p = config_dir() + "/camera-replay.json";
+        if (!load_config(cfg, p, opt.verbose)) fprintf(stderr, "camerad-replay: no config at %s, defaults\n", p.c_str());
+    }
     struct sigaction sa{};
     sa.sa_handler = on_signal;
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
     signal(SIGPIPE, SIG_IGN);
-    return run(opt, cfg);
+    return Player(opt, cfg).run();
 }

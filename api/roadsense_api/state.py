@@ -86,6 +86,10 @@ class State:
         self.speed = SpeedLimit(load_rules(rules))         # derived topic `speed_limit`
         self._speed_emit = 0.0
         self._speed_geom = False
+        self._rules = rules
+        self._camera_key = None                            # (ride, ride_index) of the last camera message
+        self._camera_seq = 0
+        self.ride_changes = 0
 
     # ---- ingestion -------------------------------------------------------
     def on_message(self, daemon, msg, line):
@@ -109,6 +113,8 @@ class State:
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("sign context failed")
+        if mtype == "camera":
+            self._on_camera(msg)
         self.latest[mtype] = msg
         self.arrivals[mtype].append(now)
         self.version += 1
@@ -118,6 +124,26 @@ class State:
             cb(mtype, line)
         if mtype in ("road", "signs", "env"):
             self._on_speed(msg, now)
+
+    def _on_camera(self, msg):
+        """A new ride (camerad-replay --playlist) or a camera restart (seq backwards) is not driving on:
+        drop the speed-limit state (odometer, limit, area, tracks), re-read the focal from the new ring,
+        and forget sign tracks and their context. Providers reset themselves on the seq restart."""
+        key = (msg.get("ride"), msg.get("ride_index"))
+        seq = msg.get("seq") or 0
+        changed = self._camera_key is not None and key != self._camera_key
+        restarted = seq < self._camera_seq
+        self._camera_key, self._camera_seq = key, seq
+        if changed or restarted:
+            self.reset_drive()
+
+    def reset_drive(self):
+        self.ride_changes += 1
+        self.speed = SpeedLimit(load_rules(self._rules))
+        self._speed_geom = False
+        self.live_tracks.clear()
+        self.suppressed_tracks.clear()
+        self.signctx = signctx.SignContext()
 
     def _on_speed(self, msg, now):
         if not self._speed_geom:

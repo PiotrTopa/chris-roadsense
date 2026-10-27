@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import time
+import unicodedata
 
 from aiohttp import WSMsgType, web
 
@@ -44,6 +45,9 @@ class PreviewRenderer:
             hud.append(f"lights {st.fps('lights'):.1f} Hz  " + (
                 f"ego {ego['state'].upper()}{' flashing' if ego.get('flashing') else ''} #{ego['track_id']} {ego['dist_m']:.0f} m"
                 if ego else "ego none"))
+        ride = ride_line(cam, ascii_only=True)
+        if ride:
+            hud.append(ride)
         return overlay.render_jpeg(raw, road=road, signs=signs, calib=st.latest.get("calib"),
                                    intrinsics=st.intrinsics(), hud=hud, lights=lights)
 
@@ -70,6 +74,21 @@ class PreviewRenderer:
             self.frame_id += 1
             ev, self.event = self.event, asyncio.Event()
             ev.set()
+
+
+def ride_line(cam, ascii_only=False):
+    """'Ride: <slug> — <author>, <licence>' for a camerad-replay source (attribution wherever frames are shown).
+    ascii_only: for the /preview HUD, whose bitmap font has no Polish letters or dashes."""
+    if not cam.get("ride"):
+        return None
+    s = f"Ride: {cam['ride']} \u2014 {cam.get('author') or 'unknown author'}, {cam.get('licence') or 'licence unknown'}"
+    if cam.get("playlist"):
+        s += f"  ({cam.get('ride_index', 0) + 1}/{cam.get('ride_count', 1)}, " \
+             f"{cam.get('ride_t_s', 0) / 60:.0f}/{cam.get('ride_duration_s', 0) / 60:.0f} min)"
+    if ascii_only:
+        s = unicodedata.normalize("NFKD", s.replace("\u2014", "-").replace("\u0142", "l").replace("\u0141", "L"))
+        s = s.encode("ascii", "ignore").decode()
+    return s
 
 
 async def h_road(req):
@@ -265,7 +284,7 @@ pre{margin:0;white-space:pre-wrap}
 .bad{color:#f66}.ok{color:#6f6}
 </style></head><body><main>
 <img src="/preview" alt="preview">
-<section><h2>health</h2><pre id="health">...</pre>
+<section><pre id="ride"></pre><h2>health</h2><pre id="health">...</pre>
 <h2>road</h2><pre id="road">...</pre>
 <h2>signs (live)</h2><pre id="signs">...</pre>
 <h2>environment</h2><pre id="env">...</pre>
@@ -287,6 +306,10 @@ async function tick(){
       s += `cpu ${f(h.cpu_temp_c)} C  ` + h.battery.map(b => `${b.name} ${b.capacity}% ${b.status || ""}`).join("  ");
       $("health").innerHTML = s;
     }
+    const cam = await get("/v1/camera");
+    $("ride").textContent = cam && cam.ride ? `Ride: ${cam.ride} \u2014 ${cam.author || "unknown author"}, ` +
+      `${cam.licence || "licence unknown"}` + (cam.playlist ? `  (${cam.ride_index + 1}/${cam.ride_count}, ` +
+      `${f(cam.ride_t_s / 60, 0)}/${f(cam.ride_duration_s / 60, 0)} min)` : "") : "";
     const r = await get("/v1/road");
     if (r) {
       const names = ["far left", "left", "right", "far right"];

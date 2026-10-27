@@ -195,7 +195,7 @@ and modeld otherwise pull in) and starts it; `--disable` switches back.
 
 ### camerad-replay: a recorded ride, looping
 
-`camerad-replay --file RIDE.mjpeg [--fps N] [--start S] [--once] [--gap-ms MS] [--verbose] [--frames N] [--no-preview]`
+`camerad-replay --file RIDE.mjpeg | --playlist LIST|DIR [--fps N] [--start S] [--once] [--gap-ms MS] [--verbose] [--frames N] [--no-preview]`
 (source `camerad-replay/main.cc`, single thread, libjpeg-turbo) plays a recorded drive into the ring
 so the whole stack (modeld, envd, sign provider, api, dashboard) runs on road footage:
 
@@ -211,7 +211,27 @@ so the whole stack (modeld, envd, sign provider, api, dashboard) runs on road fo
   colour conversion): 2 ms per 1280x720 frame on the laptop.
 * **Preview:** every `preview_every`-th frame's own JPEG becomes `preview.jpg` (no re-encode).
 * **Message:** `camera` with `"source":"replay"`, `file_frame`, `file_frames`, `file_t_s`, `loops`,
-  `jpeg_bytes`, `decode_fail`, `jpeg_warnings`; exposure and gains 0.
+  `jpeg_bytes`, `decode_fail`, `jpeg_warnings`; exposure and gains 0. Ride identity and attribution:
+  `ride` (slug = the ride's directory name), `ride_index` (0-based position in the playlist), `ride_count`,
+  `ride_t_s`, `ride_duration_s`, `playlist` (bool), `author` and `licence` (from the ride's `SOURCE.txt`:
+  line 1 `<title> -- <author> (<url>)`, first `CC BY...` token). The dashboard shows
+  "Ride: <slug> — <author>, <licence>" on the status page and on the `/preview` HUD (ASCII there).
+* **Playlist** (`--playlist LIST|DIR [--shuffle] [--max-seconds-per-ride S] [--calib-out PATH | --no-calib]`):
+  rides one after another, looping the list (`LIST`: one ride directory or `.mjpeg` per line, `#`
+  comments, re-read at every wrap; `DIR`: its subdirectories by name; `--shuffle` reshuffles at every
+  wrap). Per ride: `<dir>/*.mjpeg`, `camera-replay.json` (intrinsics, fps), `calib.json`, `SOURCE.txt`.
+  **Ride change contract:** (1) the ride's `calib.json` is copied atomically (tmp + rename) to
+  `--calib-out` (default `$ROADSENSE_CONFIG_DIR/calib.json`); (2) the next file is opened and indexed
+  (the previous one is unmapped and dropped from the page cache); (3) a **new ring** is created (rename
+  over the old one) with the ride's frame size and `focal_px`/`cx`/`cy`; **seq restarts at 1**; (4) a
+  pause of `--gap-ms` (default 2500 in playlist mode) before the first frame. Readers follow the new
+  ring within 500 ms (RingReader reopen clock); modeld re-reads `calib.json` on mtime change, checked at
+  most every 2 s on frame arrival, so after a > 2 s pause its first frame of the new ride already uses
+  the new calibration (no restart). The seq restart is the "camera restarted" signal every consumer
+  already handles: modeld drops its frame pairing, envd resets its smoother, the sign provider flushes
+  its sign and light tracks, and the api resets its speed-limit state (limit, area, odometer), live sign
+  tracks and sign context on a change of `ride`/`ride_index` or a seq going backwards. A ride that
+  cannot be opened is skipped; with none playable the player retries every 10 s.
 
 Config `/etc/roadsense/camera-replay.json` (`ROADSENSE_CONFIG_DIR`): `focal_px` (default: 975 scaled to
 the frame width, a placeholder), `cx`, `cy` (centre), `fps` (20), `preview_every` (2). The intrinsics
@@ -221,7 +241,10 @@ and the mounting (`calib.json`) belong to the ride, not to the phone: keep a `ca
 (`Conflicts=` camerad and camerad-dvr), installs the ride's two config files (saving the current
 `calib.json`), stops the current camera, starts the replay and restarts the running ring readers;
 `--disable` restores `calib.json` and the camera that ran before. Ride preparation, licences and the
-calibration guesses: `docs/lanes/L5-ride-replay.md`.
+calibration guesses: `docs/lanes/L5-ride-replay.md`. `scripts/use-replay.sh --playlist [DIR] [--shuffle]` plays
+the whole ride library (`docs/RIDES.md` catalogue order, written to `/etc/roadsense/replay-playlist.txt`;
+camerad-replay installs each ride's `calib.json` itself); switching between `--enable` and `--playlist`
+keeps the pre-replay `calib.json` backup and the camera to restore. Playlist: `docs/lanes/L10-playlist.md`.
 
 ## GPU schedule (`<rundir>/gpu.sched`, optional)
 

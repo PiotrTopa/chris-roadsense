@@ -1,5 +1,5 @@
 [Unit]
-Description=roadsense camerad-replay (recorded ride, MJPEG file -> frame ring, looping)
+Description=roadsense camerad-replay (recorded ride or ride playlist, MJPEG -> frame ring, looping)
 # Alternative to roadsense-camerad.service / roadsense-camerad-dvr.service: same ring, same camerad.sock,
 # same preview.jpg. scripts/use-replay.sh --enable FILE switches to it, --disable switches back.
 Conflicts=roadsense-camerad.service roadsense-camerad-dvr.service
@@ -10,12 +10,15 @@ Type=simple
 # root: the /dev/shm ring must not belong to a logind user (see camerad unit / ARCHITECTURE.md).
 Environment=ROADSENSE_RUNDIR=/run/roadsense
 Environment=ROADSENSE_CONFIG_DIR=/etc/roadsense
-# REPLAY_FILE=/path/ride.mjpeg (written by scripts/use-replay.sh --enable FILE); REPLAY_ARGS optional.
+# REPLAY_MODE=--file, REPLAY_FILE=/path/ride.mjpeg (scripts/use-replay.sh --enable FILE) or
+# REPLAY_MODE=--playlist, REPLAY_FILE=/etc/roadsense/replay-playlist.txt (use-replay.sh --playlist [DIR]);
+# REPLAY_ARGS optional (e.g. --shuffle). The playlist mode writes each ride's calib.json to /etc/roadsense.
+Environment=REPLAY_MODE=--file
 EnvironmentFile=/etc/roadsense/camera-replay.env
 RuntimeDirectory=roadsense
 RuntimeDirectoryPreserve=yes
 StateDirectory=roadsense
-ExecStart=/usr/local/bin/camerad-replay --file ${REPLAY_FILE} $REPLAY_ARGS
+ExecStart=/usr/local/bin/camerad-replay $REPLAY_MODE ${REPLAY_FILE} $REPLAY_ARGS
 Restart=always
 RestartSec=2
 Nice=-5

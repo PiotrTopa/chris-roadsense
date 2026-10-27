@@ -11,6 +11,9 @@ modeld run.
 * Laptop: `~/datasets/rides/<slug>/` &nbsp; Phone: `~/rides/<slug>/` (user@192.168.0.86)
 * Play on the phone: `sudo sh scripts/use-replay.sh --enable /home/user/rides/<slug>/<slug>.mjpeg`
   (installs that ride's `camera-replay.json` + `calib.json`), back with `--disable`.
+* Play **all rides in a loop** (catalogue order, each with its own intrinsics and calibration):
+  `sudo sh scripts/use-replay.sh --playlist /home/user/rides [--shuffle]` (lane L10,
+  [docs/lanes/L10-playlist.md](lanes/L10-playlist.md)); back with `--disable`.
 * Licence: every ride is **CC BY 3.0** (YouTube "Creative Commons Attribution licence (reuse allowed)",
   checked with yt-dlp's `license` field on 2026-10-27; `krakow-2024` via the licence-reviewed Commons copy).
   Private copying and testing are allowed; **attribution is required wherever frames are shown**
