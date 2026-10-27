@@ -81,6 +81,7 @@ async def h_signs(req):
     st = req.app["state"]
     msg = dict(st.latest.get("signs") or {})
     msg["live_tracks"] = st.tracks()
+    msg["suppressed_tracks"] = st.tracks(suppressed=True)
     return _json(msg)
 
 

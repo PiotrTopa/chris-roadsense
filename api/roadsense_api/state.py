@@ -7,6 +7,7 @@ import struct
 import time
 
 from . import lights as lights_mod
+from . import signctx
 from .speedlimit import SpeedLimit, load_rules
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd")
@@ -74,6 +75,8 @@ class State:
         self.connected = {d: False for d in DAEMONS}
         self.last_msg = {d: None for d in DAEMONS}         # monotonic time of last message
         self.live_tracks = {}                              # track_id -> summary
+        self.suppressed_tracks = {}                        # track_id -> summary (flagged, not live; signctx.py)
+        self.signctx = signctx.SignContext()
         self.history = collections.deque(maxlen=HISTORY_MAX)
         self.history_file = None
         if datadir and os.path.isdir(datadir):
@@ -98,6 +101,14 @@ class State:
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("lights annotation failed")
+        if mtype == "signs":       # context checks on round red tracks (signctx.py), forward the result
+            try:
+                self.signctx.annotate(msg, self.latest.get("road"), self.latest.get("lights"), self.latest.get("calib"),
+                                      self.intrinsics())
+                line = json.dumps(msg, separators=(",", ":"))
+            except Exception:
+                import logging
+                logging.getLogger("roadsense_api.state").exception("sign context failed")
         self.latest[mtype] = msg
         self.arrivals[mtype].append(now)
         self.version += 1
@@ -135,16 +146,25 @@ class State:
             tid = d.get("track_id")
             if tid is None:
                 continue
-            t = self.live_tracks.get(tid)
+            # A flagged track (provider or signctx) is listed apart with its reason, never as a live sign.
+            src, other = (self.suppressed_tracks, self.live_tracks) if d.get("suppressed") else \
+                (self.live_tracks, self.suppressed_tracks)
+            t = other.pop(tid, None) or src.get(tid)
             if t is None:
-                t = self.live_tracks[tid] = {"track_id": tid, "first_seq": msg.get("seq"),
-                                             "best_score": 0.0}
+                t = {"track_id": tid, "first_seq": msg.get("seq"), "best_score": 0.0}
+            src[tid] = t
             t.update(cls=d.get("cls"), cls_id=d.get("cls_id"), score=d.get("score"),
                      box=d.get("box"), hits=d.get("hits"), age=d.get("age"),
                      last_seq=msg.get("seq"), _seen=now)
+            for k in ("suppressed", "reason", "context", "glow", "verify"):
+                if k in d:
+                    t[k] = d[k]
+                else:
+                    t.pop(k, None)
             t["best_score"] = max(t["best_score"], d.get("score") or 0.0)
         for e in msg.get("tracks_ended") or []:
             self.live_tracks.pop(e.get("track_id"), None)
+            self.suppressed_tracks.pop(e.get("track_id"), None)
             self.history.append(e)
             if self.history_file:
                 try:
@@ -152,8 +172,9 @@ class State:
                         f.write(json.dumps(e, separators=(",", ":")) + "\n")
                 except OSError:
                     pass
-        for tid in [k for k, t in self.live_tracks.items() if now - t["_seen"] > LIVE_TRACK_TIMEOUT_S]:
-            del self.live_tracks[tid]
+        for tracks in (self.live_tracks, self.suppressed_tracks):
+            for tid in [k for k, t in tracks.items() if now - t["_seen"] > LIVE_TRACK_TIMEOUT_S]:
+                del tracks[tid]
 
     # ---- queries ---------------------------------------------------------
     def fps(self, mtype, window=2.0):
@@ -167,9 +188,10 @@ class State:
         span = now - recent[0]
         return round((len(recent) - 1) / span, 2) if span > 0 else 0.0
 
-    def tracks(self):
+    def tracks(self, suppressed=False):
+        src = self.suppressed_tracks if suppressed else self.live_tracks
         return [{k: v for k, v in t.items() if not k.startswith("_")}
-                for t in sorted(self.live_tracks.values(), key=lambda t: t["track_id"])]
+                for t in sorted(src.values(), key=lambda t: t["track_id"])]
 
     def ring(self):
         return read_ring_header(self.ring_path) if self.ring_path else None

@@ -116,9 +116,12 @@ def draw(img, road=None, signs=None, calib=None, intrinsics=(1500.0, 960.0, 540.
             if not box or len(box) != 4:
                 continue
             b = [v * pr.s for v in box]
-            d.rectangle(b, outline=(0, 255, 255, 255), width=2)
-            d.text((b[0], b[3] + 2), f"#{det.get('track_id')} {_short_cls(det.get('cls'))} {det.get('score', 0):.2f}",
-                   fill=(0, 255, 255, 255), font=font)
+            col = (150, 150, 150, 200) if det.get("suppressed") else (0, 255, 255, 255)   # flagged: grey + reason
+            d.rectangle(b, outline=col, width=1 if det.get("suppressed") else 2)
+            label = f"#{det.get('track_id')} {_short_cls(det.get('cls'))} {det.get('score', 0):.2f}"
+            if det.get("suppressed"):
+                label += f" x {det.get('reason')}"
+            d.text((b[0], b[3] + 2), label, fill=col, font=font)
 
     if lights:   # traffic lights: box in the state colour, the ego light thick with its distance
         for li in lights.get("lights") or []:

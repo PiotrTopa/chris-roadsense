@@ -53,14 +53,17 @@ def _norm_cls(cls):
 
 
 class _Track:
-    __slots__ = ("tid", "votes", "n", "score_sum", "hits", "first_ns", "last_ns", "boxes", "committed", "ended")
+    __slots__ = ("tid", "votes", "n", "score_sum", "hits", "first_ns", "last_ns", "boxes", "committed", "ended",
+                 "suppressed")
 
     def __init__(self, tid, ts):
         self.tid, self.votes, self.n, self.score_sum = tid, collections.Counter(), 0, 0.0
         self.hits, self.first_ns, self.last_ns, self.boxes = 0, ts, ts, []
         self.committed = self.ended = False
+        self.suppressed = None            # reason, when the provider or the api's signctx flagged the track
 
     def add(self, d, ts):
+        self.suppressed = (d.get("reason") or "suppressed") if d.get("suppressed") else None
         s = float(d.get("score") or 0.0)
         self.votes[_norm_cls(d.get("cls"))] += max(s, 1e-3)
         self.n += 1
@@ -179,6 +182,8 @@ class SpeedLimit:
         for e in msg.get("tracks_ended") or []:
             t = self.tracks.pop(e.get("track_id"), None)
             if t is not None:
+                if e.get("suppressed"):
+                    t.suppressed = e.get("reason") or "suppressed"
                 self._consider(t, live=False)
         for tid in [k for k, t in self.tracks.items() if (ts - t.last_ns) / NS > LIVE_TRACK_TIMEOUT_S]:
             self._consider(self.tracks.pop(tid), live=False)
@@ -230,6 +235,12 @@ class SpeedLimit:
         pos = self.odo + (self._distance_ahead(t) if live else 0.0)
         info = {"track_id": t.tid, "cls": cls, "sign": rule["sign"], "hits": t.hits, "vote": round(vote, 2),
                 "score": round(t.mean_score(), 3)}
+        if t.suppressed:          # flagged by the provider or signctx (lamp, traffic light, low score, ...)
+            if live:
+                return            # the flag may still clear (e.g. "score" as the sign gets closer)
+            t.committed = True
+            self.ignored.append(dict(info, reason=f"suppressed ({t.suppressed})", at_odo_m=round(self.odo, 1)))
+            return
         if act in ("junction", "junction_warning"):
             if t.hits < self.cfg["junction_min_hits"]:
                 return

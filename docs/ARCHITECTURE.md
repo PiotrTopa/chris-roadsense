@@ -342,6 +342,24 @@ The reference implementation's tracker is SORT-style (IoU association,
 constant-velocity Kalman per box, `max_age` 10 frames, `min_hits` 3) and reports
 a track in `detections` only once confirmed.
 
+**Flagged tracks (optional fields, lane L8).** A provider may judge a track as probably not a sign and
+still report it, flagged, so the reason stays inspectable: `"suppressed": true, "reason": "<word>"` on a
+`detections[]` entry (the decision for the track so far; it may clear later, e.g. `score`) and on a
+`tracks_ended[]` entry (final). Absent means accepted. The reference provider flags round red classes
+(prohibitions, speed limits, stop: stop lamps and red traffic lights get read as `no-entry`) with
+`verifier` (mean probability of a small real-sign-vs-lamp CNN below 0.5, if one is installed), `glow`
+(most of the track's detections look like a lamp: blown-out core fading into bright pink-red; only while
+the verifier is unsure too, since sunlit real signs glow as well) and, for any class, `score` (best
+detector score below a per-class minimum, e.g. `no-entry` 0.71). It also reports `glow` (that share, 0..1) and `verify` (the verifier mean) on round red tracks.
+The api adds its own context checks (`api/roadsense_api/signctx.py`): a round red track whose box centre
+sits inside a traffic light box (`lights` topic) or inside the lead vehicle's rear (modeld `leads[0]`
+projected, 2.6 m x 0-2 m) for >= half of its detections gets `"context": {"traffic_light": share,
+"lead_vehicle": share}` and is flagged (`reason` `traffic_light` / `lead_vehicle`) unless the provider's
+`verify` >= 0.9 with `glow` < 0.5 vouches for it. Flagged tracks are not live tracks, are not used by the
+speed-limit state (listed in its `ignored` as `suppressed (<reason>)`), are drawn grey with the reason in
+`/preview`, and are listed in `/v1/signs` as `suppressed_tracks`; history and `signs.jsonl` keep them with
+the flag.
+
 ### envd: `{"type":"env", ...}` about once per second
 `envd/` reads the ring at most `--max-hz` times per second (default 1, newest frame each time),
 squashes the whole frame to the image encoder's input (224x224 or so, no crop), runs a zero-shot
@@ -411,7 +429,7 @@ message-level `ego` for the light that applies to the ego lane:
 | Endpoint | Content |
 |---|---|
 | `GET /v1/road` | latest `road` message |
-| `GET /v1/signs` | latest `signs` message plus the list of currently live tracks |
+| `GET /v1/signs` | latest `signs` message plus the currently live tracks (`live_tracks`) and the flagged ones (`suppressed_tracks`, with `reason`) |
 | `GET /v1/signs/history?limit=100` | ended tracks, newest first |
 | `GET /v1/env` | latest `env` message (place / weather / light with scores and confidence) |
 | `GET /v1/speed_limit` | current speed limit derived by the api (topic `speed_limit`, below) plus `recent_changes` and `ignored` sign tracks |
@@ -420,7 +438,7 @@ message-level `ego` for the light that applies to the ego lane:
 | `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `lights_ms` and the ego light; CPU temp, battery |
 | `GET /v1/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top |
-| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation), plus the api's own `speed_limit`; `?topics=road,signs,env,speed_limit,lights` filters |
+| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`; `?topics=road,signs,env,speed_limit,lights` filters |
 
 api never touches the camera or the models; it is a fan-out and overlay layer, plus one derived
 topic below.
