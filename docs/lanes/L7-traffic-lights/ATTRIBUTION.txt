@@ -1,0 +1,5 @@
+overlay-*.jpg: frames of "City Driving 4K: Kraków Poland 2024" by Relaxing Roads 4K
+(https://www.youtube.com/@RelaxingRoads4K), CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/),
+via Wikimedia Commons (File:City_Driving_4K-_Kraków_Poland_2024.webm); scaled to 1280x720, roadsense
+overlay (lane lines, path, lead box, sign boxes, traffic lights) drawn on top. Captured from the phone's
+/preview on 2026-10-27 08:06-08:17 CET (scripts: L7 lane report, section 6).

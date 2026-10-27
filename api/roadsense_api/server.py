@@ -38,8 +38,14 @@ class PreviewRenderer:
         hud = [f"seq {cam.get('seq', '-')}  cam {st.fps('camera'):.0f} fps",
                f"road {st.fps('road'):.1f} Hz  {road.get('model_ms', 0):.0f} ms" if road else "road: no data",
                f"signs {st.fps('signs'):.1f} Hz  {len(st.live_tracks)} live" if signs else "signs: no data"]
+        lights = st.latest.get("lights")
+        if lights:
+            ego = lights.get("ego")
+            hud.append(f"lights {st.fps('lights'):.1f} Hz  " + (
+                f"ego {ego['state'].upper()}{' flashing' if ego.get('flashing') else ''} #{ego['track_id']} {ego['dist_m']:.0f} m"
+                if ego else "ego none"))
         return overlay.render_jpeg(raw, road=road, signs=signs, calib=st.latest.get("calib"),
-                                   intrinsics=st.intrinsics(), hud=hud)
+                                   intrinsics=st.intrinsics(), hud=hud, lights=lights)
 
     async def run(self):
         loop = asyncio.get_running_loop()
@@ -98,6 +104,12 @@ async def h_speed_limit(req):
     if "speed_limit" not in st.latest:
         return _json({"error": "no road/signs message yet"}, 503)
     return _json(st.speed.snapshot(full=True))
+
+
+async def h_lights(req):
+    st = req.app["state"]
+    msg = st.latest.get("lights")
+    return _json(msg or {"error": "no lights message yet"}, 200 if msg else 503)
 
 
 async def h_camera(req):
@@ -229,6 +241,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
     app.router.add_get("/v1/signs/history", h_signs_history)
     app.router.add_get("/v1/env", h_env)
     app.router.add_get("/v1/speed_limit", h_speed_limit)
+    app.router.add_get("/v1/lights", h_lights)
     app.router.add_get("/v1/camera", h_camera)
     app.router.add_get("/v1/health", h_health)
     app.router.add_get("/v1/frame.jpg", h_frame)
@@ -255,7 +268,8 @@ pre{margin:0;white-space:pre-wrap}
 <h2>road</h2><pre id="road">...</pre>
 <h2>signs (live)</h2><pre id="signs">...</pre>
 <h2>environment</h2><pre id="env">...</pre>
-<h2>speed limit</h2><pre id="speed">...</pre></section>
+<h2>speed limit</h2><pre id="speed">...</pre>
+<h2>traffic lights</h2><pre id="lights">...</pre></section>
 </main><script>
 const $ = id => document.getElementById(id);
 const f = (v, d=1) => v == null ? "-" : Number(v).toFixed(d);
@@ -300,7 +314,15 @@ async function tick(){
         `v ${f(sl.v_ego_kmh, 0)} km/h  odo ${f(sl.odometer_m / 1000, 2)} km` + (sl.advisory_kmh ? `  advisory ${sl.advisory_kmh}` : ""),
         ...sl.pending.map(p => `pending #${p.track_id} ${p.sign} ${p.value_kmh || ""} hits ${p.hits} q ${f(p.quality, 2)}`),
         ...(sl.recent_changes || []).slice(0, 3).map(c => `  ${f(c.odo_m, 0)} m: ${c.event}`)
-      ].filter(Boolean).join("\n") : "no data";
+      ].filter(Boolean).join("\\n") : "no data";
+    const lt = await get("/v1/lights");
+    $("lights").textContent = lt ? [
+        lt.ego ? `ego ${lt.ego.state}${lt.ego.flashing ? " (flashing)" : ""}  #${lt.ego.track_id}  ${f(lt.ego.dist_m, 0)} m  ` +
+          `lat ${f(lt.ego.lateral_m, 1)} m  rel ${f(lt.ego.relevance, 2)}  agree ${lt.ego.agree}/${lt.ego.n_relevant}  (${lt.ego.source})` : "ego: none",
+        ...(lt.lights || []).map(l => `#${l.track_id} ${l.state.padEnd(10)} ${f(l.state_conf, 2)}  ${f(l.dist_m, 0)} m  ` +
+          `lat ${f(l.lateral_m, 1)}  rel ${f(l.relevance, 2)}  hits ${l.hits}${l.ego ? "  EGO" : ""}`),
+        `${f(lt.lights_ms, 0)} ms`
+      ].join("\\n") : "no data";
   } catch (e) { $("health").textContent = "api unreachable"; }
 }
 tick(); setInterval(tick, 1000);

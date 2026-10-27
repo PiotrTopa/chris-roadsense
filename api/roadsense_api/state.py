@@ -6,10 +6,11 @@ import os
 import struct
 import time
 
+from . import lights as lights_mod
 from .speedlimit import SpeedLimit, load_rules
 
-DAEMONS = ("camerad", "modeld", "signd", "envd")
-TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit")
+DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd")
+TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights")
 SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
 LIVE_TRACK_TIMEOUT_S = 2.0
@@ -90,6 +91,13 @@ class State:
         self.last_msg[daemon] = now
         if not isinstance(mtype, str):
             return
+        if mtype == "lights":      # add ego-lane relevance from the road plan (lights.py), forward the result
+            try:
+                lights_mod.annotate(msg, self.latest.get("road"), self.latest.get("calib"), self.intrinsics())
+                line = json.dumps(msg, separators=(",", ":"))
+            except Exception:
+                import logging
+                logging.getLogger("roadsense_api.state").exception("lights annotation failed")
         self.latest[mtype] = msg
         self.arrivals[mtype].append(now)
         self.version += 1
@@ -188,6 +196,7 @@ class State:
         signs = self.latest.get("signs") or {}
         env = self.latest.get("env") or {}
         sl = self.latest.get("speed_limit")
+        lt = self.latest.get("lights") or {}
         return {
             "daemons": daemons,
             "fps": {t: self.fps(t) for t in TOPICS},
@@ -198,6 +207,8 @@ class State:
             "speed_limit": {"limit_kmh": sl["limit_kmh"], "source": sl["source"].get("kind"),
                             "sign": sl["source"].get("sign") or sl["source"].get("rule"),
                             "confidence": sl["confidence"], "area": sl["area"]["type"]} if sl else None,
+            "lights_ms": lt.get("lights_ms"),
+            "lights": lt.get("ego") if lt else None,
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
             "battery": battery(),

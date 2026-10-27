@@ -132,6 +132,23 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(h["limit_kmh"], 50)
         self.assertIn(b"/v1/speed_limit", self.fetch("/")[2])
 
+    def test_lights(self):
+        lt = self.get("/v1/lights")
+        self.assertEqual(lt["type"], "lights")
+        for k in ("lights_ms", "frame", "lights", "ego"):
+            self.assertIn(k, lt)
+        by_id = {li["track_id"]: li for li in lt["lights"]}
+        for k in ("dist_m", "lateral_m", "relevance", "ego"):
+            self.assertIn(k, by_id[1])
+        # the fake light ahead is the ego light; the side view ('off', far left) is not
+        self.assertIsNotNone(lt["ego"])
+        self.assertEqual(lt["ego"]["track_id"], 1)
+        self.assertTrue(by_id[1]["ego"])
+        self.assertFalse(by_id[2]["ego"])
+        self.assertIn(lt["ego"]["state"], ("red", "red_yellow", "green", "yellow"))
+        self.assertIn("lights", self.get("/v1/health"))
+        self.assertIn(b"/v1/lights", self.fetch("/")[2])
+
     def test_camera(self):
         c = self.get("/v1/camera")
         for k in ("type", "seq", "exposure_us", "analogue_gain", "colour_gains", "fps", "dropped", "ring"):

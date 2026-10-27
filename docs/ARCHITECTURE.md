@@ -17,7 +17,8 @@ must always be a valid debugging tool.
 ```
 camerad ──frame ring (shm)──┬──> modeld ─────────────────JSON──┐
                             ├──> envd (1 fps) ─────────────JSON──┤
-                            └──> sign provider (external) ─JSON──┼──> api ──> HTTP / WebSocket / MJPEG
+                            ├──> sign provider (external) ─JSON──┼──> api ──> HTTP / WebSocket / MJPEG
+                            └──> light provider (external) ─JSON─┤
 camerad ──JSON (frame meta)──────────────────────────────────────┘
 ```
 
@@ -374,6 +375,37 @@ are a linear probe on frozen embeddings (trained on research-licensed data, so n
 point `classes` in `envd.json` at it). Config `/etc/roadsense/envd.json`
 (keys as the CLI options, see `envd --help`); offline: `envd_replay` on JPEGs or an NV12 sequence.
 
+### light provider: `{"type":"lights", ...}` on `<rundir>/lightd.sock`
+Traffic lights, like signs, come from an external provider: any process that reads the ring and serves
+`<rundir>/lightd.sock`; the api connects to it like to the other daemons (daemon name `lightd`) and treats a
+missing socket as "not connected". The reference implementation is `signd --lights` in roadsense-signs (a
+second thread of signd with its own ring reader and socket; BDD100K YOLO11n detector on the upper part of the
+frame, a 48x24 state CNN per light, a small tracker; models and licences: roadsense-signs
+`docs/LIGHT_MODELS.md`, measurements: `docs/lanes/L7-traffic-lights.md`). One message per processed frame
+(about 3/s):
+
+```
+"lights_ms": 160.0,                      // provider time for this frame (detector + state + tracker)
+"frame": [1280, 720],                    // ring frame size; boxes are in these pixels
+"roi": [0, 0, 1280, 446],                // part of the frame the detector looked at
+"lights": [ {"track_id": 7, "state": "red",          // smoothed per track: red, yellow, red_yellow, green, off, unknown
+             "state_conf": 0.97, "state_s": 4.2,      // confidence of the state, seconds since it last changed
+             "frame_state": "red",                    // this frame's observation
+             "flashing": false,                       // yellow <-> off alternating within 4 s
+             "score": 0.66, "box": [x0,y0,x1,y1], "horizontal": false, "hits": 12, "age": 13} ]
+```
+Only confirmed tracks (>= 2 hits) matched in the current frame are listed. `red_yellow` is inferred from
+the sequence (a yellow observation straight after red; the Vienna-convention phase before green), `off`
+covers dark housings and side or back views. The api annotates every `lights` message before storing and
+forwarding it (`api/roadsense_api/lights.py`): per light `dist_m` (from the housing size, rough),
+`lateral_m` (offset from modeld's planned path at that distance), `relevance` 0..1 and `ego`, and a
+message-level `ego` for the light that applies to the ego lane:
+
+```
+"ego": {"track_id": 7, "state": "red", "flashing": false, "dist_m": 34.0, "lateral_m": 2.1, "relevance": 0.71,
+        "agree": 2, "n_relevant": 2, "source": "path"}     // null when no light is relevant
+```
+
 ## api (Python, aiohttp, port 8080)
 
 | Endpoint | Content |
@@ -383,11 +415,12 @@ point `classes` in `envd.json` at it). Config `/etc/roadsense/envd.json`
 | `GET /v1/signs/history?limit=100` | ended tracks, newest first |
 | `GET /v1/env` | latest `env` message (place / weather / light with scores and confidence) |
 | `GET /v1/speed_limit` | current speed limit derived by the api (topic `speed_limit`, below) plus `recent_changes` and `ignored` sign tracks |
+| `GET /v1/lights` | latest `lights` message with the api's ego-lane annotation (`ego`, per light `dist_m`, `lateral_m`, `relevance`) |
 | `GET /v1/camera` | latest `camera` message + ring header fields |
-| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary; CPU temp, battery |
+| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `lights_ms` and the ego light; CPU temp, battery |
 | `GET /v1/frame.jpg` | current preview JPEG |
-| `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes drawn on top |
-| `GET /ws` | WebSocket; every message from every daemon, as-is, plus the api's own `speed_limit`; `?topics=road,signs,env,speed_limit` filters |
+| `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top |
+| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation), plus the api's own `speed_limit`; `?topics=road,signs,env,speed_limit,lights` filters |
 
 api never touches the camera or the models; it is a fan-out and overlay layer, plus one derived
 topic below.

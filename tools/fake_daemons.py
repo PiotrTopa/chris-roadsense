@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Synthetic camerad/modeld/signd publishers for exercising the api without hardware.
 
-Creates <rundir>/{camerad,modeld,signd,envd}.sock, emits contract-shaped JSON at
-30/5/10/1 Hz, writes <rundir>/preview.jpg (960x540, every 3rd frame) and a
+Creates <rundir>/{camerad,modeld,signd,envd,lightd}.sock, emits contract-shaped JSON at
+30/5/10/1/3 Hz, writes <rundir>/preview.jpg (960x540, every 3rd frame) and a
 header-only frame ring <rundir>/roadsense-frames (pass --ring to the api).
 
     python3 tools/fake_daemons.py --rundir /tmp/roadsense-fake
@@ -77,6 +77,8 @@ class Fake:
         self.model = Publisher(os.path.join(rundir, "modeld.sock"), on_connect=self.calib)
         self.sign = Publisher(os.path.join(rundir, "signd.sock"))
         self.env_pub = Publisher(os.path.join(rundir, "envd.sock"), on_connect=self.env)
+        self.light_pub = Publisher(os.path.join(rundir, "lightd.sock"))
+        self.light_n = 0
         self.env_n = 0
         self.sign_frame = 0
         self.track_id = 0
@@ -225,12 +227,33 @@ class Fake:
             self.env_n += 1
             self.env_pub.send(self.env())
 
+    # ---- lightd (signd --lights) ------------------------------------------------
+    def lights(self):
+        # one light over the lane ahead (cycles red -> red_yellow -> green -> yellow) and one side view
+        n = self.light_n
+        state = ("red", "red_yellow", "green", "yellow")[(n // 9) % 4]
+        s = 40 + n % 9          # housing grows as it approaches
+        x0, y0 = CX + 40, 260 - n % 9
+        lights = [{"track_id": 1, "state": state, "state_conf": 0.9, "state_s": float(n % 9) / 3, "frame_state": state,
+                   "flashing": False, "score": 0.7, "box": [x0, y0, x0 + s * 0.45, y0 + s], "horizontal": False,
+                   "hits": n + 1, "age": n + 1},
+                  {"track_id": 2, "state": "off", "state_conf": 0.8, "state_s": 5.0, "frame_state": "off",
+                   "flashing": False, "score": 0.5, "box": [300, 300, 315, 335], "horizontal": False,
+                   "hits": n + 1, "age": n + 1}]
+        return {**self.hdr("lights"), "lights_ms": 120.0, "frame": [W, H], "roi": [0, 0, W, 670], "lights": lights}
+
+    async def lightd(self):
+        while True:
+            await asyncio.sleep(1 / 3)
+            self.light_n += 1
+            self.light_pub.send(self.lights())
+
     async def run(self):
-        for p in (self.cam, self.model, self.sign, self.env_pub):
+        for p in (self.cam, self.model, self.sign, self.env_pub, self.light_pub):
             await p.start()
         self.write_preview()
         self.write_ring()
-        await asyncio.gather(self.camerad(), self.modeld(), self.signd(), self.envd())
+        await asyncio.gather(self.camerad(), self.modeld(), self.signd(), self.envd(), self.lightd())
 
 
 def main():

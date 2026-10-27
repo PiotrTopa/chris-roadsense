@@ -63,7 +63,11 @@ def _short_cls(cls):
     return (cls or "?").split("--")[-1]
 
 
-def draw(img, road=None, signs=None, calib=None, intrinsics=(1500.0, 960.0, 540.0, 1920, 1080), hud=None):
+LIGHT_COLOURS = {"red": (255, 40, 40), "yellow": (255, 200, 0), "red_yellow": (255, 120, 0), "green": (40, 255, 90),
+                 "off": (150, 150, 150), "unknown": (150, 150, 150)}
+
+
+def draw(img, road=None, signs=None, calib=None, intrinsics=(1500.0, 960.0, 540.0, 1920, 1080), hud=None, lights=None):
     """Return a new RGB image with overlays drawn on `img` (PIL.Image)."""
     base = img.convert("RGBA")
     layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
@@ -115,6 +119,20 @@ def draw(img, road=None, signs=None, calib=None, intrinsics=(1500.0, 960.0, 540.
             d.rectangle(b, outline=(0, 255, 255, 255), width=2)
             d.text((b[0], b[3] + 2), f"#{det.get('track_id')} {_short_cls(det.get('cls'))} {det.get('score', 0):.2f}",
                    fill=(0, 255, 255, 255), font=font)
+
+    if lights:   # traffic lights: box in the state colour, the ego light thick with its distance
+        for li in lights.get("lights") or []:
+            box = li.get("box")
+            if not box or len(box) != 4:
+                continue
+            b = [v * pr.s for v in box]
+            c = LIGHT_COLOURS.get(li.get("state"), (150, 150, 150))
+            ego = bool(li.get("ego"))
+            d.rectangle([b[0] - 2, b[1] - 2, b[2] + 2, b[3] + 2], outline=c + (255,), width=4 if ego else 2)
+            label = f"#{li.get('track_id')} {li.get('state')}" + (" flash" if li.get("flashing") else "")
+            if ego and li.get("dist_m") is not None:
+                label = "EGO " + label + f" {li['dist_m']:.0f} m"
+            d.text((b[0], b[3] + 3), label, fill=c + (255,), font=font)
 
     if hud:
         d.rectangle([0, 0, 8 + 7 * max(len(s) for s in hud), 6 + 16 * len(hud)], fill=(0, 0, 0, 120))
