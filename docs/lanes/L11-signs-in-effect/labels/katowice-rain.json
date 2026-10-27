@@ -1,0 +1,832 @@
+{
+ "ride": "katowice-rain",
+ "labeller": "opus-L11-labeller",
+ "intervals": [
+  {
+   "rule": "built_up_area",
+   "start_t": 0.0,
+   "end_t": 771.0,
+   "start_sign_t": null,
+   "end_reason": "D-43",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "no D-42 seen in the ride (car starts inside Katowice); D-43 together with B-42 on the right at 771 on the DTS after the tunnel"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 104.5,
+   "end_t": 110.5,
+   "start_sign_t": 104.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 with D-18 P + Koniec plate (end of parking bay)"
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 108.5,
+   "end_t": 325.5,
+   "start_sign_t": 108.5,
+   "end_reason": "unclear",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "first D-1 seen above B-21 at 108.5 (may start earlier, after the A-7 merge at 76.5); repeats 122.5, 166.5; car leaves the road turning right at signalised junction 325.5, no D-2 seen"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 114.5,
+   "end_t": 124.0,
+   "start_sign_t": 114.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 135.5,
+   "side": "right",
+   "value": null,
+   "notes": "right after signalised junction 110.5; possible earlier side road left at 117"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 132.5,
+   "end_t": 135.5,
+   "start_sign_t": 132.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + P Koniec plate"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 143.5,
+   "end_t": 144.5,
+   "start_sign_t": 143.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 under B-21 just before signalised junction (very short)"
+  },
+  {
+   "rule": "no_parking",
+   "start_t": 162.5,
+   "end_t": 168.0,
+   "start_sign_t": 162.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-35 with text plate (exceptions) and Policja arrow plate"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 166.5,
+   "end_t": 168.0,
+   "start_sign_t": 166.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 under D-1 repeat at signalised junction"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 185.5,
+   "end_t": 186.5,
+   "start_sign_t": 185.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 240.0,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 under B-21; side street left at ~186.5 uncertain; otherwise until signalised junction ahead (queue 3:10-3:40)"
+  },
+  {
+   "rule": "weight_limit",
+   "start_t": 238.5,
+   "end_t": 240.0,
+   "start_sign_t": 238.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 258.0,
+   "side": null,
+   "value": 3.5,
+   "notes": "B-18 3.5t with plate (exceptions unreadable); next side street right at 240 (exit with B-2) - if that is not counted, ends at signalised junction after the railway viaduct"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 242.5,
+   "end_t": 258.0,
+   "start_sign_t": 242.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 above lane-layout sign, before railway viaduct; through the underpass to the signalised junction"
+  },
+  {
+   "rule": "one_way",
+   "start_t": 328.0,
+   "end_t": 337.5,
+   "start_sign_t": 328.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-3 both sides after right turn at signalised junction; street ends at T with A-7"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 328.0,
+   "end_t": 337.5,
+   "start_sign_t": 328.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 333.0,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 above D-3; car-park entries on left ~333 not counted"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 335.5,
+   "end_t": 337.5,
+   "start_sign_t": 335.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "left",
+   "value": null,
+   "notes": "B-36 with T-24 tow-away plate on left at end of street"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 368.5,
+   "end_t": 369.5,
+   "start_sign_t": 368.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 on near corner, car turns right at the junction right after it"
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 380.0,
+   "end_t": 688.5,
+   "start_sign_t": 380.0,
+   "end_reason": "yield",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "D-1 + C-5 at 380 after the right turn; repeats 397.5, 404.5; no repeat seen after 420; ends at the A-7 at the merge 688.5 (end could be earlier, unseen)"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 386.0,
+   "end_t": 399.5,
+   "start_sign_t": 386.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 above D-6 just after crossroads"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 403.5,
+   "end_t": 408.0,
+   "start_sign_t": 403.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 above lane-layout sign"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 413.5,
+   "end_t": 420.0,
+   "start_sign_t": 413.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 with D-44 paid parking zone sign (Strefa B) below"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 419.5,
+   "end_t": 420.0,
+   "start_sign_t": 419.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 426.0,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 under B-5 at junction corner, probably for the cross street"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 422.0,
+   "end_t": 430.0,
+   "start_sign_t": 422.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 after signalised junction; next is a left access to hotel (public?) at 430, else side road right at 542",
+   "alt_end_t": 542.0
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 588.5,
+   "end_t": 689.0,
+   "start_sign_t": 588.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 with TAXI plate (taxi rank exemption); ends at the yield merge (slow queue in between); alt end = the right fork at ~600 if that counts as junction",
+   "alt_end_t": 600.0
+  },
+  {
+   "rule": "one_way",
+   "start_t": 703.0,
+   "end_t": 717.5,
+   "start_sign_t": 703.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "D-3 at the signal at ramp entry; ramp merges with DTS mainline at A-7 + C-5 ~717.5"
+  }
+ ],
+ "momentary": [
+  {
+   "sign": "A-7",
+   "t": 60.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "with C-5 below; exit ramp from DTS merges into city road"
+  },
+  {
+   "sign": "C-5",
+   "t": 60.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under A-7 at ramp merge"
+  },
+  {
+   "sign": "A-7",
+   "t": 76.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "with C-5; merge of the access road into the main street"
+  },
+  {
+   "sign": "C-5",
+   "t": 76.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under A-7"
+  },
+  {
+   "sign": "D-6",
+   "t": 86.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "signalised crossing, D-6 on both sides"
+  },
+  {
+   "sign": "D-6",
+   "t": 98.0,
+   "side": "left",
+   "faces_us": null,
+   "notes": "signalised junction crossing"
+  },
+  {
+   "sign": "B-21",
+   "t": 109.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "no left turn under D-1 at signalised junction, with D-6 below; car goes straight"
+  },
+  {
+   "sign": "D-6",
+   "t": 109.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under B-21"
+  },
+  {
+   "sign": "B-21",
+   "t": 143.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "no left turn, with B-36 below, before signalised junction ~144.5"
+  },
+  {
+   "sign": "B-21",
+   "t": 156.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "no left turn on corner of side road right (Zwirki i Wigury); F-6 style pre-direction sign with B-5 for Kosciol Garnizonowy road nearby"
+  },
+  {
+   "sign": "D-6",
+   "t": 168.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "signalised crossing"
+  },
+  {
+   "sign": "D-6",
+   "t": 174.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "signalised pedestrian crossing, with B-33 40"
+  },
+  {
+   "sign": "B-21",
+   "t": 185.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "no left turn, above B-36; side street left at ~186"
+  },
+  {
+   "sign": "D-6",
+   "t": 237.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "signalised junction"
+  },
+  {
+   "sign": "B-21",
+   "t": 238.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under B-18 3.5t, above D-6, on far-right corner after signalised junction 237"
+  },
+  {
+   "sign": "B-2",
+   "t": 240.0,
+   "side": "right",
+   "faces_us": false,
+   "notes": "no entry into side street on the right (one-way exit)"
+  },
+  {
+   "sign": "B-23",
+   "t": 256.5,
+   "side": "left",
+   "faces_us": null,
+   "notes": "no U-turn at exit of viaduct before signalised junction"
+  },
+  {
+   "sign": "D-6",
+   "t": 328.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under D-3 and B-36 after right turn"
+  },
+  {
+   "sign": "A-7",
+   "t": 337.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "end of one-way street; diamond-shaped sign with black bar on top (D-2? or plate) above it"
+  },
+  {
+   "sign": "A-7",
+   "t": 342.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "with C-12, roundabout entry (signs both sides); temporary yellow lane-layout board 20 m"
+  },
+  {
+   "sign": "C-12",
+   "t": 342.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under A-7"
+  },
+  {
+   "sign": "D-6",
+   "t": 354.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "crossing at roundabout entry"
+  },
+  {
+   "sign": "A-7",
+   "t": 354.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "second A-7 + C-12 after crossing tram tracks (inner roundabout entry)"
+  },
+  {
+   "sign": "C-12",
+   "t": 354.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under A-7"
+  },
+  {
+   "sign": "D-6",
+   "t": 369.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under B-36"
+  },
+  {
+   "sign": "C-5",
+   "t": 380.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under D-1"
+  },
+  {
+   "sign": "D-6",
+   "t": 386.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under B-36"
+  },
+  {
+   "sign": "B-21",
+   "t": 398.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under D-1 repeat"
+  },
+  {
+   "sign": "B-2",
+   "t": 399.0,
+   "side": "left",
+   "faces_us": false,
+   "notes": "no entry into side street on the left"
+  },
+  {
+   "sign": "B-21",
+   "t": 405.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under D-1 repeat, before signalised junction"
+  },
+  {
+   "sign": "D-6",
+   "t": 408.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "signalised junction crossing"
+  },
+  {
+   "sign": "D-6",
+   "t": 413.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "B-5",
+   "t": 419.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "no trucks, above B-36 on building corner at signalised junction; may be meant for the side street"
+  },
+  {
+   "sign": "B-21",
+   "t": 424.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "no left turn"
+  },
+  {
+   "sign": "B-21",
+   "t": 530.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "no left turn above lane sign (bus lane), with direction board"
+  },
+  {
+   "sign": "B-2",
+   "t": 541.5,
+   "side": "right",
+   "faces_us": false,
+   "notes": "no entry into exit/side road on the right"
+  },
+  {
+   "sign": "A-7",
+   "t": 688.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "A-7 (with plate above) at the merge of our lane into the road leading to the DK79 junction; queue 10:00-11:27 before it"
+  },
+  {
+   "sign": "D-6",
+   "t": 697.0,
+   "side": "left",
+   "faces_us": null,
+   "notes": "signalised crossing"
+  },
+  {
+   "sign": "A-7",
+   "t": 697.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "at signalised junction, for right slip lane/ramp (the junction is signalised)"
+  },
+  {
+   "sign": "A-7",
+   "t": 717.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "with C-5, ramp merges into DTS (DK79) just before the tunnel"
+  },
+  {
+   "sign": "C-5",
+   "t": 717.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "under A-7"
+  },
+  {
+   "sign": "B-42",
+   "t": 771.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "end of bans, above D-43 (not a momentary sign in brief list, recorded for completeness)"
+  }
+ ],
+ "warnings": [
+  {
+   "sign": "A-29",
+   "t": 78.5,
+   "notes": "traffic signals ahead, right"
+  },
+  {
+   "sign": "A-12b",
+   "t": 164.0,
+   "notes": "lane-ends/narrowing on right, yellow temporary-style triangle, with B-33 40"
+  },
+  {
+   "sign": "A-?",
+   "t": 791.5,
+   "notes": "lane merge / narrowing warning (A-12-like with merging lane), signs on both sides"
+  },
+  {
+   "sign": "A-?",
+   "t": 828.0,
+   "notes": "temporary yellow (roadworks) lane-change/narrowing warnings on left with B-33 70 below"
+  },
+  {
+   "sign": "A-1",
+   "t": 862.5,
+   "notes": "curve right warning, both sides"
+  },
+  {
+   "sign": "A-?",
+   "t": 875.5,
+   "notes": "merging traffic from left (on-ramp) warning, left side"
+  }
+ ],
+ "junctions": [
+  {
+   "t": 32.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "exit ramp off DTS (DK79) - grade-separated interchange diverge, not at-grade"
+  },
+  {
+   "t": 53.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "service lane/bridge right with B-1 + plate (not for us)"
+  },
+  {
+   "t": 61.0,
+   "type": "side road left",
+   "public": true,
+   "notes": "our ramp merges into the main road from the right (A-7+C-5 for us)"
+  },
+  {
+   "t": 77.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "access road merges into main street (A-7)"
+  },
+  {
+   "t": 86.5,
+   "type": "signalised",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 98.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "right slip lane with A-7, B-23?, B-36? on its island (not our lane)"
+  },
+  {
+   "t": 110.5,
+   "type": "signalised",
+   "public": true,
+   "notes": "car straight; left turn banned B-21"
+  },
+  {
+   "t": 117.0,
+   "type": "side road left",
+   "public": null,
+   "notes": "possible side street left while road bends; uncertain"
+  },
+  {
+   "t": 124.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "after D-1 repeat at 122.5 (church access)"
+  },
+  {
+   "t": 135.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "side street right with own signs (3.5t?) and zebra"
+  },
+  {
+   "t": 144.5,
+   "type": "signalised",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 148.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "street right with zebra"
+  },
+  {
+   "t": 156.5,
+   "type": "crossroads",
+   "public": true,
+   "notes": "Zwirki i Wigury on right; left turn banned"
+  },
+  {
+   "t": 168.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "C-2 on far right corner, detour board Objazd"
+  },
+  {
+   "t": 170.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "street right with zebra"
+  },
+  {
+   "t": 174.0,
+   "type": "signalised",
+   "public": false,
+   "notes": "signalised pedestrian crossing only (not a junction)"
+  },
+  {
+   "t": 186.5,
+   "type": "side road left",
+   "public": true,
+   "notes": "street left, left turn banned"
+  },
+  {
+   "t": 237.0,
+   "type": "signalised",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 240.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "one-way street right, entry banned (B-2)"
+  },
+  {
+   "t": 325.5,
+   "type": "signalised",
+   "public": true,
+   "notes": "car turns right into one-way street"
+  },
+  {
+   "t": 337.5,
+   "type": "T end",
+   "public": true,
+   "notes": "one-way street ends, yield A-7, car turns onto the road along the park"
+  },
+  {
+   "t": 350.0,
+   "type": "roundabout",
+   "public": true,
+   "notes": "large roundabout with tram tracks, entries at 343 and 355, exit ~360"
+  },
+  {
+   "t": 369.5,
+   "type": "crossroads",
+   "public": true,
+   "notes": "car turns right"
+  },
+  {
+   "t": 384.5,
+   "type": "crossroads",
+   "public": true,
+   "notes": "car straight (C-5 under D-1 at 380)"
+  },
+  {
+   "t": 399.5,
+   "type": "side road left",
+   "public": true,
+   "notes": "one-way street left (B-2), left turn banned"
+  },
+  {
+   "t": 408.0,
+   "type": "signalised",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 420.0,
+   "type": "signalised",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 430.0,
+   "type": "side road left",
+   "public": null,
+   "notes": "access road left to hotel (Vienna House); left turn banned by B-21 at 424.5"
+  },
+  {
+   "t": 542.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "side access right with B-2 (cannot enter)"
+  },
+  {
+   "t": 689.0,
+   "type": "side road left",
+   "public": true,
+   "notes": "our lane merges (yield A-7) into the road from the left; preceded by long queue"
+  },
+  {
+   "t": 697.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "green filter arrow; A-7 for right slip on right"
+  },
+  {
+   "t": 703.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "signalised entry to the DTS tunnel ramp"
+  },
+  {
+   "t": 718.0,
+   "type": "side road left",
+   "public": true,
+   "notes": "ramp joins DTS mainline (merge) at tunnel portal"
+  },
+  {
+   "t": 768.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "grade-separated: exit ramp diverges right on DTS after tunnel"
+  },
+  {
+   "t": 818.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "grade-separated interchange: exit slip right (DK79)"
+  },
+  {
+   "t": 830.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "on-ramp joins from the right (A-7 + C-? face the ramp, not us)"
+  },
+  {
+   "t": 863.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "grade-separated slip roads around curve (DK79), uncertain"
+  }
+ ],
+ "notes": [
+  "0:00-0:30 DTS/DK79 carriageway; B-33 100 both sides at ~8.0 s; on-ramp signs (A-7+C-?) at 0.5 s face the joining ramp, not us",
+  "52.0 B-1 with plate faces service road on right, not us",
+  "Speed limits B-33: 100 at ~8 s (DTS); 40 at ~164 s and ~174 s; 70 at tunnel entry 720 (variable message signs inside, 743); 70 at 828 (temporary, roadworks), 70 at ~873 and 892 (with lane signs)",
+  "Paid parking zone D-44 'Strefa B' plates under B-36 at 413 s",
+  "161-168 s: B-35 with long text plate (exceptions unreadable) + Policja plate",
+  "DTS tunnel 720-764 s; D-43 + B-42 at 771 s mark end of built-up area on DTS; no D-42 or E-17a seen anywhere in the ride",
+  "Waiting at red light 248-322 s under railway viaduct; long queue 600-688 s before the merge to DK79",
+  "B-21 left-turn bans recorded as momentary; car never turned left where banned"
+ ],
+ "coverage": {
+  "sheets_read": 38,
+  "full_frames": 208
+ }
+}

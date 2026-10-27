@@ -1,0 +1,1356 @@
+{
+ "ride": "warsaw-city",
+ "labeller": "opus-L11-labeller",
+ "intervals": [
+  {
+   "rule": "one_way",
+   "start_t": 1.5,
+   "end_t": 15.5,
+   "start_sign_t": 1.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 50.5,
+   "side": null,
+   "value": null,
+   "notes": "D-3 above D-6 right after the tram crossing at ride start (dual-carriageway one-way). First candidate end = median opening with left-turn arrow at 15.5 (service road beyond, may be only a U-turn/parking-road access); alt = signalised junction at 50.5."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 2.0,
+   "end_t": 15.5,
+   "start_sign_t": 2.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 50.5,
+   "side": "left",
+   "value": null,
+   "notes": "B-36 duplicate on the left (median) at the same place as the right one."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 2.5,
+   "end_t": 15.5,
+   "start_sign_t": 2.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 50.5,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 right just after the D-6 crossing; paid parking bay (P 'Płatny') on the right at 13.5 is off-carriageway. End depends on whether the median opening at 15.5 is an intersection."
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 41.5,
+   "end_t": 54.5,
+   "start_sign_t": 41.5,
+   "end_reason": "D-2",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-1 with B-21 (no left turn) and cycle-path sign on the right, before the signalised junction at 50.5. Ended by D-2 above A-7 on both sides at 54.5 (approach to Rondo Daszyńskiego)."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 56.5,
+   "end_t": 63.5,
+   "start_sign_t": 56.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 above F-10 lane sign (road 634) on the right; ends at the signalised roundabout."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 76.0,
+   "end_t": 86.5,
+   "start_sign_t": 76.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 with plate (tow-away?) on the right after leaving Rondo Daszyńskiego, repeat B-36 with T-27 (up/down arrow) plate + bus/taxi lane info at 79.5; ends at signalised junction 86.5."
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 113.5,
+   "end_t": 150.5,
+   "start_sign_t": 113.5,
+   "end_reason": "D-2",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-1 above D-6 right before signalised junction at 117; ends with D-2 above A-7 on right at ~150.5 approaching the signalised roundabout under the flyover (Warszawa Centralna)."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 123.0,
+   "end_t": 152.0,
+   "start_sign_t": 123.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": null,
+   "side": null,
+   "value": null,
+   "notes": "small blue up-arrow (D-3) below B-36 on right at 123; no public junction seen before the signalised roundabout; ends there. Unclear whether the small sign is D-3 or a plate."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 123.0,
+   "end_t": 152.0,
+   "start_sign_t": 123.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 with plate above small blue up-arrow sign and bus/taxi stop at 123 (after crossing at 122); repeat B-36 + T-27 up/down arrow + 'P Koniec' + road 631 plate at 148.5; ends at roundabout (stopped at red 2:38-3:10+)."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 226.5,
+   "end_t": 249.5,
+   "start_sign_t": 226.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 241.0,
+   "side": null,
+   "value": null,
+   "notes": "D-3 above D-6 right after leaving the signalised roundabout; repeat D-3 below B-36 at 234.5. Flyover ramp merges from the left at ~241 (merge, not treated as an intersection = alt end); first side road right at 249.5."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 234.5,
+   "end_t": 249.5,
+   "start_sign_t": 234.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 with plate (exceptions/tow) above D-3 on right after the bus/taxi slip lane ends. Another B-36 + tow plate at 229.5 stands beyond the island of the bus/taxi drop-off slip (governs the slip lane, not counted)."
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 260.0,
+   "end_t": 270.0,
+   "start_sign_t": 260.0,
+   "end_reason": "D-2",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-1 on island at 260; D-2 above A-7 on both sides at ~270 approaching Rondo ONZ."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 265.0,
+   "end_t": 273.5,
+   "start_sign_t": 265.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "small B-36 (could be B-35) above F-sign with B-33 30 and D-6 on right at 264-265; ends at Rondo ONZ."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 317.5,
+   "end_t": 338.5,
+   "start_sign_t": 317.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + tow-away plate + D-3 on right after leaving Rondo ONZ (D-6b left); repeat B-36 + plate at the signalised pedestrian crossing 331. Ends at side road right (slip lane with right-turn arrow) at 338.5; alt = signalised Żelazna junction 345.5.",
+   "alt_end_t": 345.5
+  },
+  {
+   "rule": "one_way",
+   "start_t": 317.5,
+   "end_t": 338.5,
+   "start_sign_t": 317.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "D-3 below B-36 after Rondo ONZ (dual carriageway). Ends at side road right (slip lane with right-turn arrow) at 338.5; alt = signalised Żelazna junction 345.5.",
+   "alt_end_t": 345.5
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 341.0,
+   "end_t": 345.5,
+   "start_sign_t": 341.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 next to B-21 on right before the signalised Żelazna junction."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 348.5,
+   "end_t": 377.0,
+   "start_sign_t": 348.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + tow-away plate + D-3 on right right after Żelazna junction. Repeats: B-36 + plate at 365 and B-36 + plate + 'P Płatny' at 367 (paid bays). Ends at side road right 377."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 348.5,
+   "end_t": 377.0,
+   "start_sign_t": 348.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-3 below B-36. Repeats: B-36 + plate at 365 and B-36 + plate + 'P Płatny' at 367 (paid bays). Ends at side road right 377."
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 362.5,
+   "end_t": 382.5,
+   "start_sign_t": 362.5,
+   "end_reason": "D-2",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-1 above D-6 on both sides at signalised pedestrian crossing 6:02; D-2 above A-7 both sides at 382.5 approaching Rondo Daszyńskiego (2nd visit)."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 413.5,
+   "end_t": 425.0,
+   "start_sign_t": 413.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + D-3 on right just after exiting Rondo Daszyńskiego (2nd pass, straight through); ends at side road right ~425."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 413.5,
+   "end_t": 425.0,
+   "start_sign_t": 413.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-3 below B-36."
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 422.5,
+   "end_t": 582.5,
+   "start_sign_t": 422.5,
+   "end_reason": "D-2",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-1 on right before side road right. Repeats D-1 at 464, 477, 485. Repeats D-1 at 464, 477, 485. Repeat at 571. Ended by D-2 above A-7 both sides at 582.5 before Rondo Zesłańców Syberyjskich."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 428.0,
+   "end_t": 436.5,
+   "start_sign_t": 428.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + D-3 on right after the side road."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 428.0,
+   "end_t": 436.5,
+   "start_sign_t": 428.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-3 below B-36."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 438.5,
+   "end_t": 444.0,
+   "start_sign_t": 438.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + D-3 right just after the signalised junction at 436.5; ends at side road right 444."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 438.5,
+   "end_t": 444.0,
+   "start_sign_t": 438.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-3 under B-36."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 451.0,
+   "end_t": 455.5,
+   "start_sign_t": 451.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": null,
+   "side": "right",
+   "value": null,
+   "notes": "small B-36 (maybe B-35) above P sign at roadworks barrier on right; side road right at ~455.5 (right-turn arrow at 453). Sign type uncertain."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 493.0,
+   "end_t": 500.0,
+   "start_sign_t": 493.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + D-3 on right at signalised pedestrian crossing 8:12. Ends at side road right ~500 (right-turn arrow at 498, road not clearly seen).",
+   "alt_end_t": 572.0
+  },
+  {
+   "rule": "one_way",
+   "start_t": 493.0,
+   "end_t": 500.0,
+   "start_sign_t": 493.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "D-3 below B-36. Ends at side road right ~500 (right-turn arrow at 498, road not clearly seen).",
+   "alt_end_t": 572.0
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 509.5,
+   "end_t": 572.0,
+   "start_sign_t": 509.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + T-27 (up/down arrow) plate on right; ends at big signalised junction near flyover (stopped at red 8:46-9:28, centre ~572)."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 729.5,
+   "end_t": 735.5,
+   "start_sign_t": 729.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 under B-22 on right; ends at the signalised junction 735.5."
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 733.5,
+   "end_t": 886.5,
+   "start_sign_t": 733.5,
+   "end_reason": "D-2",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-1 above D-6 + yellow child plate on right just before signalised junction 735.5. Repeat at 800.5. Repeats at 827.5 and 849. Repeat at 874. Ended by D-2 above A-7 both sides at 886.5 before Rondo ONZ."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 762.5,
+   "end_t": 770.0,
+   "start_sign_t": 762.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + T-27 up/down plate above bus/DOP lane sign; ends at side road right ~770 (cars exiting, right-turn arrow 12:50)."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 809.0,
+   "end_t": 813.0,
+   "start_sign_t": 809.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 816.0,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 above D-3 (two stacked up arrows) + bus/DOP plates after signalised junction 802; side road right ~813 (right-turn arrow at 13:32), alt = signalised junction 818."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 809.0,
+   "end_t": 813.0,
+   "start_sign_t": 809.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 816.0,
+   "side": null,
+   "value": null,
+   "notes": "D-3 under B-36 (also a D-3 at 807.5 under B-36 on far side of crossing)."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 813.5,
+   "end_t": 816.0,
+   "start_sign_t": 813.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": null,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 above bus-lane sign on right at 13:34; ends at signalised junction ~818. Small, read from sheet only."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 831.0,
+   "end_t": 851.0,
+   "start_sign_t": 831.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + D-3 on right after side road (13:50), with bus/DOP lane sign."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 831.0,
+   "end_t": 851.0,
+   "start_sign_t": 831.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-3 under B-36."
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 863.5,
+   "end_t": 876.0,
+   "start_sign_t": 863.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 + D-3 on right just after signalised junction 861 (14:22)."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 863.5,
+   "end_t": 876.0,
+   "start_sign_t": 863.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-3 under B-36."
+  }
+ ],
+ "momentary": [
+  {
+   "sign": "D-3",
+   "t": 1.5,
+   "side": "right",
+   "notes": "one-way of our road (up arrow), above D-6"
+  },
+  {
+   "sign": "D-6",
+   "t": 1.5,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "B-2",
+   "t": 15.5,
+   "side": "left",
+   "faces_us": false,
+   "notes": "on the far side of the oncoming carriageway at a median opening, governs entry into the parallel service road; A-? warning with '10 m' plate beside it, also for that road"
+  },
+  {
+   "sign": "B-21",
+   "t": 41.5,
+   "side": "right",
+   "notes": "no left turn, with D-1"
+  },
+  {
+   "sign": "D-6",
+   "t": 48.5,
+   "side": "left",
+   "notes": "signalised junction, D-6 both sides"
+  },
+  {
+   "sign": "D-6",
+   "t": 49.0,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "B-21",
+   "t": 49.0,
+   "side": "left",
+   "notes": "no left turn at signalised junction"
+  },
+  {
+   "sign": "A-7",
+   "t": 54.5,
+   "side": "right",
+   "notes": "with D-2 above; duplicate on left"
+  },
+  {
+   "sign": "A-7",
+   "t": 54.5,
+   "side": "left",
+   "notes": "with D-2 above"
+  },
+  {
+   "sign": "A-7",
+   "t": 60.5,
+   "side": "right",
+   "notes": "above C-12, Rondo Daszyńskiego (signalised)"
+  },
+  {
+   "sign": "C-12",
+   "t": 60.5,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 61.5,
+   "side": "right",
+   "notes": "signalised crossing"
+  },
+  {
+   "sign": "D-6",
+   "t": 65.5,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "B-5",
+   "t": 65.5,
+   "side": "right",
+   "notes": "truck symbol with '5t' + plate, and a tractor ban (B-?) + plate below, at the exit we take (onto Towarowa-direction road); plates unreadable"
+  },
+  {
+   "sign": "B-21",
+   "t": 95.0,
+   "side": "left",
+   "notes": "no left turn with plate (median)"
+  },
+  {
+   "sign": "B-21",
+   "t": 97.0,
+   "side": "right",
+   "notes": "no left/U turn with plate on right; symbol small, could be B-23"
+  },
+  {
+   "sign": "D-1",
+   "t": 113.5,
+   "side": "right",
+   "notes": "see interval"
+  },
+  {
+   "sign": "D-6",
+   "t": 113.5,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "B-21",
+   "t": 115.5,
+   "side": "left",
+   "notes": "no left turn with plate (likely 'nie dotyczy' ZTM)"
+  },
+  {
+   "sign": "D-6",
+   "t": 122.0,
+   "side": "right",
+   "notes": "crossing just after the tram-crossing junction"
+  },
+  {
+   "sign": "D-3",
+   "t": 123.0,
+   "side": "right",
+   "notes": "small, below B-36"
+  },
+  {
+   "sign": "A-7",
+   "t": 151.0,
+   "side": "right",
+   "notes": "below D-2"
+  },
+  {
+   "sign": "A-7",
+   "t": 157.0,
+   "side": "left",
+   "notes": "above C-12 on the median (2:36), signalised roundabout under flyover"
+  },
+  {
+   "sign": "C-12",
+   "t": 157.0,
+   "side": "left",
+   "notes": ""
+  },
+  {
+   "sign": "D-3",
+   "t": 226.5,
+   "side": "right",
+   "notes": "above D-6"
+  },
+  {
+   "sign": "D-6",
+   "t": 226.5,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "C-5",
+   "t": 229.5,
+   "side": "right",
+   "notes": "straight-ahead C-5 on island with plate 'Nie dotyczy ZTM, TAXI, PKP i służb miejskich' — prevents entry into the bus/taxi slip lane"
+  },
+  {
+   "sign": "D-6",
+   "t": 229.5,
+   "side": "right",
+   "notes": "on far side of slip lane"
+  },
+  {
+   "sign": "B-2",
+   "t": 232.0,
+   "side": "right",
+   "faces_us": false,
+   "notes": "at the far end of the bus/taxi slip lane with B-33 20 and bus stop; governs the slip lane"
+  },
+  {
+   "sign": "D-3",
+   "t": 234.5,
+   "side": "right",
+   "notes": "below B-36"
+  },
+  {
+   "sign": "D-6",
+   "t": 234.5,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 249.5,
+   "side": "right",
+   "notes": "at side road right"
+  },
+  {
+   "sign": "D-1",
+   "t": 260.0,
+   "side": "right",
+   "notes": "above blue mandatory-direction disc (C-5/C-9?) on island"
+  },
+  {
+   "sign": "C-5",
+   "t": 260.0,
+   "side": "right",
+   "notes": "blue disc with arrow under D-1 on island; arrow direction uncertain (could be C-9 keep right)"
+  },
+  {
+   "sign": "D-6",
+   "t": 265.0,
+   "side": "right",
+   "notes": "with B-33 30"
+  },
+  {
+   "sign": "A-7",
+   "t": 270.0,
+   "side": "right",
+   "notes": "below D-2"
+  },
+  {
+   "sign": "A-7",
+   "t": 270.0,
+   "side": "left",
+   "notes": "below D-2"
+  },
+  {
+   "sign": "A-7",
+   "t": 273.0,
+   "side": "right",
+   "notes": "above C-12, Rondo ONZ (signalised)"
+  },
+  {
+   "sign": "C-12",
+   "t": 273.0,
+   "side": "right",
+   "notes": "also A-7+C-12 on the left"
+  },
+  {
+   "sign": "D-6",
+   "t": 273.0,
+   "side": "left",
+   "notes": "signalised crossing at entry"
+  },
+  {
+   "sign": "D-6",
+   "t": 284.0,
+   "side": "right",
+   "notes": "inside the roundabout"
+  },
+  {
+   "sign": "D-6",
+   "t": 314.0,
+   "side": "left",
+   "notes": "D-6b (pedestrian+cyclist) at exit of roundabout"
+  },
+  {
+   "sign": "D-3",
+   "t": 317.5,
+   "side": "right",
+   "notes": "below B-36"
+  },
+  {
+   "sign": "D-6",
+   "t": 331.0,
+   "side": "right",
+   "notes": "signalised mid-block crossing, B-36+plate repeat"
+  },
+  {
+   "sign": "B-21",
+   "t": 341.0,
+   "side": "right",
+   "notes": "no left turn"
+  },
+  {
+   "sign": "B-21",
+   "t": 345.0,
+   "side": "left",
+   "notes": "no left turn, above D-6b, at Żelazna junction"
+  },
+  {
+   "sign": "D-6",
+   "t": 345.0,
+   "side": "right",
+   "notes": "D-6b"
+  },
+  {
+   "sign": "D-6",
+   "t": 348.5,
+   "side": "right",
+   "notes": "D-6b, also on left"
+  },
+  {
+   "sign": "D-3",
+   "t": 348.5,
+   "side": "right",
+   "notes": "below B-36"
+  },
+  {
+   "sign": "D-1",
+   "t": 362.5,
+   "side": "right",
+   "notes": "also left"
+  },
+  {
+   "sign": "D-6",
+   "t": 362.5,
+   "side": "right",
+   "notes": "also left; signalised"
+  },
+  {
+   "sign": "A-7",
+   "t": 382.5,
+   "side": "right",
+   "notes": "below D-2"
+  },
+  {
+   "sign": "A-7",
+   "t": 382.5,
+   "side": "left",
+   "notes": "below D-2"
+  },
+  {
+   "sign": "A-7",
+   "t": 401.0,
+   "side": "right",
+   "notes": "above C-12, Rondo Daszyńskiego entry (also left)"
+  },
+  {
+   "sign": "C-12",
+   "t": 401.0,
+   "side": "right",
+   "notes": "also left"
+  },
+  {
+   "sign": "D-6",
+   "t": 401.0,
+   "side": "right",
+   "notes": "signalised crossing at entry"
+  },
+  {
+   "sign": "D-6",
+   "t": 409.0,
+   "side": "left",
+   "notes": "exit crossing"
+  },
+  {
+   "sign": "D-3",
+   "t": 413.5,
+   "side": "right",
+   "notes": "below B-36"
+  },
+  {
+   "sign": "D-1",
+   "t": 422.5,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "D-3",
+   "t": 428.0,
+   "side": "right",
+   "notes": "below B-36"
+  },
+  {
+   "sign": "D-6",
+   "t": 435.5,
+   "side": "right",
+   "notes": "signalised; also left; yellow small plates under D-6"
+  },
+  {
+   "sign": "D-3",
+   "t": 438.5,
+   "side": "right",
+   "notes": "below B-36"
+  },
+  {
+   "sign": "D-1",
+   "t": 464.0,
+   "side": "right",
+   "notes": "repeat (small, far)"
+  },
+  {
+   "sign": "D-1",
+   "t": 477.0,
+   "side": "right",
+   "notes": "repeat before signalised junction"
+  },
+  {
+   "sign": "D-6",
+   "t": 480.5,
+   "side": "right",
+   "notes": "also left; signalised"
+  },
+  {
+   "sign": "D-1",
+   "t": 485.0,
+   "side": "right",
+   "notes": "repeat (far, 8:02)"
+  },
+  {
+   "sign": "D-6",
+   "t": 493.0,
+   "side": "right",
+   "notes": "also left; signalised ped crossing"
+  },
+  {
+   "sign": "D-3",
+   "t": 493.0,
+   "side": "right",
+   "notes": "below B-36"
+  },
+  {
+   "sign": "C-9",
+   "t": 493.0,
+   "side": "left",
+   "notes": "keep-right disc on tram island (likely for crossing traffic)"
+  },
+  {
+   "sign": "D-6",
+   "t": 571.0,
+   "side": "right",
+   "notes": "D-6b + A-17-like yellow child plate (T-27 school crossing?), also left; signalised"
+  },
+  {
+   "sign": "D-1",
+   "t": 571.0,
+   "side": "right",
+   "notes": "repeat at signalised junction"
+  },
+  {
+   "sign": "D-6",
+   "t": 575.0,
+   "side": "right",
+   "notes": "after junction, with yellow child plate; also left"
+  },
+  {
+   "sign": "A-7",
+   "t": 582.5,
+   "side": "right",
+   "notes": "below D-2; also left"
+  },
+  {
+   "sign": "A-7",
+   "t": 582.5,
+   "side": "left",
+   "notes": "below D-2"
+  },
+  {
+   "sign": "A-7",
+   "t": 589.0,
+   "side": "right",
+   "notes": "with C-12, at the roundabout entry signal (waited at red 9:48-10:26)"
+  },
+  {
+   "sign": "C-12",
+   "t": 589.0,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 629.0,
+   "side": "right",
+   "notes": "signalised crossing at roundabout entry"
+  },
+  {
+   "sign": "A-7",
+   "t": 632.0,
+   "side": "left",
+   "notes": "with C-12 on central island, inner part of roundabout"
+  },
+  {
+   "sign": "C-12",
+   "t": 632.0,
+   "side": "left",
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 642.0,
+   "side": "right",
+   "notes": "at tram crossing inside roundabout"
+  },
+  {
+   "sign": "D-6",
+   "t": 673.0,
+   "side": "right",
+   "notes": "exit of roundabout, signalised"
+  },
+  {
+   "sign": "D-6",
+   "t": 722.0,
+   "side": "left",
+   "notes": "signalised junction under the railway viaduct; D-6b at 724.5 also"
+  },
+  {
+   "sign": "D-6",
+   "t": 724.5,
+   "side": "left",
+   "notes": "D-6b"
+  },
+  {
+   "sign": "B-22",
+   "t": 729.5,
+   "side": "right",
+   "notes": "no right turn, above B-36"
+  },
+  {
+   "sign": "B-22",
+   "t": 733.5,
+   "side": "left",
+   "notes": "turn ban on median above D-6; arrow shape looked like right-turn ban (could be B-21)"
+  },
+  {
+   "sign": "D-1",
+   "t": 733.5,
+   "side": "right",
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 733.5,
+   "side": "right",
+   "notes": "with yellow child plates, also left"
+  },
+  {
+   "sign": "D-1",
+   "t": 800.5,
+   "side": "right",
+   "notes": "repeat above D-6"
+  },
+  {
+   "sign": "D-6",
+   "t": 800.5,
+   "side": "right",
+   "notes": "signalised, also left"
+  },
+  {
+   "sign": "D-6",
+   "t": 808.0,
+   "side": "right",
+   "notes": "D-6b, also left"
+  },
+  {
+   "sign": "D-3",
+   "t": 808.0,
+   "side": "right",
+   "notes": "under B-36"
+  },
+  {
+   "sign": "D-6",
+   "t": 816.0,
+   "side": "right",
+   "notes": "signalised junction, also left"
+  },
+  {
+   "sign": "D-1",
+   "t": 827.5,
+   "side": "right",
+   "notes": "repeat before side road right"
+  },
+  {
+   "sign": "D-3",
+   "t": 831.0,
+   "side": "right",
+   "notes": "under B-36"
+  },
+  {
+   "sign": "D-1",
+   "t": 849.5,
+   "side": "right",
+   "notes": "repeat"
+  },
+  {
+   "sign": "D-6",
+   "t": 861.0,
+   "side": "right",
+   "notes": "signalised, also left"
+  },
+  {
+   "sign": "D-3",
+   "t": 863.5,
+   "side": "right",
+   "notes": "under B-36"
+  },
+  {
+   "sign": "D-1",
+   "t": 874.0,
+   "side": "right",
+   "notes": "repeat"
+  },
+  {
+   "sign": "A-7",
+   "t": 886.5,
+   "side": "right",
+   "notes": "below D-2; also left"
+  },
+  {
+   "sign": "A-7",
+   "t": 886.5,
+   "side": "left",
+   "notes": "below D-2"
+  },
+  {
+   "sign": "A-7",
+   "t": 890.5,
+   "side": "right",
+   "notes": "above C-12 at Rondo ONZ entry, also left"
+  },
+  {
+   "sign": "C-12",
+   "t": 890.5,
+   "side": "right",
+   "notes": "also left"
+  },
+  {
+   "sign": "D-6",
+   "t": 891.0,
+   "side": "right",
+   "notes": "signalised crossing at entry"
+  }
+ ],
+ "warnings": [
+  {
+   "sign": "A-30",
+   "t": 321.0,
+   "notes": "A-30 'inne niebezpieczeństwo' with plate (likely 'Wyjazd z budowy') on right at 5:20"
+  },
+  {
+   "sign": "A-21",
+   "t": 473.5,
+   "notes": "tram warning, both sides (with F-10 bus/DOP lane sign)"
+  },
+  {
+   "sign": "A-17",
+   "t": 854.5,
+   "notes": "children, both sides (14:14)"
+  }
+ ],
+ "junctions": [
+  {
+   "t": 0.5,
+   "type": "signalised",
+   "public": true,
+   "notes": "ride starts crossing tram tracks at a signalised junction (Filtrowa)"
+  },
+  {
+   "t": 15.5,
+   "type": "side road left",
+   "public": null,
+   "notes": "median opening with left-turn arrow, leads to parallel service/parking road with B-2"
+  },
+  {
+   "t": 17.5,
+   "type": "side road right",
+   "public": false,
+   "notes": "entry through sidewalk, gate/driveway"
+  },
+  {
+   "t": 50.5,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads"
+  },
+  {
+   "t": 63.5,
+   "type": "roundabout",
+   "public": true,
+   "notes": "signalised roundabout Rondo Daszyńskiego (trams); we take the right exit ~66"
+  },
+  {
+   "t": 86.5,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads with D-6"
+  },
+  {
+   "t": 118.5,
+   "type": "signalised",
+   "public": true,
+   "notes": "signalised crossroads with tram tracks (D-1 junction); side street right with B-2 on corner"
+  },
+  {
+   "t": 200.0,
+   "type": "roundabout",
+   "public": true,
+   "notes": "signalised roundabout under the flyover at Warszawa Centralna; waiting at red 2:38-3:12, enter ~3:14, internal signals 3:28-3:40, exit ~3:42 (222)"
+  },
+  {
+   "t": 249.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "street with D-6 and right-turn arrow"
+  },
+  {
+   "t": 261.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "side street right after D-1, zebra"
+  },
+  {
+   "t": 290.0,
+   "type": "roundabout",
+   "public": true,
+   "notes": "Rondo ONZ, signalised with trams; entry ~273, waiting at internal red 4:48-5:04, tram crossing ~5:08, exit ~5:13 (313)"
+  },
+  {
+   "t": 338.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "right slip lane into a street (right-turn arrow at 5:36); could be only a turning lane to the next junction"
+  },
+  {
+   "t": 345.5,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads with Żelazna"
+  },
+  {
+   "t": 377.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "side street right with zebra and right-turn arrow"
+  },
+  {
+   "t": 405.0,
+   "type": "roundabout",
+   "public": true,
+   "notes": "Rondo Daszyńskiego 2nd pass, signalised, trams; entry 401, crossed straight, exit ~410"
+  },
+  {
+   "t": 425.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "side road right after D-1 (right-turn arrow)"
+  },
+  {
+   "t": 436.5,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads (7:16)"
+  },
+  {
+   "t": 444.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "right-turn arrow, bus lane interrupted"
+  },
+  {
+   "t": 455.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "right-turn arrow at 453; bus/DOP lane"
+  },
+  {
+   "t": 465.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "small side road right near a D-1 repeat; not well seen"
+  },
+  {
+   "t": 479.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads with tram crossing (7:58-8:00)"
+  },
+  {
+   "t": 489.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads 8:08-8:10"
+  },
+  {
+   "t": 500.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "right-turn arrow at 8:18; road not clearly seen"
+  },
+  {
+   "t": 572.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "large crossroads with trams near flyover (8:46-9:32); waited at red ~40 s"
+  },
+  {
+   "t": 635.0,
+   "type": "roundabout",
+   "public": true,
+   "notes": "Rondo Zesłańców Syberyjskich under flyover, signalised with trams; entry ~629, turning left through it"
+  },
+  {
+   "t": 673.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "exit of Rondo Zesłańców / crossing at roundabout exit"
+  },
+  {
+   "t": 678.0,
+   "type": "crossroads",
+   "public": true,
+   "notes": "right turn under the flyover onto road along railway"
+  },
+  {
+   "t": 722.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "large signalised junction at railway viaduct (waited 11:20-12:02), straight through"
+  },
+  {
+   "t": 735.5,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads with D-6 both sides"
+  },
+  {
+   "t": 761.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "side street right at red-brick building (12:40)"
+  },
+  {
+   "t": 770.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "side street right, cars exiting"
+  },
+  {
+   "t": 802.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads (waited at red 12:56-13:20)"
+  },
+  {
+   "t": 813.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "right-turn arrow 13:32; possibly only bus loop/stop access"
+  },
+  {
+   "t": 816.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads"
+  },
+  {
+   "t": 828.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "side street right with right-turn arrow, D-1 repeat"
+  },
+  {
+   "t": 851.0,
+   "type": "crossroads",
+   "public": true,
+   "notes": "crossroads 14:10-14:12 (lane arrows, D-1 repeat before; signals not clearly seen)"
+  },
+  {
+   "t": 861.0,
+   "type": "signalised",
+   "public": true,
+   "notes": "crossroads 14:20-14:21"
+  },
+  {
+   "t": 876.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "side street right with right-turn arrow (14:34-14:36)"
+  },
+  {
+   "t": 895.0,
+   "type": "roundabout",
+   "public": true,
+   "notes": "Rondo ONZ (2nd visit), entered ~891, ride ends inside at 900"
+  }
+ ],
+ "notes": [
+  "0:13.5 paid parking 'P Płatny'; 1:36 and 2:25 'P Koniec' (end of paid zone) plates — not D-42/D-43.",
+  "1:20-1:34 several parking signs (P) right, Gaga building with TAXI stand at 1:30.",
+  "3:52 (232) B-33 20 km/h for the bus/taxi slip lane.",
+  "4:04 (244) flyover carriageway merges from the left (chevron area).",
+  "4:24 (264) B-33 30 km/h on right.",
+  "6:20 (380) F-? roundabout diagram sign (Bemowo/Ochota/Żoliborz).",
+  "6:06-6:07 paid parking bays 'P Płatny' alongside B-36 zone.",
+  "7:21-7:35 bus + DOP lane (sign: 'DOP-dopuszczone: MTOR, TAXI, motocykle, karetki, policja, straż miejska') on right.",
+  "8:41 (521.5) 'Koniec' plate under bus/DOP lane sign - end of bus lane (F-sign), not a regulatory end.",
+  "9:31-9:35 yellow 'children' plates (T-27-like) under D-6 signs.",
+  "9:42 (582) small red-ring disc with plate beside D-2 on right, symbol unreadable (possibly B-23 / other).",
+  "10:40-10:46 (640-646) white square sign with red diagonal bar at tram crossing inside the roundabout - not identified (possibly end-of-something plate facing other traffic).",
+  "11:12 (672) white sign with grey P and red diagonal on left at roundabout exit - end of parking zone/D-? (not regulated here).",
+  "12:04 (724.5) 'Strefa' clean-transport-zone sign with D-3-like up arrow overhead - informational.",
+  "13:29 (809) yellow temporary detour sign (objazd) - informational.",
+  "14:46 (887) yellow 'Objazd' detour sign - informational."
+ ],
+ "coverage": {
+  "sheets_read": 38,
+  "full_frames": 157
+ }
+}

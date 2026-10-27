@@ -1,0 +1,539 @@
+{
+ "ride": "rural-zloczew",
+ "labeller": "opus-L11-labeller",
+ "intervals": [
+  {
+   "rule": "priority_road",
+   "start_t": 13.8,
+   "end_t": 854.0,
+   "start_sign_t": 13.8,
+   "end_reason": "yield",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "D-1 first passed 13.8 (Zloczew, DW482); repeats 26.5; continuation implied by A-6a/A-6b warnings with thick priority bar at 366, 541, 746.7; side roads carry B-20/A-7 (backs seen 152, 246, 762). Ends at D-2 over A-7 seen ~852 at the T-junction in Lututow where the car turns left (~854). Exact sign position relative to the turn not fully resolved."
+  },
+  {
+   "rule": "built_up_area",
+   "start_t": 0.0,
+   "end_t": 65.0,
+   "start_sign_t": null,
+   "end_reason": "D-43",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "ride starts inside Zloczew; D-42 not seen (before ride start). D-43 passed ~65.0 (right)."
+  },
+  {
+   "rule": "built_up_area",
+   "start_t": 597.8,
+   "end_t": 664.6,
+   "start_sign_t": 597.8,
+   "end_reason": "D-43",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "village (Grabówka?-type) on DW482; D-42 at 597.8 right, D-43 at 664.6 right"
+  },
+  {
+   "rule": "built_up_area",
+   "start_t": 771.4,
+   "end_t": 900.0,
+   "start_sign_t": 771.4,
+   "end_reason": "ride end",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "Lututow D-42 at 771.4 right; ride ends in the market square"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 797.3,
+   "end_t": 800.5,
+   "start_sign_t": 797.3,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "alt_end_t": 818.0,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 under B-33 40 on right just past the crossroads at ~796.5 in Lututow; next crossing street unclear (left street ~800.5, else ~818)."
+  }
+ ],
+ "momentary": [
+  {
+   "sign": "D-6",
+   "t": 17.6,
+   "side": "right",
+   "faces_us": null,
+   "notes": "zebra at the Zloczew junction; C-9 keep-right on island (not in list)"
+  },
+  {
+   "sign": "D-6",
+   "t": 172.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "zebra at crossroads (village), approx time"
+  },
+  {
+   "sign": "D-6",
+   "t": 246.6,
+   "side": "right",
+   "faces_us": null,
+   "notes": "zebra at crossroads 248.5"
+  },
+  {
+   "sign": "D-6",
+   "t": 572.4,
+   "side": "right",
+   "faces_us": null,
+   "notes": "fluorescent backing + T-27 children plate, Niemojew"
+  },
+  {
+   "sign": "D-6",
+   "t": 700.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "fluorescent D-6 at crossroads ~698"
+  },
+  {
+   "sign": "D-6",
+   "t": 725.8,
+   "side": "right",
+   "faces_us": null,
+   "notes": "signalised pedestrian crossing"
+  },
+  {
+   "sign": "D-6",
+   "t": 764.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "crossing just after crossroads 762, approx"
+  },
+  {
+   "sign": "D-6",
+   "t": 794.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "with A-17 children below, Lututow"
+  },
+  {
+   "sign": "D-6",
+   "t": 808.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "raised red/white crossing with T-27 plate, approx 13:28-13:32"
+  },
+  {
+   "sign": "D-6",
+   "t": 842.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "crossing near OSP Lututow, approx"
+  },
+  {
+   "sign": "D-4c",
+   "t": 791.8,
+   "side": "right",
+   "faces_us": null,
+   "notes": "dead-end side road to the right (D-4c style)"
+  },
+  {
+   "sign": "A-7",
+   "t": 854.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "A-7 with D-2 above at Lututow T-junction; car turns left"
+  }
+ ],
+ "warnings": [
+  {
+   "sign": "A-16",
+   "t": 161.3,
+   "notes": "with B-33 70 below"
+  },
+  {
+   "sign": "A-?",
+   "t": 197.0,
+   "notes": "small yellow triangle on right, unreadable"
+  },
+  {
+   "sign": "A-16",
+   "t": 238.9,
+   "notes": "pedestrian crossing ahead"
+  },
+  {
+   "sign": "A-6b",
+   "t": 366.2,
+   "notes": "side road with priority bar; side uncertain (A-6b/c)"
+  },
+  {
+   "sign": "A-4",
+   "t": 381.0,
+   "notes": "double bend (first left), approx"
+  },
+  {
+   "sign": "A-18b",
+   "t": 436.0,
+   "notes": "wild animals"
+  },
+  {
+   "sign": "A-18b",
+   "t": 507.3,
+   "notes": "with 'Koniec' plate (end of animal zone)"
+  },
+  {
+   "sign": "A-6b",
+   "t": 541.2,
+   "notes": "side road right, priority bar"
+  },
+  {
+   "sign": "A-30",
+   "t": 556.8,
+   "notes": "with plate showing collision (accident black spot)"
+  },
+  {
+   "sign": "A-30",
+   "t": 561.0,
+   "notes": "with B-33 70 below, approx"
+  },
+  {
+   "sign": "A-17",
+   "t": 566.0,
+   "notes": "children, with B-33 50 below (Niemojew)"
+  },
+  {
+   "sign": "A-1",
+   "t": 585.0,
+   "notes": "curve right, with A-17 below"
+  },
+  {
+   "sign": "A-17",
+   "t": 585.0,
+   "notes": "under A-1"
+  },
+  {
+   "sign": "A-17",
+   "t": 684.0,
+   "notes": "with B-33 70 below, approx 11:24"
+  },
+  {
+   "sign": "A-?",
+   "t": 692.4,
+   "notes": "curve sign (A-1/A-3), 11:32"
+  },
+  {
+   "sign": "A-29",
+   "t": 716.8,
+   "notes": "signals ahead (ped crossing lights at 725.8)"
+  },
+  {
+   "sign": "A-6a",
+   "t": 746.7,
+   "notes": "crossroads with priority bar, with A-16 below"
+  },
+  {
+   "sign": "A-16",
+   "t": 746.7,
+   "notes": "under A-6a"
+  },
+  {
+   "sign": "A-17",
+   "t": 750.0,
+   "notes": "with B-33 50 below"
+  },
+  {
+   "sign": "A-30",
+   "t": 831.0,
+   "notes": "with temporary plate (text unreadable), Lututow"
+  }
+ ],
+ "junctions": [
+  {
+   "t": 18.5,
+   "type": "crossroads",
+   "public": true,
+   "notes": "Zloczew, island + zebra"
+  },
+  {
+   "t": 28.0,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 31.0,
+   "type": "side road left",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 40.0,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 58.0,
+   "type": "side road right",
+   "public": false,
+   "notes": "field track over culvert"
+  },
+  {
+   "t": 65.8,
+   "type": "side road right",
+   "public": null,
+   "notes": "cobbled access"
+  },
+  {
+   "t": 96.0,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 100.5,
+   "type": "side road right",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 124.0,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 134.5,
+   "type": "side road right",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 152.5,
+   "type": "side road left",
+   "public": true,
+   "notes": "A-7 back visible"
+  },
+  {
+   "t": 172.0,
+   "type": "crossroads",
+   "public": true,
+   "notes": "zebra"
+  },
+  {
+   "t": 176.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 184.5,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 210.5,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 244.0,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 248.5,
+   "type": "crossroads",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 250.0,
+   "type": "side road right",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 282.0,
+   "type": "side road right",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 310.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 347.4,
+   "type": "side road right",
+   "public": true,
+   "notes": "with direction sign"
+  },
+  {
+   "t": 432.0,
+   "type": "side road left",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 450.0,
+   "type": "side road left",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 492.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "forest track by cross"
+  },
+  {
+   "t": 520.0,
+   "type": "side road left",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 543.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "announced by A-6b"
+  },
+  {
+   "t": 552.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 568.0,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 572.0,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 574.5,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 586.0,
+   "type": "side road right",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 620.0,
+   "type": "side road left",
+   "public": true,
+   "notes": "triangle back on left"
+  },
+  {
+   "t": 660.0,
+   "type": "crossroads",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 697.8,
+   "type": "crossroads",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 725.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 749.0,
+   "type": "side road left",
+   "public": true,
+   "notes": "left-turn lane"
+  },
+  {
+   "t": 762.0,
+   "type": "crossroads",
+   "public": true,
+   "notes": "side road right has B-20 and B-5"
+  },
+  {
+   "t": 772.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "ul. W..."
+  },
+  {
+   "t": 793.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "dead end"
+  },
+  {
+   "t": 796.5,
+   "type": "crossroads",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 800.5,
+   "type": "side road left",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 818.0,
+   "type": "side road left",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 838.0,
+   "type": "side road right",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 844.0,
+   "type": "crossroads",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 846.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 854.0,
+   "type": "T end",
+   "public": true,
+   "notes": "car turns left, yield"
+  },
+  {
+   "t": 870.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "approach to square"
+  }
+ ],
+ "notes": "Speed limits: B-33 70 161.3, 70 ~389.4, 50 425.0 (village after Wandalin E-17a ~388/422.5), B-34 end-50 ~451.2, 50 566, 70 ~561/577, 70 684, 50 750, 40 797.3, end-of-30 type sign ~820 (Lututow). Green town signs E-17a (not D-42): ~100 (back), Bujnow/Zloczew-crossed 107.5, ~160.5, Bujnow/Kol.Bujnow 165.5, Wandalin-crossed ~388, ~422.5, Niemojew ~570. Blue F-signs with B-18 '10t' for side directions at 10.5 and 23.6 (not our road). B-36 with T-25c-style down-arrow plate on right ~397.3 with no observed start (not labelled as interval). C-9 keep-right on islands 17.6 and 760. Side roads with B-20 stop (back seen) e.g. 762, with B-5 trucks prohibited for that road. Bus stops D-15 at 124.5, 572, 638.6, 783. Junction times between ~400-650 coarse (2 s sampling).",
+ "coverage": {
+  "sheets_read": 38,
+  "full_frames": 309
+ }
+}

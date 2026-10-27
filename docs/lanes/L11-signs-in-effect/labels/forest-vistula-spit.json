@@ -1,0 +1,642 @@
+{
+ "ride": "forest-vistula-spit",
+ "labeller": "opus-L11-labeller",
+ "intervals": [
+  {
+   "rule": "no_overtaking",
+   "start_t": 126.5,
+   "end_t": 131.8,
+   "start_sign_t": 126.5,
+   "end_reason": "unclear",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "B-25 under A-18b(+plate) with B-33 70; ended by B-27 end-of-no-overtaking at ~131.8 (end reason B-27 not in enum)"
+  },
+  {
+   "rule": "no_overtaking",
+   "start_t": 168.5,
+   "end_t": 237.0,
+   "start_sign_t": 168.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "B-25 above B-33 70 right after side road right (ul. ...) at ~168; forest road, next possible junction left ~237 (hatched turn area), else ~305 left or 380.5 right (asphalt side road)",
+   "alt_end_t": 305.0
+  },
+  {
+   "rule": "built_up_area",
+   "start_t": 409.5,
+   "end_t": 900.0,
+   "start_sign_t": 409.5,
+   "end_reason": "ride end",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-42 right ~409.5 entering the Kąty Rybackie/Krynica Morska area; no D-43 seen afterwards"
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 414.0,
+   "end_t": 598.0,
+   "start_sign_t": 414.0,
+   "end_reason": "unclear",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "D-1 right 414.0; repeats ~488, ~517.5, ~560, ~572; car leaves the road into the Polo market car park ~598"
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 650.0,
+   "end_t": 792.0,
+   "start_sign_t": 650.0,
+   "end_reason": "unclear",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "after exiting car park with A-7 (~634) first D-1 at ~650; repeats ~662 (with lane sign), ~686, ~720; car turns off into a minor street ~792"
+  },
+  {
+   "rule": "priority_road",
+   "start_t": 854.0,
+   "end_t": 884.5,
+   "start_sign_t": 854.0,
+   "end_reason": "yield",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-1 ~854; probable D-2 ~882 then A-7 facing us at T-junction ~884.5"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 421.0,
+   "end_t": 435.0,
+   "start_sign_t": 421.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 under D-6 at pedestrian crossing; next side road right ~435 (direction boards) ; car-park/driveway entries before it ignored",
+   "alt_end_t": 419.0
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 469.0,
+   "end_t": 482.0,
+   "start_sign_t": 469.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 right just after side road right ~468.5; wide entrance right ~482 may be a road",
+   "alt_end_t": 489.5
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 482.5,
+   "end_t": 489.5,
+   "start_sign_t": 482.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "P sign above B-36 (plate unreadable) right ~482.5"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 491.0,
+   "end_t": 518.0,
+   "start_sign_t": 491.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 right after side road ~489.5; ends at junction at D-1 ~518"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 536.5,
+   "end_t": 560.0,
+   "start_sign_t": 536.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 right ~536.5 with cyclists; next junction ~560"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 700.5,
+   "end_t": 714.0,
+   "start_sign_t": 700.5,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 under D-6 with text plate (hours?) at 700.5"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 716.0,
+   "end_t": 724.0,
+   "start_sign_t": 716.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 under A-11a(+plate) ~716"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 728.0,
+   "end_t": 756.0,
+   "start_sign_t": 728.0,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": "right",
+   "value": null,
+   "notes": "B-33 20 / B-36 / D-6 stack ~728"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 781.0,
+   "end_t": 792.0,
+   "start_sign_t": 781.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 right ~781 near apartment blocks, car turns at ~792"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 840.0,
+   "end_t": 856.0,
+   "start_sign_t": 840.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-33 20 / B-36 / D-6 stack ~840 (seen 838.5)"
+  },
+  {
+   "rule": "no_stopping",
+   "start_t": 860.0,
+   "end_t": 884.5,
+   "start_sign_t": 860.0,
+   "end_reason": "junction",
+   "end_unclear": false,
+   "side": "right",
+   "value": null,
+   "notes": "B-36 with plate ~860; repeat B-36+D-6 ~868.5"
+  }
+ ],
+ "momentary": [
+  {
+   "sign": "A-7",
+   "t": 1.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "roundabout entry"
+  },
+  {
+   "sign": "C-12",
+   "t": 1.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 13.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "actually D-6a cyclist crossing"
+  },
+  {
+   "sign": "D-6",
+   "t": 420.8,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 442.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 452.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 476.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "approx"
+  },
+  {
+   "sign": "D-6",
+   "t": 528.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 564.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 574.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 578.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "approx"
+  },
+  {
+   "sign": "A-7",
+   "t": 634.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "exit from car park"
+  },
+  {
+   "sign": "D-6",
+   "t": 646.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 666.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "approx; A-7 for side road nearby?"
+  },
+  {
+   "sign": "D-6",
+   "t": 684.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 696.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 700.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 710.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 712.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 728.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 750.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 766.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "A-7",
+   "t": 832.0,
+   "side": "left",
+   "faces_us": null,
+   "notes": "doubtful: triangle at 13:52 may face side road"
+  },
+  {
+   "sign": "D-6",
+   "t": 834.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 840.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 856.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 868.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "D-6",
+   "t": 878.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  },
+  {
+   "sign": "A-7",
+   "t": 884.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "T-junction at end"
+  },
+  {
+   "sign": "D-6",
+   "t": 888.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": ""
+  }
+ ],
+ "warnings": [
+  {
+   "sign": "A-3",
+   "t": 33.0,
+   "notes": "with distance plate"
+  },
+  {
+   "sign": "A-?",
+   "t": 113.0,
+   "notes": "two triangles: arrow-up symbol + '!' with plates, unreadable"
+  },
+  {
+   "sign": "A-18b",
+   "t": 126.5,
+   "notes": "deer, with distance plate"
+  },
+  {
+   "sign": "A-3",
+   "t": 164.0,
+   "notes": "plate 4.0 km"
+  },
+  {
+   "sign": "A-?",
+   "t": 396.5,
+   "notes": "yellow triangle far, unread"
+  },
+  {
+   "sign": "A-17",
+   "t": 520.5,
+   "notes": "children"
+  },
+  {
+   "sign": "A-11a",
+   "t": 716.0,
+   "notes": "with plate"
+  },
+  {
+   "sign": "A-11a",
+   "t": 732.5,
+   "notes": "with plate, approx"
+  },
+  {
+   "sign": "A-?",
+   "t": 846.0,
+   "notes": "yellow triangle, likely A-11a"
+  }
+ ],
+ "junctions": [
+  {
+   "t": 2.0,
+   "type": "roundabout",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 168.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "street name plate"
+  },
+  {
+   "t": 237.0,
+   "type": "side road left",
+   "public": null,
+   "notes": "hatched area left"
+  },
+  {
+   "t": 305.0,
+   "type": "side road left",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 380.5,
+   "type": "side road right",
+   "public": true,
+   "notes": "asphalt road with info signs"
+  },
+  {
+   "t": 400.5,
+   "type": "side road right",
+   "public": false,
+   "notes": "gravel area"
+  },
+  {
+   "t": 419.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 435.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "direction boards"
+  },
+  {
+   "t": 450.0,
+   "type": "side road left",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 468.5,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 482.0,
+   "type": "side road right",
+   "public": null,
+   "notes": ""
+  },
+  {
+   "t": 489.5,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 518.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 534.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 560.0,
+   "type": "crossroads",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 564.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 598.0,
+   "type": "side road right",
+   "public": false,
+   "notes": "turn into Polo market car park"
+  },
+  {
+   "t": 634.0,
+   "type": "T end",
+   "public": false,
+   "notes": "car park exit with A-7"
+  },
+  {
+   "t": 638.0,
+   "type": "T end",
+   "public": true,
+   "notes": "approx"
+  },
+  {
+   "t": 660.0,
+   "type": "side road left",
+   "public": true,
+   "notes": "approx"
+  },
+  {
+   "t": 672.0,
+   "type": "crossroads",
+   "public": true,
+   "notes": "car turns right"
+  },
+  {
+   "t": 714.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 724.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 756.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 766.0,
+   "type": "crossroads",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 792.0,
+   "type": "side road left",
+   "public": true,
+   "notes": "car turns into minor street"
+  },
+  {
+   "t": 810.0,
+   "type": "T end",
+   "public": true,
+   "notes": "approx"
+  },
+  {
+   "t": 834.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "approx"
+  },
+  {
+   "t": 856.0,
+   "type": "side road right",
+   "public": true,
+   "notes": ""
+  },
+  {
+   "t": 884.5,
+   "type": "T end",
+   "public": true,
+   "notes": ""
+  }
+ ],
+ "notes": "B-33 70 at 26.5, 126.5, 167.4, ~382; B-33 20 at ~728 and ~840. No D-43 seen; built-up starts D-42 ~409.5 (brown tourist town board ~414.6). Bus stop zigzags ~241. Many times approx (+/-2 s) from contact sheets. Signs: C-9 keep-right on refuge islands ~658-662 (not labelled). Early B-sign with car symbol far ahead at 13-17 s not resolved.",
+ "coverage": {
+  "sheets_read": 38,
+  "full_frames": 182
+ }
+}

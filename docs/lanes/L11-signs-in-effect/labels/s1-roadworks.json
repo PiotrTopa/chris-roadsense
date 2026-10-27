@@ -1,0 +1,210 @@
+{
+ "ride": "s1-roadworks",
+ "labeller": "opus-L11-labeller",
+ "intervals": [
+  {
+   "rule": "priority_road",
+   "start_t": 58.5,
+   "end_t": 65.0,
+   "start_sign_t": 58.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "D-1 on the right after joining the two-lane road (seen from 56 s). No D-2 seen; the car leaves this road by turning left onto the S1 slip road at ~65 s, so the interval ends there for this car. alt reading: the priority itself continues on the road the car left."
+  },
+  {
+   "rule": "expressway",
+   "start_t": 67.0,
+   "end_t": 457.0,
+   "start_sign_t": 67.0,
+   "end_reason": "ride end",
+   "end_unclear": false,
+   "side": null,
+   "value": null,
+   "notes": "D-7 (blue, white car) on the right of the slip road at ~66-67 s with a plate underneath (diagram, unread). No D-8 seen for the rest of the ride; the car stays on S1 until the end of the recording (exits/slip roads at ~114-128 MOP, ~368 merge, ~414 diverge are not taken)."
+  },
+  {
+   "rule": "one_way",
+   "start_t": 314.5,
+   "end_t": 368.0,
+   "start_sign_t": 314.5,
+   "end_reason": "junction",
+   "end_unclear": true,
+   "side": null,
+   "value": null,
+   "notes": "Blue rectangle with white up arrow (D-3) on both sides, together with B-34 end-of-60, right after the contraflow ends and the car is back on its own carriageway. On a dual-carriageway expressway this is informative; 'next intersection' is ambiguous: best end = on-ramp merge from the right ~368 s; alt = interchange diverge ~414 s or ride end."
+  }
+ ],
+ "momentary": [
+  {
+   "sign": "B-31",
+   "t": 32.5,
+   "side": "right",
+   "faces_us": null,
+   "notes": "Give way to oncoming (white disc red ring, two arrows) at a roadworks narrowing on the local road; arrow colours small, read as B-31 not D-5."
+  },
+  {
+   "sign": "A-7",
+   "t": 85.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "Yield at the end of the slip road where it merges onto S1 main carriageway; with a blue C-5 (straight ahead) disc under it."
+  },
+  {
+   "sign": "C-5",
+   "t": 85.0,
+   "side": "right",
+   "faces_us": null,
+   "notes": "Under A-7 at the S1 merge."
+  }
+ ],
+ "warnings": [
+  {
+   "sign": "A-14",
+   "t": 5.5,
+   "notes": "Stack on the right: A-14 roadworks, A-12 narrows (one side), A-29 signals."
+  },
+  {
+   "sign": "A-12",
+   "t": 5.5,
+   "notes": "In the same stack as A-14 (narrowing, likely A-12b/c)."
+  },
+  {
+   "sign": "A-29",
+   "t": 5.5,
+   "notes": "Same stack (traffic lights ahead)."
+  },
+  {
+   "sign": "A-3",
+   "t": 11.5,
+   "notes": "Double curve (first right, read as A-3; could be A-4), with B-33 30 under it."
+  },
+  {
+   "sign": "A-30",
+   "t": 24.5,
+   "notes": "'!' triangle with a plate showing winding road (T-?), right side."
+  },
+  {
+   "sign": "A-11",
+   "t": 93.5,
+   "notes": "Uneven road / bump, right side, on S1 after the merge."
+  },
+  {
+   "sign": "A-18b",
+   "t": 98.5,
+   "notes": "Wild animals (deer), both sides; left one with a plate."
+  },
+  {
+   "sign": "A-30",
+   "t": 117.5,
+   "notes": "Both sides: '!' + queue/congestion triangle with plate '2,0 km'."
+  },
+  {
+   "sign": "A-18b",
+   "t": 151.0,
+   "notes": "Deer, both sides, left with plate (repeat)."
+  },
+  {
+   "sign": "A-30",
+   "t": 191.5,
+   "notes": "Both sides: '!' over B-33 80 over yellow lane-shift board (start of roadworks zone)."
+  },
+  {
+   "sign": "A-12",
+   "t": 226.0,
+   "notes": "Narrows, both sides, plate '100 m'."
+  },
+  {
+   "sign": "A-20",
+   "t": 229.5,
+   "notes": "Two-way traffic (contraflow ahead), right, with B-33 60 and a lane-shift board."
+  },
+  {
+   "sign": "A-11",
+   "t": 238.5,
+   "notes": "Bump, both sides, with plate (distance)."
+  },
+  {
+   "sign": "A-?",
+   "t": 335.0,
+   "notes": "Triangle with scattered dots (loose chippings / stone-throw), both sides; not a standard A sign I can name."
+  },
+  {
+   "sign": "A-?",
+   "t": 367.0,
+   "notes": "Triangle on the left near the on-ramp merge (merging traffic?) - unread."
+  },
+  {
+   "sign": "A-11",
+   "t": 372.5,
+   "notes": "Bump with plate, both sides; second pair ~374 s."
+  },
+  {
+   "sign": "A-11",
+   "t": 421.0,
+   "notes": "Bump with plate, both sides (after the exit at ~414)."
+  }
+ ],
+ "junctions": [
+  {
+   "t": 1.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "At ride start a road goes off to the right; unclear if the car just left it."
+  },
+  {
+   "t": 13.0,
+   "type": "side road right",
+   "public": false,
+   "notes": "Red-white barrier across a track on the right (site access)."
+  },
+  {
+   "t": 44.0,
+   "type": "side road left",
+   "public": null,
+   "notes": "Near the industrial building; bollard island with keep-right disc; possible access road."
+  },
+  {
+   "t": 54.5,
+   "type": "side road left",
+   "public": true,
+   "notes": "Local road joins a wider road (signs of the crossing road visible from behind)."
+  },
+  {
+   "t": 65.0,
+   "type": "side road left",
+   "public": true,
+   "notes": "Car turns left onto the S1 slip road (Łódź / Częstochowa / A4 direction); keep-right C-9 on island."
+  },
+  {
+   "t": 85.0,
+   "type": "side road right",
+   "public": true,
+   "notes": "Slip road merges onto S1 main carriageway (A-7). Not an at-grade intersection; merge."
+  },
+  {
+   "t": 118.0,
+   "type": "side road right",
+   "public": false,
+   "notes": "MOP Lędziny (rest area) entry ~114-118 and exit merge ~128."
+  },
+  {
+   "t": 368.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "On-ramp merging from the right (interchange), A-7 faces the ramp."
+  },
+  {
+   "t": 414.0,
+   "type": "side road right",
+   "public": null,
+   "notes": "Exit slip road diverges to the right (interchange), not taken."
+  }
+ ],
+ "notes": "Speed limits (B-33): 30 at 11.5 (local road, with A-3); 40 at 68.0 (S1 slip road); 80 at 191.5 (start of roadworks, both sides, with lane-shift boards); 60 at 229.5 (A-20 contraflow entry); 80 at 247.0 (with blue two-way-lanes board, inside contraflow); 60 at 301.0 (crossover back, with lane-shift board); B-34 end-60 at 314.5 both sides. Small round limit on yellow lane-closure boards at 176.5 (unread, ~80/100) and lane-closure board at 162.5. No B-25 no-overtaking, no D-8 seen. Contraflow: ~229-301 s (crossover at ~240 with C-9 and a B-1 + plate on the closed carriageway at ~242, crossover back ~301-308 with red B-1/B-2 discs on the barriers of the closed lane). Other: STOP hand board on slip road ~76; U-3 chevrons on slip road 72-84; MOP Lędziny 500 m board 88; red road-number plates S1/E75/E462 at 91.5 and 238; 'Objazd 934 do Mysłowic' yellow detour boards 203.5 and detour map 211; green direction boards 59 (Bielsko-Biała/Tychy/Cieszyn S1; Łódź/Częstochowa S1, Kraków/Wrocław A4) and 6:44-7:04. Many signs on the left beyond the barrier belong to the opposite carriageway and were ignored. No E-17a / D-42 seen.",
+ "coverage": {
+  "sheets_read": 19,
+  "full_frames": 70
+ }
+}
