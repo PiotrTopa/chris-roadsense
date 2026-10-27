@@ -102,3 +102,9 @@ Results (two overlays per ride, judged by eye):
 `push_phone.sh`: one plain `scp` per file, md5 compared with `md5sum` on the phone, free space checked
 before each ride (stop below 20 GB). Only `<slug>.mjpeg`, `camera-replay.json`, `calib.json`,
 `SOURCE.txt` go to the phone. The phone's camera source and services were not touched (L8 is measuring).
+Result (12:00-12:55 CET): all 20 new rides copied, 80 files, every md5 equal to the laptop's
+(`~/datasets/rides/.tools/push.log`); phone `~/rides` now 21 rides, 19.0 GB; phone root fs 75.3 GB free.
+
+### 6. Hand-back
+Catalogue and gaps: `docs/RIDES.md`. 21 rides (incl. L5's krakow-2024), 4 h 06 min, MJPEG 20.4 GB on
+the laptop and on the phone; source cuts 9.4 GB on the laptop only. No permission denials.
