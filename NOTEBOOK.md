@@ -24,7 +24,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L8 sign false positives (lamps as no-entry) + negative training | Opus | done (2026-10-27 ~12:30 CET) | docs/lanes/L8-sign-fp.md |
 | L9 Polish ride library (diverse open recordings) | Opus | done (2026-10-27 12:55 CET) | docs/lanes/L9-ride-library.md |
 | L10 ride playlist (all rides in a loop on the phone) | Opus | done (2026-10-27 14:12 CET) | docs/lanes/L10-playlist.md |
-| L11 signs in effect (rules engine + panel) | Fable (user ruling 2026-10-27) | running | docs/lanes/L11-signs-in-effect.md |
+| L11 signs in effect (rules engine + panel) | Fable (user ruling 2026-10-27) | done (2026-10-27 18:45 CET) | docs/lanes/L11-signs-in-effect.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
@@ -239,3 +239,23 @@ Correction to the lane report: the Wi-Fi outage began at 13:40:00 (router deauth
 after a TKIP group rekey, ath10k key install -110), not 14:01; recovered 14:07 (CMDB poco.md).
 Changes: roadsense bfc7c5f, d68dc22. Phone rollback copies envd.pre-l10, api.pre-l10.
 Open: Wi-Fi watchdog on the phone / router WPA2-AES only; stack sweep across the library.
+
+## Fold 11 (2026-10-27): signs in effect (L11, Fable)
+- [FAV] api serves `rules` (/v1/rules, /ws, health, status panel, /preview HUD): IN EFFECT / RECENT / AHEAD from a
+  data-driven Polish table (62 entries with legal sources; guesses marked) wrapping the unchanged speed-limit
+  engine. 69/69 api tests (verified). Live on the phone.
+- [FAV] Six labelled rides (labels committed before scoring): time agreement no parking 0.99, weight limit 0.98,
+  no overtaking 0.93, no stopping 0.82, one-way 0.81, priority road 0.79. Starts median -0.3 s from the sign,
+  ends +1.6 s. Traffic-light junction cue: junctions found 82 -> 98 of 178, end delay 11.8 -> 3.6 s (+2 false).
+- [UNFAV] Built-up area 0.44 (D-42 not a class; envd never voted built-up in villages); expressway 0.15 (far D-7
+  never tracked); misses mostly detector (30 of 35); false rules mostly classifier confusions (warning triangles
+  read as D-1, C-5 as D-3) and signs for the other carriageway; night lights give false junctions on motorways.
+- [UNFAV] Shipped a status-page JS bug again (14:55-18:42, every box "..."); fixed + regression test scanning the
+  page script. Legal correction: B-42 does not end B-35/B-36 (par. 32 ust. 1).
+- [INSTR] api restart with a /ws client used to take 90 s; now 1 s.
+Deviations: two D-1 inferences added after the first scoring of two evaluation rides (in-sample there; pre-registered
+numbers kept, switchable); a >= 2-frame rule added after a non-evaluation ride; three api restarts on the phone.
+Single labeller per ride.
+Changes: roadsense 3ca7c62..6e70f22.
+Next candidates: verifier for yellow/blue classes (D-1/D-3 confusions), road-width-gated lateral window for
+B-36, envd built-up prior on own rides, reuse the six-ride labels for any detector change.
