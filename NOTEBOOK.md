@@ -25,7 +25,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L9 Polish ride library (diverse open recordings) | Opus | done (2026-10-27 12:55 CET) | docs/lanes/L9-ride-library.md |
 | L10 ride playlist (all rides in a loop on the phone) | Opus | done (2026-10-27 14:12 CET) | docs/lanes/L10-playlist.md |
 | L11 signs in effect (rules engine + panel) | Fable (user ruling 2026-10-27) | done (2026-10-27 18:45 CET) | docs/lanes/L11-signs-in-effect.md |
-| L12 MTSD download + sign classifier retraining (negatives) | Opus | running (2026-10-27) | docs/lanes/L12-mtsd-retrain.md |
+| L12 MTSD download + sign classifier retraining (negatives) | Opus | done (2026-10-27 23:20 CET) | docs/lanes/L12-mtsd-retrain.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
@@ -260,3 +260,23 @@ Single labeller per ride.
 Changes: roadsense 3ca7c62..6e70f22.
 Next candidates: verifier for yellow/blue classes (D-1/D-3 confusions), road-width-gated lateral window for
 B-36, envd built-up prior on own rides, reuse the six-ride labels for any detector change.
+
+## Fold 12 (2026-10-27): MTSD-retrained classifier + tracker fix (L12, Opus)
+- [FAV] Deployed cls1trk (only variant passing every pre-registered rule): YOLOv8n-cls trained from scratch on
+  MTSD (196k crops) + other-sign + background classes (BDD lamps/lights, detector false positives), plus
+  `--dist-match-new 2.0` in the tracker. Six rides: false rules 51 -> 47, misses 76 -> 74, momentary/warning
+  hits 266 -> 291, priority-road agreement 0.807 -> 0.913; Krakow lamps/lights 0/33 accepted; B-33 70 served
+  4/4 phases (was 3), s1 D-7 tracked 2/2 (was 0). Held-out: top-1 0.859 -> 0.939, lamps read as signs
+  0.66/0.78 -> 0.009/0.001, triangles -> D-1 19 -> 0. Phone cost unchanged (road 13.6/s, signs 5.0/s).
+- [INSTR] The named recall misses were tracker misses (small edge signs jump 1.1-1.6 box widths between 5 Hz
+  frames); detector not retrained. Background-voted tracks flagged `suppressed: not_a_sign`.
+- [UNFAV] no_overtaking agreement 0.932 -> 0.912 (exactly at the 0.020 limit); cls1 sometimes abstains
+  (`traffic-sign`) on Polish signs (a missed B-42 let a B-25 run to its 3 km cap); detector still misses
+  signs under ~15 px; single recording per ride, single labeller.
+Deviations: tracker value 2.0 chosen from the B-33 70 geometry (in-sample for that case, addendum committed
+before scoring); training data reduced after OOM (before scoring); disk floor breached briefly (26 GB) before
+the image zips were deleted; D-7 scored from the speed-limit timeline (rules_replay cannot see road class).
+Data: MTSD fully annotated train+val (CC BY-NC-SA; weights local only, never committed); zips deleted after
+crop extraction (links valid to 2026-11-26). No checkpoint loaded; no permission denial.
+Live check 23:2x CET: deployed unit verified; big cores 91-93 C, envd self-pauses above 92 C (32 pauses).
+Changes: roadsense 492a673..327ede4; roadsense-signs 4e1938e, 376f841, c732a02.
