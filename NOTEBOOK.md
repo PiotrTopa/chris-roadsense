@@ -24,6 +24,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L8 sign false positives (lamps as no-entry) + negative training | Opus | done (2026-10-27 ~12:30 CET) | docs/lanes/L8-sign-fp.md |
 | L9 Polish ride library (diverse open recordings) | Opus | done (2026-10-27 12:55 CET) | docs/lanes/L9-ride-library.md |
 | L10 ride playlist (all rides in a loop on the phone) | Opus | done (2026-10-27 14:12 CET) | docs/lanes/L10-playlist.md |
+| L11 signs in effect (rules engine + panel) | Fable (user ruling 2026-10-27) | running | docs/lanes/L11-signs-in-effect.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
