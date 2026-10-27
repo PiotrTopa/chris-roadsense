@@ -168,7 +168,7 @@ false track had a verifier mean <= 0.19 and every other real track >= 0.77, henc
 lamp/light blobs accepted 0.3-1.9 %, real signs kept 90-100 %).
 
 Per class, final run (whole loop): no-entry 26 tracks, precision 0.23 -> 1.00, real kept 6/6; no-stopping
-25/25 real kept; no-left-turn 10/10 (2 wrong-class-free unlabelled tracks accepted, verifier 1.0); no-right-turn
+25/25 real kept; no-left-turn 10/10 (plus 2 tracks at 482 s with no before-label, counted as not real by the script; the harvest and the verifier, 1.0, say real); no-right-turn
 6/6; speed limit 40 2/2 and 70 1/1; stop 2/2; no-parking 3/3; height-limit 2/2 (+1 blue sign read as
 height-limit left); no-heavy-goods 2/2 (+1 blue sign left). Reasons: verifier 19, score 1. The api's context
 flagged every false track as well (light or lead, share 0.8-1.0) and no real track in the after run.
