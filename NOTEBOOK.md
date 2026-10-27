@@ -22,7 +22,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L6 speed-limit state from sign tracks | Opus | done (2026-10-27 ~07:15 CET) | docs/lanes/L6-speed-limit.md |
 | L7 traffic lights (detector + state) | Opus | done (2026-10-27 ~08:20 CET) | docs/lanes/L7-traffic-lights.md |
 | L8 sign false positives (lamps as no-entry) + negative training | Opus | done (2026-10-27 ~12:30 CET) | docs/lanes/L8-sign-fp.md |
-| L9 Polish ride library (diverse open recordings) | Opus | running (2026-10-27) | docs/lanes/L9-ride-library.md |
+| L9 Polish ride library (diverse open recordings) | Opus | done (2026-10-27 12:55 CET) | docs/lanes/L9-ride-library.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
@@ -207,3 +207,19 @@ Data: Krakow (CC BY 3.0), BDD100K val (research), GTSRB via Zenodo 13741936 (CC 
 weights research-licensed, not committed.
 Changes: roadsense f64911b, d6ebdc3, 4b8fb31, 7ecfcf6; roadsense-signs 7ba2247, c07af24.
 Next: validate on L9's diverse Polish rides (night/rain/glare/motorway) before trusting the thresholds.
+
+## Fold 9 (2026-10-27): Polish ride library (L9, Opus)
+- [FAV] 21 openly licensed Polish rides, 4 h 06 min (docs/RIDES.md): rural with area signs, forest, snow,
+  fog, A1 at night (also in fog), A1/S8 rain, S7 low sun, S1 roadworks, five tunnels (S3, POW Warsaw, Gdansk,
+  Swinoujscie, DTS), night snow, night expressway, rainy tram city, thunderstorm, arrow signals. All on the
+  laptop (~28 GB) and the phone (~/rides, 19 GB, md5 verified, 75 GB free). Laptop overlays plausible.
+- [UNFAV] Gaps: underground/multi-storey parking, flashing yellow, daylight falling snow, night rain, level
+  crossings, zone signs. Intrinsics mostly guessed (one measured: S7 focal ~900 px). Some rides have overlays
+  (speed bar, captions, dashboard in the bottom 30 %).
+- [INSTR] Licences: 20 YouTube CC BY (verified via yt-dlp's licence field 2026-10-27, attribution in each
+  SOURCE.txt); the Krakow YouTube original now shows a standard licence, the Commons copy (CC BY, reviewed
+  2025) remains valid. Downloads via yt-dlp in a private venv (YouTube's terms of service restrict
+  downloading even for CC content; private test use only, nothing redistributed).
+Changes: roadsense ca7efd0, 00775ab.
+Next: sweep the stack (signs verifier + thresholds, lights, speed limit, envd) across the library; MTSD from
+the user would enable classifier retraining.
