@@ -16,7 +16,7 @@ class Drive:
     """Synthetic ride: road at 10 Hz, signs at 5 Hz, env at 1 Hz; signs approach on a pinhole camera."""
 
     def __init__(self, sl=None, v=12.0, place=None):
-        self.sl = sl or SpeedLimit()
+        self.sl = sl or SpeedLimit(cfg={"env_min_stable_s": 5.0})   # short synthetic drives
         self.v, self.t, self.seq, self.tid = v, 0.0, 0, 100
         self.place = place
         self.yaw_rate = 0.0
@@ -34,8 +34,10 @@ class Drive:
             self.sl.on_message({**self._hdr("road"), "v_ego": self.v, "pose": {"vx": self.v, "yaw_rate": self.yaw_rate}})
         self.sl.on_message({**self._hdr("signs"), "detections": list(dets), "tracks_ended": list(ended)})
         if self.place and abs(self.t - round(self.t)) < 0.05:
+            scores = {k: 0.02 for k in ("highway", "city_street", "residential", "rural_road", "forest_road")}
+            scores[self.place] = 0.7
             self.sl.on_message({**self._hdr("env"), "place": {"label": self.place, "confidence": 0.7,
-                                                                "stable_s": 60.0}})
+                                                                "stable_s": 60.0, "scores": scores}})
         self.out.append(self.sl.snapshot())
 
     def drive(self, metres):
@@ -91,6 +93,16 @@ class SpeedLimitTest(unittest.TestCase):
         self.assertEqual(d.last["area"], {"type": "outside", "source": "sign", "confidence": 0.8})
         d.drive(500)                       # the env prior must not override a fresh area sign
         self.assertEqual(d.last["limit_kmh"], 90)
+
+    def test_env_prior_needs_time_and_highway_abstains(self):
+        d = Drive(sl=SpeedLimit(), place="city_street")             # default: vote must hold 20 s
+        d.drive(12 * 15)
+        self.assertIsNone(d.last["limit_kmh"])
+        d.drive(12 * 10)
+        self.assertEqual(d.last["limit_kmh"], 50)
+        d = Drive(place="highway")                                  # wide arterial or motorway: no vote
+        d.drive(500)
+        self.assertIsNone(d.last["limit_kmh"])
 
     def test_b33_then_intersection(self):
         d = Drive(place="city_street")
@@ -171,6 +183,14 @@ class SpeedLimitTest(unittest.TestCase):
         self.assertEqual(d.last["limit_kmh"], 140)
         d.sign("information--end-of-motorway")
         self.assertEqual(d.last["limit_kmh"], 90)
+
+    def test_road_class_sign_needs_right_side_and_score(self):
+        d = Drive(place="city_street")
+        d.drive(200)
+        d.sign("information--motorway", lateral=-3.5)           # blue sign on the left (seen in Krakow)
+        d.sign("information--motorway", lateral=4.0, score=0.5)
+        self.assertEqual(d.last["limit_kmh"], 50)
+        self.assertEqual(d.last["road_class"], "ordinary")
 
     def test_expressway(self):
         d = Drive(v=30.0)

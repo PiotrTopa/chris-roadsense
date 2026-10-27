@@ -26,8 +26,10 @@ DEFAULT_CFG = {
     "lateral_max_m": 8.0,       # right of the camera; beyond: separate roadway (exit lane)
     "min_aspect": 0.55,         # w/h below this: sign turned towards a side road
     "max_dt_s": 0.5,            # odometry: a longer gap between road messages counts as this much
-    "env_min_stable_s": 20.0,   # env place prior needs this much stability
-    "env_min_conf": 0.35,
+    "env_min_stable_s": 20.0,   # the env place vote must hold this long
+    "env_min_mass": 0.25,       # smoothed score mass of city_street+residential (or rural+forest)
+    "env_mass_ratio": 4.0,      # ... and this many times the opposite mass ("highway" etc. abstain)
+    "env_area_conf": 0.45,
     "area_sign_hold_m": 3000,   # an area sign beats the env prior for this distance
     "conflict_window_m": 30,    # two different limits within this distance: keep the stronger
     "focal_px": 690.0, "cx": 960.0, "width": 1920,
@@ -102,6 +104,7 @@ class SpeedLimit:
         self.road_class = {"type": "ordinary", "source": "default", "sign": None}
         self.zone = {"type": "none", "limit_kmh": None, "sign": None}
         self.env_place = None
+        self._env_run = None              # (vote, since_ns)
         self.limit = None                 # active sign limit dict or None
         self.advisory = None
         self.junctions = []               # odo positions of expected/passed junctions (from signs)
@@ -155,7 +158,8 @@ class SpeedLimit:
     def on_env(self, msg):
         self._clock(msg)
         p = msg.get("place") or {}
-        self.env_place = {"label": p.get("label"), "confidence": p.get("confidence"), "stable_s": p.get("stable_s")}
+        self.env_place = {"label": p.get("label"), "confidence": p.get("confidence"), "stable_s": p.get("stable_s"),
+                          "scores": p.get("scores")}
         self._env_prior()
 
     def on_signs(self, msg):
@@ -243,13 +247,15 @@ class SpeedLimit:
             reasons.append(f"hits {t.hits}<{self.cfg['min_hits']}")
         if vote < self.cfg["min_vote"]:
             reasons.append(f"vote {vote:.2f}<{self.cfg['min_vote']}")
-        if t.mean_score() < self.cfg["min_mean_score"]:
-            reasons.append(f"score {t.mean_score():.2f}<{self.cfg['min_mean_score']}")
+        min_score = rule.get("min_score", self.cfg["min_mean_score"])     # per-sign overrides in the rules
+        lat_min = rule.get("lateral_min_m", self.cfg["lateral_min_m"])
+        if t.mean_score() < min_score:
+            reasons.append(f"score {t.mean_score():.2f}<{min_score}")
         lat, asp = self._geometry(t)
         info["lateral_m"] = None if lat is None else round(lat, 1)
         if lat is None:
             reasons.append("boxes too small for a position check")
-        if lat is not None and not (self.cfg["lateral_min_m"] <= lat <= self.cfg["lateral_max_m"]):
+        if lat is not None and not (lat_min <= lat <= self.cfg["lateral_max_m"]):
             reasons.append(f"lateral {lat:.1f} m (other roadway / exit lane?)")
         if asp is not None and asp < self.cfg["min_aspect"]:
             reasons.append(f"aspect {asp:.2f} (turned to a side road)")
@@ -342,19 +348,41 @@ class SpeedLimit:
         elif act == "ignore_vehicle":
             self.ignored.append(dict(info, reason="applies to trucks only", at_odo_m=round(self.odo, 1)))
 
+    def _env_vote(self, e):
+        """built_up / outside / None from envd's smoothed place scores (label fallback)."""
+        sc = e.get("scores")
+        if sc:
+            b = sum(sc.get(k, 0.0) for k in ENV_BUILT_UP)
+            o = sum(sc.get(k, 0.0) for k in ENV_OUTSIDE)
+            r = self.cfg["env_mass_ratio"]
+            if b >= self.cfg["env_min_mass"] and b >= r * o:
+                return "built_up"
+            if o >= self.cfg["env_min_mass"] and o >= r * b:
+                return "outside"
+            return None
+        if (e.get("confidence") or 0) < self.cfg["env_min_mass"]:
+            return None
+        lab = e.get("label")
+        return "built_up" if lab in ENV_BUILT_UP else "outside" if lab in ENV_OUTSIDE else None
+
     def _env_prior(self):
-        e = self.env_place or {}
-        if (e.get("stable_s") or 0) < self.cfg["env_min_stable_s"] or (e.get("confidence") or 0) < self.cfg["env_min_conf"]:
+        """envd place as a weak prior for the area (D-42 is not in the classifier's classes).
+
+        The vote must hold for env_min_stable_s; it never overrides an area sign seen within
+        area_sign_hold_m, nor a motorway/expressway sign."""
+        typ = self._env_vote(self.env_place or {})
+        if typ != (self._env_run or (None,))[0]:
+            self._env_run = (typ, self.now_ns)
+        if typ is None or self.now_ns is None or (self.now_ns - self._env_run[1]) / NS < self.cfg["env_min_stable_s"]:
             return
         if self.road_class["type"] != "ordinary":
             return
         a = self.area
         if a["source"] == "sign" and a["odo"] is not None and self.odo - a["odo"] < self.cfg["area_sign_hold_m"]:
             return
-        lab = e.get("label")
-        typ = "built_up" if lab in ENV_BUILT_UP else "outside" if lab in ENV_OUTSIDE else None
-        if typ and (a["type"] != typ or a["source"] != "env"):
-            self._set_area(typ, {"env_place": lab}, round(min(0.5, 0.6 * float(e["confidence"])), 2), source="env")
+        if a["type"] != typ or a["source"] != "env":
+            self._set_area(typ, {"env_place": (self.env_place or {}).get("label")}, self.cfg["env_area_conf"],
+                           source="env")
 
     def _check_expiry(self):
         lim = self.limit
