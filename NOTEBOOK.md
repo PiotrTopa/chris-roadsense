@@ -21,7 +21,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L4 GPU turn-taking (signd/modeld) | Opus | done (2026-10-27 00:28 CET) | docs/lanes/L4-gpu-sched.md |
 | L6 speed-limit state from sign tracks | Opus | done (2026-10-27 ~07:15 CET) | docs/lanes/L6-speed-limit.md |
 | L7 traffic lights (detector + state) | Opus | done (2026-10-27 ~08:20 CET) | docs/lanes/L7-traffic-lights.md |
-| L8 sign false positives (lamps as no-entry) + negative training | Opus | running (2026-10-27) | docs/lanes/L8-sign-fp.md |
+| L8 sign false positives (lamps as no-entry) + negative training | Opus | done (2026-10-27 ~12:30 CET) | docs/lanes/L8-sign-fp.md |
 | L9 Polish ride library (diverse open recordings) | Opus | running (2026-10-27) | docs/lanes/L9-ride-library.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
@@ -186,3 +186,24 @@ User: "no entry" often fires on the lead car's stop lamps. Coordinator check of 
 9/100 tracks were no-entry; of 6 inspected crops 3 real (score 0.86-0.88), 2 bus/tram brake lamps (0.50-0.55,
 up to 123 hits), 1 red traffic light (0.59). User ruling: do all fixes (class threshold, overlap with lights /
 lead vehicle, glow check) and look for better data for negative training.
+
+## Fold 8 (2026-10-27): sign false positives (L8, Opus)
+- [FAV] False no-entry tracks on the Krakow replay 10.2-10.65 per loop -> 0.00 (installed config, 2.1 loops);
+  no-entry precision 0.23 -> 1.00 with 6/6 real kept; all 65/65 real round red signs kept; speed-limit
+  timeline unchanged; phone cost nil (road 13.4, detect 100 ms). Verified live 12:3x CET.
+- [FAV] Main fix: sign verifier CNN (~24k params, 32x32 crop) trained on BDD100K lamp/red-light blobs (neg) and
+  GTSRB (pos), no ride data: rejects 100 % of ride lamps/lights; keeps 99.9 % GTSRB test signs.
+  Plus `--class-min-score regulatory--no-entry=0.71` and api context flags gated on the verifier.
+- [INSTR] Flagged tracks are kept with `suppressed`/`reason` (suppressed_tracks in /v1/signs, grey boxes in
+  /preview, ignored reasons in speed_limit); documented in ARCHITECTURE "Flagged tracks".
+- [UNFAV] Nulls: glow check alone (flags 14.8 % of sunlit real signs; now only with an unsure verifier); light
+  overlap alone (27 %); colour check for wrong-class signs; hard-negative classifier retraining impossible
+  (MTSD needs an account). Wrong-class real signs remain (blue keep-right as no-entry in some passes).
+  Only overcast city daylight tested; 0.71 threshold may be tight on other footage (half of BDD US
+  do-not-enter detections score < 0.71).
+Deviations: verifier threshold 0.3 and glow gating tuned on the same ride they were scored on (in-sample,
+disclosed); pre-registration committed 10:49, the "before" phone run started 10:42.
+Data: Krakow (CC BY 3.0), BDD100K val (research), GTSRB via Zenodo 13741936 (CC BY 4.0 on the record). Verifier
+weights research-licensed, not committed.
+Changes: roadsense f64911b, d6ebdc3, 4b8fb31, 7ecfcf6; roadsense-signs 7ba2247, c07af24.
+Next: validate on L9's diverse Polish rides (night/rain/glare/motorway) before trusting the thresholds.
