@@ -429,7 +429,7 @@ class SpeedLimit:
                 continue
             cls, vote, q = self.quality(t)
             rule, val = self._rule(cls)
-            if not rule or rule["action"].startswith("plate"):
+            if not rule or rule["action"].startswith(("plate", "junction")):
                 continue
             lat, _ = self._geometry(t)
             out.append({"track_id": t.tid, "cls": cls, "sign": rule["sign"], "action": rule["action"],
