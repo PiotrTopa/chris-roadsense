@@ -76,3 +76,68 @@ from HEAD, 1 thread), api (port 18110), a socket monitor (`camerad.sock`, `model
   were built after it).
 * Regression checks: `--file` with `--start` at the end loops as before (loop 1, pause 1000 ms);
   `--playlist --once` with a missing entry skips it and stops after the last ride.
+
+### 4. Phone deploy (13:20-13:34 CET)
+* `git archive HEAD` of `camerad-replay/main.cc`, `camerad/ring.h`, `scripts/use-replay.sh`,
+  `systemd/roadsense-camerad-replay.service`, `docs/RIDES.md` into `~user/roadsense` (the phone tree is
+  otherwise older than HEAD in api/modeld files; those are installed elsewhere by their lanes and were
+  not touched). The installed api (`/usr/local/lib/roadsense/api`) was identical to HEAD (md5) before.
+* envd rebuilt as user in L3's build dir (`~/l3/build-envd`, `make envd`, ncnn on, sources = HEAD,
+  ring.h with the reopen fix), installed to `/usr/local/bin/envd` (old binary kept as
+  `envd.pre-l10`). The build heated the phone to 94.9 C for a minute (the stack was running); waited
+  until < 88 C (75.8 C) before switching.
+* Root `~user/l10/deploy.sh`: envd install, api backup `/usr/local/lib/roadsense/api.pre-l10` + the two
+  new api files + api restart, then `sh scripts/use-replay.sh --playlist /home/user/rides`: compiled
+  camerad-replay (`c++`), kept `replay-prev-source` = dvr and the existing `calib.json.pre-replay`
+  (from L5, the DVR calibration), wrote the 21-ride `/etc/roadsense/replay-playlist.txt`
+  (catalogue order), restarted camerad-replay, try-restarted modeld/envd/signd. All units active.
+  First ride opened in 2.3 s (cold page cache for 1.5 GB).
+* Quick check with test windows (`REPLAY_ARGS=--max-seconds-per-ride 45`, 13:23-13:33, rides 1-13):
+  socket monitor as root (`~user/l10/mon.py`; the sockets are root-only) over 160 s, 4 changes:
+
+| ride (index) | ring focal | modeld calib after the change (pitch / yaw / h / f) | camera | road | signs | lights | first road after 1st frame | road max gap | env | temp |
+|---|---|---|---|---|---|---|---|---|---|---|
+| a1-s8-rain (8) | 1100 | -0.075 / 0.022 / 1.22 / 1100 | 20.0 fps | 13.8/s | 5.2/s | 3.1/s | - | 0.12 s | highway, rain, day | 72 C |
+| s7-elblag-lowsun (9) | 900 | -0.05 / 0.044 / 1.24 / 900 | 20.0 fps, 900 frames / 45 s | 619 / 45 s = 13.8/s | 5.0/s | 3.0/s | 0.13 s | 0.11 s | highway, snow, dusk_dawn | 72 C |
+| s1-roadworks (10) | 800 | 0 / 0.05 / 1.3 / 800 | 20.0 fps | 13.8/s | 5.0/s (roadworks, 30 limit, curves ...) | 3.0/s | 0.13 s | 0.12 s | highway, snow, day | 74 C |
+| tunnels-s3 (11) | 690 | -0.033 / -0.069 / 1.5 / 690 | 20.0 fps | 13.7/s | 5.0/s (priority road ...) | 3.0/s | 0.14 s | 0.12 s | highway, overcast, dusk_dawn | 74 C |
+| tunnel-pow-warsaw (12) | 900 | (next) | 20.0 fps | 13.6/s | 4.7/s, 7 live tracks | 2.6/s | | | | 68 C |
+
+  api snapshots of rides 0-3 (13:23-13:26): camera 19.7-19.9/s, road 13.2-13.5/s, model 53-61 ms,
+  signs 4.9-5.0/s, detect 78-116 ms, lights 2.5-2.8/s, env ~1/s with labels per ride (krakow
+  city_street/overcast/dusk_dawn, rural-zloczew rural_road), speed-limit odometer per ride (52 m 12 s
+  into forest-vistula-spit). `/preview` HUD on the phone:
+  `docs/lanes/L10-playlist/phone-hud-tunnel-pow-warsaw.jpg` (laptop checkout only, *.jpg is git-ignored) ("Ride:
+  tunnel-pow-warsaw - Awizonosz, CC BY 3.0 (13/21, 0/5 min)"; frame by Awizonosz, CC BY 3.0); the
+  status page shows the same line with the real characters.
+* 13:33:54: back to whole rides (`REPLAY_ARGS=` and a camerad-replay restart): the playlist starts
+  again at krakow-2024.
+
+### 5. Whole rides on the phone: two natural ride changes (13:34-14:08 CET)
+Socket monitor (root) for 27 min plus api snapshots from the laptop:
+
+| ride (index) | span | camera | road | signs | lights | ride change | env | api speed limit |
+|---|---|---|---|---|---|---|---|---|
+| krakow-2024 (0) | 13:34-13:44 | 20.0 fps (11742 frames / 587 s) | 8068 / 587 s = 13.7/s, max gap 0.12 s | 2931 = 5.0/s | 1760 = 3.0/s | - | city_street / residential, overcast, day | odo 2300 m, limit 50 at 13:39 |
+| rural-zloczew (1) | 13:44:06-13:59:05 | 20.0 fps (18000 frames, the whole ride) | 12200 / 900 s = 13.6/s, max gap 0.13 s | 4492 = 5.0/s (priority road, end of built-up area, 70 limit ...) | 2698 = 3.0/s | 13:44:00-13:44:06; modeld calib -0.072 / -0.094 / 1.5 with the first road message (0.13 s after the first frame) | rural_road, overcast, day | odo restarted: 439 m 35 s in, 8524 m at 13:51; limit None -> 90 -> 70 |
+| forest-lubelskie (2) | from 13:59:13 | 19.8 fps | 13.3/s | 4.5/s | 2.6/s | calib -0.072 / -0.012 / 1.65 at the change | forest_road, clear, day | |
+
+* The phone dropped off the network 14:01-14:07:53 (kernel log: wlan0 re-associated 14:07:36;
+  uptime 16 h, no reboot). The stack kept running through it (forest-lubelskie at 9:19 when it came back).
+* Temperature: the hottest zone touched 94.9-95.5 C in single samples (13:44, 13:45, and at the end of
+  krakow-2024), 68 C at 13:51, 66-69 C at 14:08 (6 samples / 30 s), so no sustained 95 C. The spikes
+  match L4/L5 (the stack at ~14 road runs/s plus signd and envd); not new with the playlist.
+* Boot autostart unchanged: `roadsense.target` disabled (camerad-replay and signd are enabled, but
+  only `roadsense.target` wants them, so nothing starts at boot).
+
+### 6. State left (14:10 CET)
+Playlist RUNNING on the phone: 21 rides in `docs/RIDES.md` order, 4 h 06 min of video plus ~3-5 s per
+ride change (2.5 s gap + 0.4-2.3 s file indexing), i.e. a loop of ~4 h 08 min, forever. Commands
+(root on the phone, from `~user/roadsense`):
+* status: `sh scripts/use-replay.sh --status`
+* playlist (again / other dir / shuffled): `sh scripts/use-replay.sh --playlist [/home/user/rides] [--shuffle]`
+* one ride: `sh scripts/use-replay.sh --enable /home/user/rides/<slug>/<slug>.mjpeg`
+* back to the DVR camera + the original calib.json: `sh scripts/use-replay.sh --disable`
+* skip to the next ride: restart starts from ride 1; to change the order edit
+  `/etc/roadsense/replay-playlist.txt` (re-read at every wrap) or restart after editing.
+Rollback of this lane: `/usr/local/bin/envd.pre-l10`, `/usr/local/lib/roadsense/api.pre-l10`.

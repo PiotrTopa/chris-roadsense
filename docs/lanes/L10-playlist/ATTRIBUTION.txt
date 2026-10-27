@@ -1,0 +1,3 @@
+Frames in this folder (not committed: *.jpg is git-ignored; kept in the laptop checkout):
+phone-hud-tunnel-pow-warsaw.jpg = /preview of the phone during the L10 playlist check, frame from
+"Ursynów tunnel / S2 (POW)" drive by Awizonosz (YouTube hfbi83wEPFo), CC BY 3.0; cut, scaled, re-encoded, overlay drawn.
