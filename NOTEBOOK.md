@@ -23,7 +23,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L7 traffic lights (detector + state) | Opus | done (2026-10-27 ~08:20 CET) | docs/lanes/L7-traffic-lights.md |
 | L8 sign false positives (lamps as no-entry) + negative training | Opus | done (2026-10-27 ~12:30 CET) | docs/lanes/L8-sign-fp.md |
 | L9 Polish ride library (diverse open recordings) | Opus | done (2026-10-27 12:55 CET) | docs/lanes/L9-ride-library.md |
-| L10 ride playlist (all rides in a loop on the phone) | Opus | running (2026-10-27) | docs/lanes/L10-playlist.md |
+| L10 ride playlist (all rides in a loop on the phone) | Opus | done (2026-10-27 14:12 CET) | docs/lanes/L10-playlist.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
@@ -224,3 +224,17 @@ Next: validate on L9's diverse Polish rides (night/rain/glare/motorway) before t
 Changes: roadsense ca7efd0, 00775ab.
 Next: sweep the stack (signs verifier + thresholds, lights, speed limit, envd) across the library; MTSD from
 the user would enable classifier retraining.
+
+## Fold 10 (2026-10-27): ride playlist live (L10, Opus)
+- [FAV] The phone loops all 21 rides (~4 h 08 min per loop) with per-ride intrinsics (new ring per ride) and
+  per-ride calibration (camerad-replay writes calib.json; modeld already reloads it every 2 s; 2.5 s pause
+  at the change). No modeld restart; first road message 0.13 s into a ride; road 13.3-13.8/s, signs 5.0,
+  lights 3.0 across changes. Dashboard/preview show ride, author, licence. Verified live 14:1x CET:
+  forest-lubelskie, forest_road/clear/day, limit 90, road 12.8/s.
+- [INSTR] The api resets driving state (speed limit, odometer, live tracks) on a ride change; readers treat
+  the frame-number restart as a camera restart. envd on the phone predated the ring fix and was rebuilt.
+- [UNFAV] Single temperature readings 94.9-95.5 C around 13:44 (not sustained; 66-69 C later).
+Correction to the lane report: the Wi-Fi outage began at 13:40:00 (router deauth GROUP_KEY_HANDSHAKE_TIMEOUT
+after a TKIP group rekey, ath10k key install -110), not 14:01; recovered 14:07 (CMDB poco.md).
+Changes: roadsense bfc7c5f, d68dc22. Phone rollback copies envd.pre-l10, api.pre-l10.
+Open: Wi-Fi watchdog on the phone / router WPA2-AES only; stack sweep across the library.
