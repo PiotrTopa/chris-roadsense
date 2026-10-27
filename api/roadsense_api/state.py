@@ -6,8 +6,11 @@ import os
 import struct
 import time
 
+from .speedlimit import SpeedLimit, load_rules
+
 DAEMONS = ("camerad", "modeld", "signd", "envd")
-TOPICS = ("camera", "road", "signs", "calib", "env")
+TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit")
+SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
 LIVE_TRACK_TIMEOUT_S = 2.0
 
@@ -62,7 +65,7 @@ def battery():
 
 
 class State:
-    def __init__(self, rundir, datadir=None, ring_path=None):
+    def __init__(self, rundir, datadir=None, ring_path=None, rules="pl"):
         self.rundir = rundir
         self.ring_path = ring_path
         self.latest = {}                                   # type -> message dict
@@ -76,6 +79,9 @@ class State:
             self.history_file = os.path.join(datadir, "signs.jsonl")
         self.subscribers = set()                           # callables(type, line)
         self.version = 0                                   # bumps on every message (overlay cache key)
+        self.speed = SpeedLimit(load_rules(rules))         # derived topic `speed_limit`
+        self._speed_emit = 0.0
+        self._speed_geom = False
 
     # ---- ingestion -------------------------------------------------------
     def on_message(self, daemon, msg, line):
@@ -91,6 +97,30 @@ class State:
             self._on_signs(msg, now)
         for cb in list(self.subscribers):
             cb(mtype, line)
+        if mtype in ("road", "signs", "env"):
+            self._on_speed(msg, now)
+
+    def _on_speed(self, msg, now):
+        if not self._speed_geom:
+            ring = self.ring()
+            if ring:
+                f, cx, _, w, _ = self.intrinsics()
+                self.speed.cfg.update(focal_px=f, cx=cx, width=w)
+                self._speed_geom = True
+        try:
+            changed = self.speed.on_message(msg)
+        except Exception:                 # a malformed provider message must not stop the fan-out
+            import logging
+            logging.getLogger("roadsense_api.state").exception("speed_limit update failed")
+            return
+        if changed or now - self._speed_emit >= SPEED_LIMIT_HEARTBEAT_S:
+            self._speed_emit = now
+            out = self.speed.snapshot()
+            self.latest["speed_limit"] = out
+            self.arrivals["speed_limit"].append(now)
+            line = json.dumps(out, separators=(",", ":"))
+            for cb in list(self.subscribers):
+                cb("speed_limit", line)
 
     def _on_signs(self, msg, now):
         for d in msg.get("detections") or []:
@@ -157,6 +187,7 @@ class State:
         road = self.latest.get("road") or {}
         signs = self.latest.get("signs") or {}
         env = self.latest.get("env") or {}
+        sl = self.latest.get("speed_limit")
         return {
             "daemons": daemons,
             "fps": {t: self.fps(t) for t in TOPICS},
@@ -164,6 +195,9 @@ class State:
             "detect_ms": signs.get("detect_ms"),
             "env_ms": env.get("env_ms"),
             "env": {g: (env.get(g) or {}).get("label") for g in ("place", "weather", "light")} if env else None,
+            "speed_limit": {"limit_kmh": sl["limit_kmh"], "source": sl["source"].get("kind"),
+                            "sign": sl["source"].get("sign") or sl["source"].get("rule"),
+                            "confidence": sl["confidence"], "area": sl["area"]["type"]} if sl else None,
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
             "battery": battery(),

@@ -93,6 +93,13 @@ async def h_env(req):
     return _json(msg or {"error": "no env message yet"}, 200 if msg else 503)
 
 
+async def h_speed_limit(req):
+    st = req.app["state"]
+    if "speed_limit" not in st.latest:
+        return _json({"error": "no road/signs message yet"}, 503)
+    return _json(st.speed.snapshot(full=True))
+
+
 async def h_camera(req):
     st = req.app["state"]
     msg = dict(st.latest.get("camera") or {})
@@ -192,8 +199,8 @@ async def _cors(req, resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
 
 
-def make_app(rundir, datadir=None, ring_path=None, connect=True):
-    state = State(rundir, datadir=datadir, ring_path=ring_path)
+def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
+    state = State(rundir, datadir=datadir, ring_path=ring_path, rules=rules)
     app = web.Application()
     app["state"] = state
     app["preview_path"] = os.path.join(rundir, "preview.jpg")
@@ -221,6 +228,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True):
     app.router.add_get("/v1/signs", h_signs)
     app.router.add_get("/v1/signs/history", h_signs_history)
     app.router.add_get("/v1/env", h_env)
+    app.router.add_get("/v1/speed_limit", h_speed_limit)
     app.router.add_get("/v1/camera", h_camera)
     app.router.add_get("/v1/health", h_health)
     app.router.add_get("/v1/frame.jpg", h_frame)
@@ -246,7 +254,8 @@ pre{margin:0;white-space:pre-wrap}
 <section><h2>health</h2><pre id="health">...</pre>
 <h2>road</h2><pre id="road">...</pre>
 <h2>signs (live)</h2><pre id="signs">...</pre>
-<h2>environment</h2><pre id="env">...</pre></section>
+<h2>environment</h2><pre id="env">...</pre>
+<h2>speed limit</h2><pre id="speed">...</pre></section>
 </main><script>
 const $ = id => document.getElementById(id);
 const f = (v, d=1) => v == null ? "-" : Number(v).toFixed(d);
@@ -282,6 +291,16 @@ async function tick(){
           .map(([k, v]) => `${k} ${f(v, 2)}`).join(", ");
         return `${g.padEnd(8)} ${(r.label || "-").padEnd(20)} conf ${f(r.confidence, 2)}  stable ${f(r.stable_s, 0)} s  [${top}]`;
       }).join("\\n") + `\\nluma ${f(ev.stats && ev.stats.luma, 0)}  ${ev.model || ""}  ${f(ev.env_ms, 0)} ms` : "no data";
+    const sl = await get("/v1/speed_limit");
+    $("speed").textContent = sl ? [
+        `limit ${sl.limit_kmh == null ? "unknown" : sl.limit_kmh + " km/h"}  conf ${f(sl.confidence, 2)}  ` +
+          (sl.source.kind === "sign" ? `${sl.source.sign} #${sl.source.track_id}` : `${sl.source.kind} ${sl.source.rule || ""}`),
+        `since ${f(sl.since.age_s, 0)} s / ${f(sl.since.distance_m, 0)} m  area ${sl.area.type} (${sl.area.source})  road ${sl.road_class}  zone ${sl.zone.type}`,
+        sl.expiry ? `expires: ${sl.expiry.rule}, cap in ${f(sl.expiry.remaining_m, 0)} m` : "",
+        `v ${f(sl.v_ego_kmh, 0)} km/h  odo ${f(sl.odometer_m / 1000, 2)} km` + (sl.advisory_kmh ? `  advisory ${sl.advisory_kmh}` : ""),
+        ...sl.pending.map(p => `pending #${p.track_id} ${p.sign} ${p.value_kmh || ""} hits ${p.hits} q ${f(p.quality, 2)}`),
+        ...(sl.recent_changes || []).slice(0, 3).map(c => `  ${f(c.odo_m, 0)} m: ${c.event}`)
+      ].filter(Boolean).join("\n") : "no data";
   } catch (e) { $("health").textContent = "api unreachable"; }
 }
 tick(); setInterval(tick, 1000);

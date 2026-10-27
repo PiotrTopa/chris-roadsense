@@ -382,13 +382,41 @@ point `classes` in `envd.json` at it). Config `/etc/roadsense/envd.json`
 | `GET /v1/signs` | latest `signs` message plus the list of currently live tracks |
 | `GET /v1/signs/history?limit=100` | ended tracks, newest first |
 | `GET /v1/env` | latest `env` message (place / weather / light with scores and confidence) |
+| `GET /v1/speed_limit` | current speed limit derived by the api (topic `speed_limit`, below) plus `recent_changes` and `ignored` sign tracks |
 | `GET /v1/camera` | latest `camera` message + ring header fields |
-| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels; CPU temp, battery |
+| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary; CPU temp, battery |
 | `GET /v1/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes drawn on top |
-| `GET /ws` | WebSocket; every message from every daemon, as-is; `?topics=road,signs,env` filters |
+| `GET /ws` | WebSocket; every message from every daemon, as-is, plus the api's own `speed_limit`; `?topics=road,signs,env,speed_limit` filters |
 
-api never touches the camera or the models; it is a fan-out and overlay layer.
+api never touches the camera or the models; it is a fan-out and overlay layer, plus one derived
+topic below.
+
+### api-derived topic: `{"type":"speed_limit", ...}`
+`api/roadsense_api/speedlimit.py` turns the documented `signs` contract (only `detections[]`
+track_id/cls/score/box/hits and `tracks_ended[]` track_id), `road` (`v_ego`, `pose.yaw_rate`,
+`ts_mono_ns`) and `env` (`place` label) into the limit that applies to the car. Sent on `/ws` on
+every change and at least once a second; `/v1/speed_limit` adds `recent_changes` and `ignored`.
+Rules are data: `api/roadsense_api/rules/<country>.json` (`--rules`, env `ROADSENSE_RULES`, default
+`pl`). Design, Polish sources and limits: `docs/lanes/L6-speed-limit.md`.
+
+```
+"limit_kmh": 70,                         // null = unknown (no sign, area unknown)
+"source": {"kind":"sign","sign":"B-33","cls":"regulatory--maximum-speed-limit-70","track_id":19339,
+           "hits":24,"vote":1.0,"score":0.83,"lateral_m":4.1, "plate":"complementary--distance"?},
+       // or {"kind":"default","rule":"built_up|outside|residential_zone|expressway|motorway","area_source":"sign|env|config"}
+       // or {"kind":"unknown","rule":"unknown_area"}
+"confidence": 0.71,                      // 0..1, heuristic (track quality, fades towards the expiry cap)
+"since": {"ts_real_ns":..,"age_s":12.3,"distance_m":180.0},   // since the served value last changed
+"expiry": {"rule":"next intersection (par. 32 ust. 2)","distance_cap_m":700,"remaining_m":520.0},  // null for defaults
+"area": {"type":"built_up|outside|unknown","source":"sign|env|config","confidence":0.4},
+"road_class": "ordinary|expressway|motorway",
+"zone": {"type":"none|residential|speed_zone","limit_kmh":20},
+"advisory_kmh": null,                    // complementary speed plate, not a limit
+"pending": [ {"track_id":..,"cls":..,"sign":"B-33","action":"limit","value_kmh":50,"hits":4,"vote":1.0,
+              "quality":0.6,"lateral_m":3.2} ],   // live tracks not yet confirmed
+"v_ego_kmh": 48.2, "odometer_m": 3837.0, "rules": "PL"
+```
 Overlays project the 3D road outputs into the image with the pinhole model
 from the ring header (focal_px, cx, cy) and the calibration used by modeld,
 published by modeld in a `{"type":"calib", ...}` message to every client when it

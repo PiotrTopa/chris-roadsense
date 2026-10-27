@@ -116,6 +116,22 @@ class ApiTest(unittest.TestCase):
             self.assertIn(e[g]["label"], e[g]["scores"])
         self.assertIn(b"/v1/env", self.fetch("/")[2])
 
+    def test_speed_limit(self):
+        s = self.get("/v1/speed_limit")
+        for k in ("type", "limit_kmh", "source", "confidence", "since", "expiry", "area", "road_class", "zone",
+                  "pending", "v_ego_kmh", "odometer_m", "rules", "recent_changes", "ignored"):
+            self.assertIn(k, s)
+        self.assertEqual(s["type"], "speed_limit")
+        self.assertEqual(s["rules"], "PL")
+        # the fake signd shows a B-33 50 track every few seconds; the setup waited for one to end
+        self.assertEqual(s["limit_kmh"], 50)
+        self.assertEqual(s["source"]["kind"], "sign")
+        self.assertEqual(s["source"]["sign"], "B-33")
+        self.assertGreater(s["odometer_m"], 0)
+        h = self.get("/v1/health")["speed_limit"]
+        self.assertEqual(h["limit_kmh"], 50)
+        self.assertIn(b"/v1/speed_limit", self.fetch("/")[2])
+
     def test_camera(self):
         c = self.get("/v1/camera")
         for k in ("type", "seq", "exposure_us", "analogue_gain", "colour_gains", "fps", "dropped", "ring"):
@@ -169,14 +185,14 @@ class ApiTest(unittest.TestCase):
         async def run():
             got = []
             async with aiohttp.ClientSession() as s:
-                async with s.ws_connect(self.base + "/ws?topics=road,signs,env") as ws:
-                    while len(got) < 30:
+                async with s.ws_connect(self.base + "/ws?topics=road,signs,env,speed_limit") as ws:
+                    while len(got) < 30 or "speed_limit" not in got:
                         msg = await asyncio.wait_for(ws.receive(), 5)
                         got.append(json.loads(msg.data)["type"])
             return got
 
         types = asyncio.run(run())
-        self.assertTrue(set(types) <= {"road", "signs", "env"})
+        self.assertTrue(set(types) <= {"road", "signs", "env", "speed_limit"})
         self.assertIn("signs", types)
         self.assertIn("env", types)
 

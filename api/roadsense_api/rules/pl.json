@@ -1,0 +1,57 @@
+{
+  "country": "PL",
+  "vehicle": "passenger_car",
+  "sources": [
+    "Prawo o ruchu drogowym, tekst jednolity Dz.U. 2024 poz. 1251: art. 2 pkt 10 (skrzyzowanie: w jednym poziomie, bez polaczen z droga gruntowa lub wewnetrzna), pkt 15 (obszar zabudowany = oznaczony znakami), art. 20 ust. 1 (50 km/h; ust. 1a o 60 km/h w nocy uchylony), ust. 2 (strefa zamieszkania 20), ust. 3 pkt 1 (osobowy: autostrada 140, ekspresowa dwujezdniowa 120, ekspresowa jednojezdniowa oraz dwujezdniowa 2x2 100, pozostale 90)",
+    "Rozporzadzenie w sprawie znakow i sygnalow drogowych, tekst jednolity Dz.U. 2019 poz. 2310: par. 15 ust. 1-4 (zakaz od miejsca ustawienia, na tej drodze; pod D-42 do D-43), par. 27 (B-33 do B-33/B-43, D-40, D-42/D-43; tabliczka z symbolem pojazdu; B-34), par. 31 (B-43/B-44), par. 32 (B-42 odwoluje B-33; B-33 do najblizszego skrzyzowania, poza wlotem z lewej na drodze dwujezdniowej), par. 48 (D-7/D-8, D-9/D-10), par. 58 (D-40/D-41, D-42/D-43)"
+  ],
+  "defaults_kmh": {
+    "built_up": 50,
+    "residential_zone": 20,
+    "outside": 90,
+    "outside_dual_2x2": 100,
+    "expressway": 120,
+    "expressway_single": 100,
+    "motorway": 140
+  },
+  "notes": {
+    "outside": "90 assumed; a dual carriageway with >= 2 lanes per direction is 100 but lane count and separation are not observed, so the lower value is served",
+    "expressway": "120 assumes a dual-carriageway expressway (most S-roads); single-carriageway expressways are 100 and cannot be told apart",
+    "night": "no night rule since art. 20 ust. 1a was repealed (2021); 50 km/h day and night"
+  },
+  "signs": [
+    {"match": "^regulatory--maximum-speed-limit-(?:led-)?(\\d+)$", "sign": "B-33", "action": "limit"},
+    {"match": "^regulatory--end-of-maximum-speed-limit-(\\d+)$", "sign": "B-34", "action": "end_limit"},
+    {"match": "^regulatory--end-of-prohibition$", "sign": "B-42", "action": "end_limit"},
+    {"match": "^regulatory--end-of-speed-limit-zone$", "sign": "B-44", "action": "end_zone"},
+    {"match": "^information--living-street$", "sign": "D-40", "action": "residential_start"},
+    {"match": "^information--end-of-living-street$", "sign": "D-41", "action": "residential_end"},
+    {"match": "^information--end-of-built-up-area$", "sign": "D-43", "action": "built_up_end"},
+    {"match": "^information--built-up-area$", "sign": "D-42", "action": "built_up_start"},
+    {"match": "^information--motorway$", "sign": "D-9", "action": "motorway_start"},
+    {"match": "^information--end-of-motorway$", "sign": "D-10", "action": "motorway_end"},
+    {"match": "^information--limited-access-road$", "sign": "D-7", "action": "expressway_start"},
+    {"match": "^information--end-of-limited-access-road$", "sign": "D-8", "action": "expressway_end"},
+    {"match": "^complementary--maximum-speed-limit-(\\d+)$", "sign": "advisory", "action": "advisory"},
+    {"match": "^regulatory--truck-speed-limit-(\\d+)$", "sign": "B-33+truck", "action": "ignore_vehicle"},
+    {"match": "^complementary--(trucks|buses|trucks-turn-right)$", "sign": "plate-vehicle", "action": "plate_vehicle"},
+    {"match": "^complementary--(distance|both-directions|extent-of-prohibition-area-both-direction|except-bicycles|accident-area)$", "sign": "plate", "action": "plate_other"},
+    {"match": "^regulatory--(yield|stop)$", "sign": "A-7/B-20", "action": "junction", "offset_m": 15},
+    {"match": "^regulatory--(priority-road|end-of-priority-road)$", "sign": "D-1/D-2", "action": "junction", "offset_m": 10},
+    {"match": "^regulatory--roundabout$", "sign": "C-12", "action": "junction", "offset_m": 15},
+    {"match": "^regulatory--stop-here-on-red-or-flashing-light$", "sign": "stop line", "action": "junction", "offset_m": 10},
+    {"match": "^warning--(crossroads|crossroads-with-priority-to-the-right|t-roads|y-roads|offset-roads|roundabout|traffic-signals|junction-with-a-side-road-.*)$", "sign": "A-5..A-8/A-29", "action": "junction_warning"}
+  ],
+  "junction_warning_offset_m": {"built_up": 75, "outside": 180, "unknown": 100},
+  "expiry": {
+    "b33_rule": "next_intersection",
+    "same_pole_margin_m": 20,
+    "turn_deg": 50,
+    "turn_window_m": 60,
+    "distance_cap_m": {"built_up": 700, "outside": 3000, "unknown": 1200, "expressway": 8000, "motorway": 8000},
+    "zone_suspect_max_kmh": 30,
+    "zone_suspect_cap_m": 2000,
+    "advisory_hold_m": 300
+  },
+  "area_signs_end_b33": true
+}
