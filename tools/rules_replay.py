@@ -139,6 +139,7 @@ def main():
     ap.add_argument("--rules", default="pl")
     ap.add_argument("--ride", help="only this ride slug")
     ap.add_argument("--no-lights", action="store_true", help="traffic lights are not a junction cue")
+    ap.add_argument("--no-priority-inference", action="store_true", help="pre-registered engine: no turn ending / A-6 refresh of D-1")
     ap.add_argument("--cx", type=float, default=640.0)
     ap.add_argument("--focal", type=float, help="override the focal (default: per-ride camera-replay.json next to --rides-dir)")
     ap.add_argument("--rides-dir", default=os.path.expanduser("~/datasets/rides"))
@@ -146,7 +147,7 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
     rules = load_rules(a.rules)
-    base_cfg = {"cx": a.cx, "width": 1280, "lights_junction": not a.no_lights}
+    base_cfg = {"cx": a.cx, "width": 1280, "lights_junction": not a.no_lights, "priority_inference": not a.no_priority_inference}
     runs, cur, cur_key = [], None, None
     with open(a.jsonl) as f:
         for line in f:

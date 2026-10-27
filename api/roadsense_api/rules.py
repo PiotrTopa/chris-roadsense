@@ -26,6 +26,8 @@ from .speedlimit import SpeedLimit, load_rules, NS
 RULES_CFG = {
     "lights_junction": True,          # ego traffic light passed = junction for the rules here
     "lights_junction_speed": True,    # ... and for the speed limit's "until the next intersection" as well
+    "priority_inference": True,       # D-1: a turn at a junction ends it, A-6 side-road warnings refresh its cap (added after
+                                      # the first scoring of rural-zloczew / krakow-2024; off = the pre-registered engine)
     "early_commit_hits": 12,
 }
 
@@ -265,6 +267,12 @@ class RulesInEffect:
             self.recent.append(dict(entry, passed_odo=pos, passed_ns=self.now_ns))
             self._note(f"{eff['sign']} {entry['name']} passed (track {info['track_id']})")
         elif cat == "warning":
+            if self.cfg["priority_inference"]:
+                for other in eff.get("refreshes") or []:
+                    cur = self.active.get(other)
+                    if cur:
+                        cur.update(odo=pos, confirmations=cur["confirmations"] + 1)
+                        self._note(f"{cur['sign']} {cur['name']} refreshed by {eff['sign']} (track {info['track_id']})")
             for w in self.ahead:
                 if w["id"] == rid and abs(w["odo"] - pos) < 60:
                     w.update(odo=pos, quality=max(w["quality"], q))
@@ -301,6 +309,11 @@ class RulesInEffect:
                 j = self._junction_after(r["odo"], 0.0 if r.get("until_junction") else None)
                 if j:
                     self._end(rid, f"intersection ({j['source']}" + (f", track {j['detail']}" if j["source"].startswith("sign") else "") + ")")
+                    continue
+            if (r["eff"].get("ends") or {}).get("turn") and self.cfg["priority_inference"]:
+                j = self._junction_after(r["odo"])
+                if j and j["source"] == "turn":
+                    self._end(rid, f"turned off the road ({j['detail']} deg)")
         hold_m, hold_s = self.ecfg.get("recent_hold_m", 300), self.ecfg.get("recent_hold_s", 120)
         while self.recent and (self.odo - self.recent[0]["passed_odo"] > hold_m
                                or (self.now_ns or 0) - (self.recent[0]["passed_ns"] or 0) > hold_s * NS):

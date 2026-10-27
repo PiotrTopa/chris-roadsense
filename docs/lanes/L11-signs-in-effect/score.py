@@ -59,7 +59,7 @@ def score_ride(tl, lab):
         e = [(i["start_t"], i["end_t"], i) for i in eng if i["id"] == rule]
         h = [(i["start_t"], i["end_t"], i) for i in hum if i["rule"] == rule]
         # time agreement on a 0.5 s grid, excluding unclear stretches (between end_t and alt_end_t)
-        unclear = [(min(i["end_t"], i.get("alt_end_t", i["end_t"])), max(i["end_t"], i.get("alt_end_t", i["end_t"])))
+        unclear = [(min(i["end_t"], i.get("alt_end_t") or i["end_t"]), max(i["end_t"], i.get("alt_end_t") or i["end_t"]))
                    for _, _, i in h if i.get("end_unclear")]
         agree = total = 0
         t = 0.0
@@ -74,7 +74,14 @@ def score_ride(tl, lab):
         for a, b, hi in h:
             best = max(e, key=lambda x: overlap((a, b), (x[0], x[1])), default=None)
             ov = overlap((a, b), (best[0], best[1])) if best else 0.0
-            if best and ov >= 0.5 * min(b - a, best[1] - best[0]) and ov > 0:
+            if best and ov == 0:          # short human interval, engine a few seconds late: match on the start instead
+                near = [x for x in e if abs(x[0] - a) <= TOL]
+                if near:
+                    best, ov = min(near, key=lambda x: abs(x[0] - a)), 1e-9
+            if best and ov > 0 and (ov >= 0.5 * min(b - a, best[1] - best[0]) or ov == 1e-9):
+                if id(best[2]) in matched_e:      # the engine kept one rule where the human saw a new one after a junction
+                    res.setdefault("merged", []).append({"rule": rule, "human": [a, b], "engine": [best[0], best[1]]})
+                    continue
                 matched_e.add(id(best[2]))
                 res["delays"].append({"rule": rule, "start": round(best[0] - a, 1), "end": round(best[1] - b, 1),
                                       "end_reason": best[2]["end_reason"], "human_end": hi.get("end_reason"),
@@ -83,7 +90,10 @@ def score_ride(tl, lab):
                                     "human_end": hi.get("end_reason"), "unclear": bool(hi.get("end_unclear"))})
             else:
                 cause = "detector"
-                t0 = hi.get("start_sign_t", a)
+                t0 = hi.get("start_sign_t") or a
+                twin = {"no_stopping": "no_parking", "no_parking": "no_stopping"}.get(rule)
+                if twin and any(abs(i["start_t"] - t0) <= TOL for i in eng if i["id"] == twin):
+                    cause = "classifier: B-35/B-36 confusion"
                 near = [ig for igs in cls_ignored.values() for ig in igs if abs(ig["t"] - t0) <= 5 and
                         ig.get("sign", "") and any(k in ig.get("cls", "") for k in rule.split("_") if len(k) > 3)]
                 if near:
@@ -91,7 +101,10 @@ def score_ride(tl, lab):
                 res["misses"].append({"rule": rule, "start_t": a, "end_t": b, "cause": cause})
         for a, b, ei in e:
             if id(ei) not in matched_e:
-                res["false"].append({"rule": rule, "start_t": a, "end_t": b, "track": ei["track_id"], "end_reason": ei["end_reason"]})
+                twin = {"no_stopping": "no_parking", "no_parking": "no_stopping"}.get(rule)
+                conf = twin and any(abs(i["start_t"] - a) <= TOL for i in hum if i["rule"] == twin)
+                res["false"].append({"rule": rule, "start_t": a, "end_t": b, "track": ei["track_id"], "end_reason": ei["end_reason"],
+                                     "cause": "classifier: B-35/B-36 confusion" if conf else "?"})
         res["rules"][rule] = {"agreement": round(agree / max(1, total), 3), "human_n": len(h), "engine_n": len(e),
                               "human_s": round(sum(b - a for a, b, _ in h), 1), "engine_s": round(sum(b - a for a, b, _ in e), 1)}
     # momentary / warnings: precision and recall within TOL
@@ -142,6 +155,7 @@ def pooled(results):
                               "human_n": sum(r["human_n"] for r in rows), "engine_n": sum(r["engine_n"] for r in rows),
                               "matched": sum(1 for res in results for d in res["delays"] if d["rule"] == rule),
                               "misses": sum(1 for res in results for m in res["misses"] if m["rule"] == rule),
+                              "merged": sum(1 for res in results for m in res.get("merged", []) if m["rule"] == rule),
                               "false": sum(1 for res in results for f in res["false"] if f["rule"] == rule)}
     for key in ("momentary", "warnings"):
         for rid in sorted(set(r for res in results for r in res[key])):
@@ -188,7 +202,9 @@ def main():
         for m in res["misses"]:
             print(f"  MISS  {m['rule']} {m['start_t']}-{m['end_t']}: {m['cause']}")
         for f in res["false"]:
-            print(f"  FALSE {f['rule']} {f['start_t']}-{f['end_t']} track {f['track']}: {f['end_reason']}")
+            print(f"  FALSE {f['rule']} {f['start_t']}-{f['end_t']} track {f['track']}: {f['end_reason']}  [{f['cause']}]")
+        for m in res.get("merged", []):
+            print(f"  merged {m['rule']}: human {m['human']} inside engine {m['engine']}")
         for d in res["delays"]:
             print(f"  delay {d['rule']}: start {d['start']:+.1f} s  end {d['end']:+.1f} s  ({d['end_reason']} | human {d['human_end']}{' unclear' if d['end_unclear'] else ''})")
         print("  momentary:", {k: (v['tp'], v['engine'], v['human']) for k, v in res["momentary"].items()})

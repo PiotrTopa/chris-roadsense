@@ -305,6 +305,29 @@ class RulesTest(unittest.TestCase):
         self.assertNotIn("no_stopping", d.ids())
         self.assertEqual(d.last["junction"]["last"]["source"], "turn")
 
+    def test_priority_road_turn_and_side_road_refresh(self):
+        d = Drive(place="rural_road", v=20.0)
+        d.drive(300)
+        d.sign("regulatory--priority-road")
+        d.drive(9000)
+        d.sign("warning--junction-with-a-side-road-perpendicular-right")   # A-6b: our road has priority here
+        d.drive(2000)
+        self.assertIn("priority_road", d.ids())                             # refreshed: the 10 km cap restarted
+        d.yaw_rate = 1.2
+        d.drive(30)                                                         # turned off at a junction
+        d.yaw_rate = 0.0
+        d.drive(30)
+        self.assertNotIn("priority_road", d.ids())
+        self.assertIn("turned off", d.last["recent_changes"][0]["event"])
+        d = Drive(cfg={"priority_inference": False}, place="rural_road", v=20.0)
+        d.drive(300)
+        d.sign("regulatory--priority-road")
+        d.yaw_rate = 1.2
+        d.drive(30)
+        d.yaw_rate = 0.0
+        d.drive(30)
+        self.assertIn("priority_road", d.ids())                             # pre-registered behaviour
+
     def test_health_summary_strings(self):
         d = Drive()
         d.drive(100)
