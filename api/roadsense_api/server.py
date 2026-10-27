@@ -380,7 +380,7 @@ async function tick(){
           `area ${ru.area.type} (${ru.area.source})  road ${ru.road_class}  zone ${ru.zone.type}`,
         ...(ru.pending || []).map(p => `pending #${p.track_id} ${p.sign} ${p.id} hits ${p.hits} q ${f(p.quality, 2)}`),
         ...(ru.recent_changes || []).slice(0, 4).map(c => `  ${f(c.odo_m, 0)} m: ${c.event}`)
-      ].join("\n") : "no data";
+      ].join("\\n") : "no data";
     const lt = await get("/v1/lights");
     $("lights").textContent = lt ? [
         lt.ego ? `ego ${lt.ego.state}${lt.ego.flashing ? " (flashing)" : ""}  #${lt.ego.track_id}  ${f(lt.ego.dist_m, 0)} m  ` +
