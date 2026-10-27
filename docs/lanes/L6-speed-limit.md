@@ -177,7 +177,11 @@ Agreement with the human reading (time share of the 601-s loop): rec 2 ~90 % (th
 ends ~0-7 s late). Wrong-side errors: none high; the served value was never above the human's.
 
 Live check after the install (07:01 CET): phone `/v1/speed_limit` served; road 14.0/s unchanged.
-(The live `speed_limit` recording over one loop is summarised in the hand-back.)
+Live loop on the phone (`/ws?topics=speed_limit`, 07:01:47-07:11:50 CET, 586 messages): null for 10 s,
+then 50 (built_up from env, 0.45); B-33 **40** (track 164) 07:10:46 -> back to 50 at 07:11:03 ("intersection
+after D-1"); the 70 at ~07:08:58 was again not detected (so the 70 sign was found in 1 of 3 passes).
+signd was restarted by L7 at 07:07:18 and L7 reinstalled the api at 07:11:46 with this lane's
+`speedlimit.py` (same md5) plus its own changes; `speed_limit` is still served.
 
 ## Limitations / nulls
 * **No junction detector**: the § 32 rule is approximated (junction signs, turn, distance cap). In the
@@ -200,3 +204,4 @@ Live check after the install (07:01 CET): phone `/v1/speed_limit` served; road 1
 api installed twice (06:59 and 07:01 CET, one `roadsense-api` restart each; the second carried the env
 prior fix after the first live check showed envd labelling the arterial "highway"); original api kept
 as `/usr/local/lib/roadsense/api.pre-l6`. No other unit touched; replay still the camera source.
+At 07:11:46 CET L7 installed its api over it (this lane's version kept by L7 as `api.pre-l7`).
