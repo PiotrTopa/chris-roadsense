@@ -113,8 +113,49 @@ Metrics (per ride and pooled):
 No threshold in the rule table is tuned on these six rides after the labels exist; anything changed
 after scoring is disclosed as in-sample.
 
-### 3. Build
-(filled in as the work proceeds)
+### 3. Build (14:40-15:05)
+* `speedlimit.py`: one extension point, `track_hooks` (called from a new `_decide(track, live)` wrapper around the
+  unchanged `_consider`); nothing else changed, 21/21 L6 tests pass.
+* `rules.py` (`RulesInEffect`, ~330 lines): wraps `SpeedLimit`; `effects` table compiled from `rules/pl.json`
+  (62 entries; every one of the 400 classifier classes that matters maps to an entry, checked against the phone's
+  class file); per-track judgement with the shared helpers (`quality`, `_geometry`, `_plate_for`,
+  `_distance_ahead`); active rules / recent / ahead; junction cues (L6 sign proxies copied from the engine's list,
+  own turn detector on the engine's heading window, traffic lights); expiry (caps per area, junction, hold, warning
+  range + 100 m grace); snapshot and a `summary()` for health and the HUD.
+* `state.py`: `rules_engine` owns the speed engine (`state.speed` stays as an alias, so L10's reset test and the
+  e2e tests are untouched); `lights` messages now also reach the derived path; `rules` emitted on change and once
+  a second; health carries `rules`. `server.py`: `GET /v1/rules`, status-page panel, HUD lines via `rules_hud()`
+  (ASCII, 92 chars). `tools/fake_daemons.py`: a B-25 track and an A-16 track on a second 20 s schedule so the api
+  e2e test can see a lasting rule and a warning. `docs/ARCHITECTURE.md`: endpoint row, `/ws` topic, topic schema.
+* Tests: `api/tests/test_rules.py`, 15 synthetic scenarios (priority road until D-2 / until a facing yield, B-36 not
+  ended by B-42 but by a junction sign, B-36 -> B-35 -> end plate, B-25 until B-42 / 3 km cap / truck plate ignored /
+  distance plate flagged, B-21 until a traffic-light junction which also ends a B-33 40 (and not with the cue off),
+  A-8 countdown and C-12, generic warning outside (225 m), B-2 on a side road flagged, B-26 not for this car,
+  height limit without a value, suppressed / 2-frame / other-roadway tracks ignored, repeat refreshes + turn proxy,
+  health strings). Whole suite 65/65 (`PYTHON=.venv-models/bin/python tools/smoke_api.sh`, 16 s).
+* `tools/rules_replay.py`: offline runner over a recorded `/ws` stream (raw lines or the recorder's wrapper), split
+  by ride with the camera messages, per-ride focal from `~/datasets/rides/<slug>/camera-replay.json`, prints
+  START/END/PASS/AHEAD/JUNC/IGN events in ride seconds, `--out` writes the intervals for scoring, `--no-lights`.
+* Cost: 13-20 us per message offline (laptop, all topics incl. camera skipped).
+* First look (NOT evaluation rides; used only to catch bugs): `winter-snow-rural` 765-880 s: D-1 with a plate at
+  765.0 (engine START D-1 765.0), yield + "STOP 50 m" plate at 861 (engine: A-7 at 861.0 ends the priority road;
+  D-2 passed 863.6 on the next pole), D-6 at 866-868 (engine PASS D-6 868.8), STOP at 868 (engine START B-20 868.4,
+  ended by the turn at the junction 879.1) - all checked on full frames. `a1-night` (motorway, night): three "A-24
+  cyclists ahead" warnings; one is a real warning triangle of another class (23 s), two are lights in the dark
+  (scores 0.46-0.67, 1-3 frames); two "traffic light" junction cues on a motorway (L7 false lights at night).
+  Change after this look (before any evaluation ride was scored): a track must have been SEEN in >= 2 frames by
+  the api (the provider's `hits` can be 3 on a track the api saw once).
+* Commits: 4c199b5 (engine, topic, tests, tools, docs).
+
+### 4. Phone deploy #1 (14:54-14:56)
+`~/l11/deploy.sh` as root: `api.pre-l11` backup, 5 files installed (`rules.py`, `speedlimit.py`, `state.py`,
+`server.py`, `rules/pl.json`), syntax check, `roadsense-api` restart. Finding: the api took **90 s to stop**
+(`State 'stop-sigterm' timed out. Killing.`): with a `/ws` client attached (this lane's recorder) the aiohttp
+shutdown waits for the websocket handler, which never returns; systemd killed it at its 90 s TimeoutStopSec.
+Pre-existing (earlier lanes restarted without a ws client); the recorder reconnected by itself, ~95 s of
+`a1-night` missing from the recording (not an evaluation ride). 14:56: all five units active, road 13.3/s, signs
+4.9/s, lights 2.8/s, `rules` at 0.5/s (heartbeat), `/v1/rules` served; first live cue: a "traffic light" junction
+at odo 1110 m on the A1 at night (false light, see above).
 
 ## Polish rules (sources)
 Primary text: **Rozporządzenie w sprawie znaków i sygnałów drogowych**, consolidated text Dz.U. 2019

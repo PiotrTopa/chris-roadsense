@@ -169,6 +169,8 @@ class RulesInEffect:
         reasons = []
         if t.hits < min_hits:
             reasons.append(f"hits {t.hits}<{min_hits}")
+        if t.n < 2:                       # the provider's hit count may be 3 on a track we saw in one frame (night, far)
+            reasons.append(f"seen in {t.n} frame")
         if vote < sp.cfg["min_vote"]:
             reasons.append(f"vote {vote:.2f}<{sp.cfg['min_vote']}")
         min_score = eff.get("min_score", sp.cfg["min_mean_score"])
