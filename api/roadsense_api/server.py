@@ -45,6 +45,8 @@ class PreviewRenderer:
             hud.append(f"lights {st.fps('lights'):.1f} Hz  " + (
                 f"ego {ego['state'].upper()}{' flashing' if ego.get('flashing') else ''} #{ego['track_id']} {ego['dist_m']:.0f} m"
                 if ego else "ego none"))
+        if "rules" in st.latest:
+            hud += rules_hud(st.rules_engine.summary())
         ride = ride_line(cam, ascii_only=True)
         if ride:
             hud.append(ride)
@@ -74,6 +76,18 @@ class PreviewRenderer:
             self.frame_id += 1
             ev, self.event = self.event, asyncio.Event()
             ev.set()
+
+
+def rules_hud(summary, width=92):
+    """Up to three ASCII HUD lines (IN EFFECT / RECENT / AHEAD) from RulesInEffect.summary()."""
+    out = []
+    for label, items in (("IN EFFECT", summary["in_effect"]), ("RECENT", summary["recent"]), ("AHEAD", summary["ahead"])):
+        if not items:
+            continue
+        s = f"{label}: " + " | ".join(items)
+        s = s.encode("ascii", "ignore").decode()
+        out.append(s if len(s) <= width else s[:width - 3] + "...")
+    return out
 
 
 def ride_line(cam, ascii_only=False):
@@ -124,6 +138,13 @@ async def h_speed_limit(req):
     if "speed_limit" not in st.latest:
         return _json({"error": "no road/signs message yet"}, 503)
     return _json(st.speed.snapshot(full=True))
+
+
+async def h_rules(req):
+    st = req.app["state"]
+    if "rules" not in st.latest:
+        return _json({"error": "no road/signs message yet"}, 503)
+    return _json(st.rules_engine.snapshot(full=True))
 
 
 async def h_lights(req):
@@ -261,6 +282,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
     app.router.add_get("/v1/signs/history", h_signs_history)
     app.router.add_get("/v1/env", h_env)
     app.router.add_get("/v1/speed_limit", h_speed_limit)
+    app.router.add_get("/v1/rules", h_rules)
     app.router.add_get("/v1/lights", h_lights)
     app.router.add_get("/v1/camera", h_camera)
     app.router.add_get("/v1/health", h_health)
@@ -288,6 +310,7 @@ pre{margin:0;white-space:pre-wrap}
 <h2>road</h2><pre id="road">...</pre>
 <h2>signs (live)</h2><pre id="signs">...</pre>
 <h2>environment</h2><pre id="env">...</pre>
+<h2>rules in effect</h2><pre id="rules">...</pre>
 <h2>speed limit</h2><pre id="speed">...</pre>
 <h2>traffic lights</h2><pre id="lights">...</pre></section>
 </main><script>
@@ -339,6 +362,20 @@ async function tick(){
         ...sl.pending.map(p => `pending #${p.track_id} ${p.sign} ${p.value_kmh || ""} hits ${p.hits} q ${f(p.quality, 2)}`),
         ...(sl.recent_changes || []).slice(0, 3).map(c => `  ${f(c.odo_m, 0)} m: ${c.event}`)
       ].filter(Boolean).join("\\n") : "no data";
+    const ru = await get("/v1/rules");
+    $("rules").textContent = ru ? [
+        ...(ru.in_effect.length ? ru.in_effect.map(e => `${e.sign.padEnd(6)} ${(e.name + (e.value != null ? " " + e.value + " " + (e.unit || "") : "")).padEnd(34)} ` +
+          `${e.side ? "(" + e.side + ") " : ""}since ${f(e.since.distance_m, 0)} m / ${f(e.since.age_s, 0)} s  conf ${f(e.confidence, 2)}  ` +
+          `${e.source.kind === "sign" ? "#" + e.source.track_id : e.source.kind}${e.uncertain && e.uncertain.length ? "  ? " + e.uncertain.join(", ") : ""}` +
+          `${e.ends ? "\\n       until: " + e.ends + (e.remaining_m != null ? " (cap in " + f(e.remaining_m, 0) + " m)" : "") : ""}`) : ["nothing in effect"]),
+        "recent: " + (ru.recent.length ? ru.recent.map(e => `${e.sign} ${e.name} ${f(e.passed.age_s, 0)} s ago` + (e.applies_to_car ? "" : " (not this car)") +
+          (e.uncertain && e.uncertain.length ? " ?" : "")).join("; ") : "-"),
+        "ahead:  " + (ru.ahead.length ? ru.ahead.map(w => `${w.sign} ${w.name} ~${f(w.expected_in_m, 0)} m (${f(w.range_m[0], 0)}-${f(w.range_m[1], 0)})`).join("; ") : "-"),
+        `junction: ${ru.junction.last ? ru.junction.last.source + " " + f(ru.junction.last.age_m, 0) + " m ago" : "none seen"}  ` +
+          `area ${ru.area.type} (${ru.area.source})  road ${ru.road_class}  zone ${ru.zone.type}`,
+        ...(ru.pending || []).map(p => `pending #${p.track_id} ${p.sign} ${p.id} hits ${p.hits} q ${f(p.quality, 2)}`),
+        ...(ru.recent_changes || []).slice(0, 4).map(c => `  ${f(c.odo_m, 0)} m: ${c.event}`)
+      ].join("\n") : "no data";
     const lt = await get("/v1/lights");
     $("lights").textContent = lt ? [
         lt.ego ? `ego ${lt.ego.state}${lt.ego.flashing ? " (flashing)" : ""}  #${lt.ego.track_id}  ${f(lt.ego.dist_m, 0)} m  ` +

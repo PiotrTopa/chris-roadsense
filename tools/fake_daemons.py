@@ -27,6 +27,8 @@ T_IDXS = [10.0 * (i / 32) ** 2 for i in range(33)]
 LEAD_T = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
 RING_FMT = "<8s8I3f4xQQ"
 SIGN_LIFE, SIGN_GAP = 40, 15
+# a second schedule (period 200 frames) with a lasting rule and a warning for the `rules` topic:
+EXTRA_SIGNS = ((60, "regulatory--no-overtaking", 71), (120, "warning--pedestrians-crossing", 300))   # (start, cls, cls_id)
 
 
 def now_ns():
@@ -194,6 +196,18 @@ class Fake:
             ended.append({"track_id": self.track_id, "cls": "regulatory--maximum-speed-limit-50",
                           "first_seq": first, "last_seq": self.seq - 3, "hits": SIGN_LIFE, "best_score": 0.9,
                           "best_crop": os.path.join(self.rundir, "crops", f"{self.track_id}.jpg")})
+        k2 = self.sign_frame % 200
+        for i, (start, cls, cls_id) in enumerate(EXTRA_SIGNS):
+            j, tid = k2 - start, 900000 + 2 * (self.sign_frame // 200) + i
+            if 0 <= j < SIGN_LIFE:
+                s = 30 + 2 * j
+                x0, y0 = 1200 + 10 * j, 400 - 6 * j
+                dets.append({"track_id": tid, "cls": cls, "cls_id": cls_id, "score": round(0.6 + 0.3 * j / SIGN_LIFE, 3),
+                             "box": [x0, y0, x0 + s, y0 + s], "age": j, "hits": j + 1})
+            elif j == SIGN_LIFE:
+                ended.append({"track_id": tid, "cls": cls, "first_seq": self.seq - 3 * SIGN_LIFE, "last_seq": self.seq - 3,
+                              "hits": SIGN_LIFE, "best_score": 0.9,
+                              "best_crop": os.path.join(self.rundir, "crops", f"{tid}.jpg")})
         self.sign_frame += 1
         return {**self.hdr("signs"), "detect_ms": 85.0, "detections": dets, "tracks_ended": ended}
 

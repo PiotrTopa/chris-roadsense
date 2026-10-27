@@ -132,6 +132,28 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(h["limit_kmh"], 50)
         self.assertIn(b"/v1/speed_limit", self.fetch("/")[2])
 
+    def test_rules(self):
+        # the fake signd also shows a B-25 (no overtaking) track at 6-10 s and an A-16 warning at 12-16 s of each 20 s
+        self.wait(lambda: any(e["id"] == "no_overtaking" for e in self.get("/v1/rules")["in_effect"]), 25)
+        r = self.get("/v1/rules")
+        for k in ("type", "in_effect", "recent", "ahead", "junction", "area", "road_class", "zone", "v_ego_kmh",
+                  "odometer_m", "rules", "pending", "recent_changes", "ignored"):
+            self.assertIn(k, r)
+        self.assertEqual(r["type"], "rules")
+        by_id = {e["id"]: e for e in r["in_effect"]}
+        self.assertEqual(by_id["no_overtaking"]["sign"], "B-25")
+        self.assertIn("intersection", by_id["no_overtaking"]["ends"])
+        for k in ("source", "since", "confidence", "ends", "remaining_m", "uncertain", "applies_to_car", "side"):
+            self.assertIn(k, by_id["no_overtaking"])
+        self.assertEqual(by_id["speed_limit"]["value"], 50)         # the L6 engine's B-33 50, as one of the rules
+        h = self.get("/v1/health")["rules"]
+        self.assertIn("B-25 no overtaking", h["in_effect"])
+        self.assertIn(b"/v1/rules", self.fetch("/")[2])
+        self.wait(lambda: any(w["id"] == "pedestrian_crossing_ahead" for w in self.get("/v1/rules")["ahead"]), 25)
+        w = next(w for w in self.get("/v1/rules")["ahead"] if w["id"] == "pedestrian_crossing_ahead")
+        self.assertEqual(w["sign"], "A-16")
+        self.assertIn("expected_in_m", w)
+
     def test_lights(self):
         lt = self.get("/v1/lights")
         self.assertEqual(lt["type"], "lights")
@@ -202,14 +224,14 @@ class ApiTest(unittest.TestCase):
         async def run():
             got = []
             async with aiohttp.ClientSession() as s:
-                async with s.ws_connect(self.base + "/ws?topics=road,signs,env,speed_limit") as ws:
-                    while len(got) < 30 or "speed_limit" not in got:
+                async with s.ws_connect(self.base + "/ws?topics=road,signs,env,speed_limit,rules") as ws:
+                    while len(got) < 30 or "speed_limit" not in got or "rules" not in got:
                         msg = await asyncio.wait_for(ws.receive(), 5)
                         got.append(json.loads(msg.data)["type"])
             return got
 
         types = asyncio.run(run())
-        self.assertTrue(set(types) <= {"road", "signs", "env", "speed_limit"})
+        self.assertTrue(set(types) <= {"road", "signs", "env", "speed_limit", "rules"})
         self.assertIn("signs", types)
         self.assertIn("env", types)
 

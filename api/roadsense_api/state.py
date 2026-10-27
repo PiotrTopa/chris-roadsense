@@ -8,10 +8,11 @@ import time
 
 from . import lights as lights_mod
 from . import signctx
-from .speedlimit import SpeedLimit, load_rules
+from .rules import RulesInEffect
+from .speedlimit import load_rules
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd")
-TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights")
+TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules")
 SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
 LIVE_TRACK_TIMEOUT_S = 2.0
@@ -83,8 +84,10 @@ class State:
             self.history_file = os.path.join(datadir, "signs.jsonl")
         self.subscribers = set()                           # callables(type, line)
         self.version = 0                                   # bumps on every message (overlay cache key)
-        self.speed = SpeedLimit(load_rules(rules))         # derived topic `speed_limit`
+        self.rules_engine = RulesInEffect(load_rules(rules))   # derived topics `rules` and `speed_limit`
+        self.speed = self.rules_engine.speed
         self._speed_emit = 0.0
+        self._rules_emit = 0.0
         self._speed_geom = False
         self._rules = rules
         self._camera_key = None                            # (ride, ride_index) of the last camera message
@@ -122,7 +125,7 @@ class State:
             self._on_signs(msg, now)
         for cb in list(self.subscribers):
             cb(mtype, line)
-        if mtype in ("road", "signs", "env"):
+        if mtype in ("road", "signs", "env", "lights"):
             self._on_speed(msg, now)
 
     def _on_camera(self, msg):
@@ -139,7 +142,8 @@ class State:
 
     def reset_drive(self):
         self.ride_changes += 1
-        self.speed = SpeedLimit(load_rules(self._rules))
+        self.rules_engine = RulesInEffect(load_rules(self._rules))
+        self.speed = self.rules_engine.speed
         self._speed_geom = False
         self.live_tracks.clear()
         self.suppressed_tracks.clear()
@@ -152,20 +156,26 @@ class State:
                 f, cx, _, w, _ = self.intrinsics()
                 self.speed.cfg.update(focal_px=f, cx=cx, width=w)
                 self._speed_geom = True
+        sv = self.speed.version
         try:
-            changed = self.speed.on_message(msg)
+            rules_changed = self.rules_engine.on_message(msg)   # feeds the speed-limit engine too
         except Exception:                 # a malformed provider message must not stop the fan-out
             import logging
-            logging.getLogger("roadsense_api.state").exception("speed_limit update failed")
+            logging.getLogger("roadsense_api.state").exception("rules/speed_limit update failed")
             return
-        if changed or now - self._speed_emit >= SPEED_LIMIT_HEARTBEAT_S:
+        if self.speed.version != sv or now - self._speed_emit >= SPEED_LIMIT_HEARTBEAT_S:
             self._speed_emit = now
-            out = self.speed.snapshot()
-            self.latest["speed_limit"] = out
-            self.arrivals["speed_limit"].append(now)
-            line = json.dumps(out, separators=(",", ":"))
-            for cb in list(self.subscribers):
-                cb("speed_limit", line)
+            self._emit("speed_limit", self.speed.snapshot(), now)
+        if rules_changed or now - self._rules_emit >= SPEED_LIMIT_HEARTBEAT_S:
+            self._rules_emit = now
+            self._emit("rules", self.rules_engine.snapshot(), now)
+
+    def _emit(self, topic, out, now):
+        self.latest[topic] = out
+        self.arrivals[topic].append(now)
+        line = json.dumps(out, separators=(",", ":"))
+        for cb in list(self.subscribers):
+            cb(topic, line)
 
     def _on_signs(self, msg, now):
         for d in msg.get("detections") or []:
@@ -257,6 +267,7 @@ class State:
                             "confidence": sl["confidence"], "area": sl["area"]["type"]} if sl else None,
             "lights_ms": lt.get("lights_ms"),
             "lights": lt.get("ego") if lt else None,
+            "rules": self.rules_engine.summary() if "rules" in self.latest else None,
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
             "battery": battery(),

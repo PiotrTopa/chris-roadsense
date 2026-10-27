@@ -116,6 +116,7 @@ class SpeedLimit:
         self.version = 0
         self._last_key = None
         self._since = None
+        self.track_hooks = []             # callables(track, live): other engines judge the classes this one ignores
 
     # ---- inputs ----------------------------------------------------------
     def on_message(self, msg):
@@ -177,17 +178,24 @@ class SpeedLimit:
                 t = self.tracks[tid] = _Track(tid, ts)
             t.add(d, ts)
         for t in list(self.tracks.values()):      # after all boxes of this frame are in (plates)
-            if not t.committed and t.last_ns == ts and t.hits >= self.cfg["early_commit_hits"]:
-                self._consider(t, live=True)
+            if t.last_ns == ts and t.hits >= self.cfg["early_commit_hits"]:
+                self._decide(t, live=True)
         for e in msg.get("tracks_ended") or []:
             t = self.tracks.pop(e.get("track_id"), None)
             if t is not None:
                 if e.get("suppressed"):
                     t.suppressed = e.get("reason") or "suppressed"
-                self._consider(t, live=False)
+                self._decide(t, live=False)
         for tid in [k for k, t in self.tracks.items() if (ts - t.last_ns) / NS > LIVE_TRACK_TIMEOUT_S]:
-            self._consider(self.tracks.pop(tid), live=False)
+            self._decide(self.tracks.pop(tid), live=False)
         self._check_expiry()
+
+    def _decide(self, t, live):
+        """Judge a track: this engine's own classes, then every hook (rules.py) with the same track object."""
+        if not t.committed:
+            self._consider(t, live)
+        for cb in self.track_hooks:
+            cb(t, live)
 
     # ---- track evaluation -------------------------------------------------
     def _rule(self, cls):

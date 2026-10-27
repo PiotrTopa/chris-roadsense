@@ -457,14 +457,15 @@ message-level `ego` for the light that applies to the ego lane:
 | `GET /v1/env` | latest `env` message (place / weather / light with scores and confidence) |
 | `GET /v1/speed_limit` | current speed limit derived by the api (topic `speed_limit`, below) plus `recent_changes` and `ignored` sign tracks |
 | `GET /v1/lights` | latest `lights` message with the api's ego-lane annotation (`ego`, per light `dist_m`, `lateral_m`, `relevance`) |
+| `GET /v1/rules` | rules in effect for the car derived by the api (topic `rules`, below: `in_effect`, `recent`, `ahead`) plus `pending`, `recent_changes` and `ignored` sign tracks |
 | `GET /v1/camera` | latest `camera` message + ring header fields |
-| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `lights_ms` and the ego light; CPU temp, battery |
+| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light; CPU temp, battery |
 | `GET /v1/frame.jpg` | current preview JPEG |
-| `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top |
-| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`; `?topics=road,signs,env,speed_limit,lights` filters |
+| `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
+| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit` and `rules`; `?topics=road,signs,env,speed_limit,rules,lights` filters |
 
-api never touches the camera or the models; it is a fan-out and overlay layer, plus one derived
-topic below.
+api never touches the camera or the models; it is a fan-out and overlay layer, plus the two derived
+topics below.
 
 ### api-derived topic: `{"type":"speed_limit", ...}`
 `api/roadsense_api/speedlimit.py` turns the documented `signs` contract (only `detections[]`
@@ -491,6 +492,42 @@ Rules are data: `api/roadsense_api/rules/<country>.json` (`--rules`, env `ROADSE
               "quality":0.6,"lateral_m":3.2} ],   // live tracks not yet confirmed
 "v_ego_kmh": 48.2, "odometer_m": 3837.0, "rules": "PL"
 ```
+### api-derived topic: `{"type":"rules", ...}`
+`api/roadsense_api/rules.py` (lane L11) generalises the speed-limit engine: it owns the `SpeedLimit` above,
+feeds it every `road` / `signs` / `env` message and also takes `lights`, and judges every other sign class of
+the rule table `rules/<country>.json` -> `effects` (category, how it ends, side, legal source, guesses marked)
+with the same track confirmation, lateral-position and plate code. Sent on `/ws` on every change and at least
+once a second; `/v1/rules` adds `pending`, `recent_changes` and `ignored`. Design, Polish sources, rule table
+and the offline evaluation: `docs/lanes/L11-signs-in-effect.md`; offline runner `tools/rules_replay.py`.
+
+```
+"in_effect": [                           // lasting rules + momentary signs that bind at the next intersection
+  {"id":"speed_limit","sign":"B-33","name":"speed limit","category":"lasting","value":40,"unit":"km/h",
+   "source":{"kind":"sign","track_id":164,"cls":"regulatory--maximum-speed-limit-40",...},   // as in speed_limit
+   "since":{"ts_real_ns":..,"age_s":12.3,"distance_m":180.0}, "confidence":0.71,
+   "ends":"next intersection (par. 32 ust. 2)", "remaining_m":520.0, "uncertain":[], "applies_to_car":true, "side":null},
+  {"id":"built_up_area","sign":"D-42","name":"built-up area",...,"source":{"kind":"env"},"uncertain":["entry sign D-42 not observable; area from envd"]},
+  {"id":"no_stopping","sign":"B-36","name":"no stopping","category":"lasting","value":null,"unit":null,
+   "source":{"kind":"sign","track_id":1780,"cls":"regulatory--no-stopping","hits":14,"vote":1.0,"score":0.81,"lateral_m":3.4,"plate":null},
+   "since":{...}, "confidence":0.62, "ends":"next intersection (par. 32 ust. 2), B-35 or an end plate",
+   "remaining_m":430.0, "uncertain":["plate complementary--distance"], "applies_to_car":true, "side":"right"},
+  {"id":"no_left_turn","sign":"B-21","category":"momentary",...,"ends":"the next intersection (par. 22 ust. 2)"} ],
+   // other ids: priority_road, no_parking, no_overtaking, height_limit, weight_limit, width_limit, one_way,
+   // living_street, motorway, expressway, stop, yield, no_right_turn, no_u_turn, mandatory_direction
+"recent": [                              // momentary signs just passed, newest first; kept 300 m / 120 s
+  {"id":"no_entry","sign":"B-2","name":"no entry","category":"momentary","source":{...},
+   "passed":{"age_s":8.1,"distance_m":95.0}, "confidence":0.7, "uncertain":["side road?"], "applies_to_car":true,
+   "lateral_m":11.2, "ended":null} ],   // `ended`: why an until-intersection sign left in_effect
+"ahead": [                               // warning signs, nearest first
+  {"id":"roundabout_ahead","sign":"A-8","name":"roundabout ahead","category":"warning","source":{...},
+   "expected_in_m":60.0, "range_m":[0.0,60.0], "since_sign_m":40.0, "confidence":0.66, "uncertain":[]} ],
+"junction": {"last":{"odo":2318.0,"source":"sign D-1/D-2|traffic light|turn","detail":1780,"ts_real_ns":..,"age_m":12.0},"count":6},
+"area": {...}, "road_class": "ordinary", "zone": {...}, "v_ego_kmh": 48.2, "odometer_m": 3837.0, "rules": "PL"
+```
+`/v1/health` carries `rules: {"in_effect": ["B-33 40", "D-42 built-up area?", "B-36 no stopping (R)"],
+"recent": ["B-2 no entry"], "ahead": ["A-8 roundabout ahead ~60 m"]}` (a trailing `?` marks an uncertain entry).
+A ride change or camera restart replaces the engine (L10), like the speed limit.
+
 Overlays project the 3D road outputs into the image with the pinhole model
 from the ring header (focal_px, cx, cy) and the calibration used by modeld,
 published by modeld in a `{"type":"calib", ...}` message to every client when it
