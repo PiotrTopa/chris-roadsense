@@ -373,7 +373,7 @@ still report it, flagged, so the reason stays inspectable: `"suppressed": true, 
 `verifier` (mean probability of a small real-sign-vs-lamp CNN below 0.5, if one is installed), `glow`
 (most of the track's detections look like a lamp: blown-out core fading into bright pink-red; only while
 the verifier is unsure too, since sunlit real signs glow as well) and, for any class, `score` (best
-detector score below a per-class minimum, e.g. `no-entry` 0.71). It also reports `glow` (that share, 0..1) and `verify` (the verifier mean) on round red tracks.
+detector score below a per-class minimum, e.g. `no-entry` 0.71). A classifier with a "not a sign" class (L12) flags tracks voted `background` with `not_a_sign`; its `other-sign` class (a real sign outside the known classes) is reported unflagged and matches no rule. It also reports `glow` (that share, 0..1) and `verify` (the verifier mean) on round red tracks.
 The api adds its own context checks (`api/roadsense_api/signctx.py`): a round red track whose box centre
 sits inside a traffic light box (`lights` topic) or inside the lead vehicle's rear (modeld `leads[0]`
 projected, 2.6 m x 0-2 m) for >= half of its detections gets `"context": {"traffic_light": share,
