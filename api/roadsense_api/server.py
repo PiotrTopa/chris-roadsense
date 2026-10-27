@@ -5,8 +5,9 @@ import logging
 import os
 import time
 import unicodedata
+import weakref
 
-from aiohttp import WSMsgType, web
+from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import overlay
 from .sockets import start_clients
@@ -203,6 +204,7 @@ async def h_ws(req):
     topics = {t for t in req.query.get("topics", "").split(",") if t}
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(req)
+    req.app["websockets"].add(ws)          # closed on shutdown, so a restart does not wait for clients
     q = asyncio.Queue(maxsize=WS_QUEUE_MAX)
 
     def push(mtype, line):
@@ -257,6 +259,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
     app = web.Application()
     app["state"] = state
     app["preview_path"] = os.path.join(rundir, "preview.jpg")
+    app["websockets"] = weakref.WeakSet()
     app.on_response_prepare.append(_cors)
 
     async def startup(app):
@@ -270,8 +273,10 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
             t.cancel()
         await asyncio.gather(*app["tasks"], return_exceptions=True)
 
-    async def shutdown(app):      # wake /preview handlers so they finish
+    async def shutdown(app):      # wake /preview handlers and close /ws clients so they finish (else systemd waits 90 s)
         app["renderer"].event.set()
+        for ws in set(app["websockets"]):
+            await ws.close(code=WSCloseCode.GOING_AWAY, message=b"api shutdown")
 
     app.on_startup.append(startup)
     app.on_shutdown.append(shutdown)
