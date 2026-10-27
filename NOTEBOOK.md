@@ -21,6 +21,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L4 GPU turn-taking (signd/modeld) | Opus | done (2026-10-27 00:28 CET) | docs/lanes/L4-gpu-sched.md |
 | L6 speed-limit state from sign tracks | Opus | done (2026-10-27 ~07:15 CET) | docs/lanes/L6-speed-limit.md |
 | L7 traffic lights (detector + state) | Opus | done (2026-10-27 ~08:20 CET) | docs/lanes/L7-traffic-lights.md |
+| L8 sign false positives (lamps as no-entry) + negative training | Opus | running (2026-10-27) | docs/lanes/L8-sign-fp.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
@@ -178,3 +179,9 @@ Deviation: one laptop job briefly ran ~16 threads (cap 8) for ~1 min.
 Changes: roadsense 60914fb, roadsense-signs 046642a; phone runs signd with lights, old binary *.pre-l7.
 Roadmap: expressway default fix (fold 6), lights as junction cue for speed limits, own recordings
 (yellow/red+yellow, night), mount + calibration (also sets the lights ROI from pitch).
+
+### Note (2026-10-27, user report -> L8)
+User: "no entry" often fires on the lead car's stop lamps. Coordinator check of the phone's sign history:
+9/100 tracks were no-entry; of 6 inspected crops 3 real (score 0.86-0.88), 2 bus/tram brake lamps (0.50-0.55,
+up to 123 hits), 1 red traffic light (0.59). User ruling: do all fixes (class threshold, overlap with lights /
+lead vehicle, glow check) and look for better data for negative training.
