@@ -90,3 +90,16 @@ starting within 67 +- 10 s, and any track classed `information--limited-access-r
 4. Phone cost: road >= 13/s and signs >= 4.5/s with the new models installed (15-min window), classifier ms/crop
    within 1.5x of base.
 Everything is reported whatever the outcome; a variant that fails is a null with its numbers.
+
+### Pre-registration addendum (20:5x, before any tracker variant or new model is scored)
+Diagnosis while checking the base stream (E4 case, base models only): the krakow B-33 70 is **detected** on every
+processed frame of its pass (84.6-85.9 s, raw scores 0.64-0.87, classifier p = 1.0; same on the phone's recorded
+stream and offline) but **never tracked**: between two processed frames (every 4th, 5 Hz) the small sign at the right
+edge moves ~1.1 box widths, the new track has no velocity yet, so neither pass of the association matches (IoU 0,
+centre distance 1.10 > `dist_match` 1.0) and every detection starts a new 1-hit track; none reaches `min_hits` 3.
+The miss is the tracker's, not the detector's or the classifier's. Change (roadsense-signs): `--dist-match-new X`
+(default 1.0 = unchanged) is the fallback distance for tracks with one hit only. Value **2.0**, from that one
+geometry (in-sample for the B-33 70 case, disclosed). Extra variants: **trk** = base models + `--dist-match-new 2.0`;
+**cls1trk** = cls1 + `--dist-match-new 2.0`. The deploy rule above applies to every variant against base; if more
+than one passes, the one with the lowest false rules + missed intervals (E3 totals) is deployed, ties to the
+smaller change.
