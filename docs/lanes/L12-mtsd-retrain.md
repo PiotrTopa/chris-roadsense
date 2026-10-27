@@ -91,7 +91,7 @@ starting within 67 +- 10 s, and any track classed `information--limited-access-r
    within 1.5x of base.
 Everything is reported whatever the outcome; a variant that fails is a null with its numbers.
 
-### Pre-registration addendum (20:5x, before any tracker variant or new model is scored)
+### Pre-registration addendum (20:20, before any tracker variant or new model is scored)
 Diagnosis while checking the base stream (E4 case, base models only): the krakow B-33 70 is **detected** on every
 processed frame of its pass (84.6-85.9 s, raw scores 0.64-0.87, classifier p = 1.0; same on the phone's recorded
 stream and offline) but **never tracked**: between two processed frames (every 4th, 5 Hz) the small sign at the right
