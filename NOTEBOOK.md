@@ -20,7 +20,7 @@ Open question that opens L1: can signs move to the GPU, or is the GPU already sa
 | L3 speed-tune + envd on phone | Opus | done (2026-10-26 21:40 CET) | docs/lanes/L3-speed.md |
 | L4 GPU turn-taking (signd/modeld) | Opus | done (2026-10-27 00:28 CET) | docs/lanes/L4-gpu-sched.md |
 | L6 speed-limit state from sign tracks | Opus | done (2026-10-27 ~07:15 CET) | docs/lanes/L6-speed-limit.md |
-| L7 traffic lights (detector + state) | Opus | running (2026-10-27) | docs/lanes/L7-traffic-lights.md |
+| L7 traffic lights (detector + state) | Opus | done (2026-10-27 ~08:20 CET) | docs/lanes/L7-traffic-lights.md |
 | L5 ride replay (10-min dashcam ride as camera source) | Opus | done; replay live on the phone since 23:16 CET (2514b6c) | docs/lanes/L5-ride-replay.md |
 
 ## Fold 1 (2026-10-24): signs on the GPU (L1, Fable)
@@ -157,3 +157,24 @@ mount + calibration; envd place stability; own recordings; boost auto-recovery.
 Deviation: two api restarts on the phone instead of one (env prior fix). L7 later installed its api build
 containing the same speedlimit.py.
 Changes: roadsense 723d9f9..794162d.
+
+## Fold 7 (2026-10-27): traffic lights (L7, Opus)
+- [FAV] Lights live: `signd --lights` (2nd thread, lightd.sock, AGPL repo) with BDD100K YOLO11n on a 960x320
+  band of the upper frame, ncnn CPU on the big cores at 3 Hz, state CNN per crop; api picks the ego light
+  from modeld's path (/v1/lights, /ws, overlay, health). 15 min: road 14.04 -> 13.70/s (-2.4 %), signs 4.99,
+  lights 3.0/s, frame->ws 139/168 ms; die 62-72 C (one 84 C). Verified live 08:2x CET.
+- [FAV] Accuracy: detector AP50 61.1 on held-out BDD val (C++ on the phone 61.9 = Python); state CNN recall
+  red 87 / yellow 61 / green 96 (macro 81.3 vs Autoware 74.9, colour rule 63.7). Krakow loop: ego light right
+  at all three junctions, one red -> red+yellow -> green sequence captured.
+- [UNFAV] Weights are research-licensed (BDD100K) and AGPL (Ultralytics): fetched locally, never committed.
+  Yellow recall weak; night, flashing yellow, green arrows unverified; DVR camera untested; ROI assumes a
+  centred horizon; ego choice ignores lane arrows and turn intent.
+- [UNFAV] GPU placement is a null (detector needs ~100 ms per turn; modeld reclaims after 80 ms: road 9.95/s).
+- [INSTR] Fixed a status-page JavaScript syntax error (raw newline from join("\n") in server.py).
+Permission denial (surfaced to the user verbatim): loading the downloaded dronefreak/bdd100k-yolov8n .pt
+was refused by the auto-mode classifier ("Code from External"); file deleted unloaded; that GPU-friendly
+variant stays unevaluated.
+Deviation: one laptop job briefly ran ~16 threads (cap 8) for ~1 min.
+Changes: roadsense 60914fb, roadsense-signs 046642a; phone runs signd with lights, old binary *.pre-l7.
+Roadmap: expressway default fix (fold 6), lights as junction cue for speed limits, own recordings
+(yellow/red+yellow, night), mount + calibration (also sets the lights ROI from pitch).
