@@ -11,9 +11,10 @@ Documentation=https://github.com/PiotrTopa/roadsense/blob/main/docs/ARCHITECTURE
 # still gets every core it asks for.
 CPUWeight=100
 IOWeight=100
-# The phone has 5.5 GiB; the full stack (models + rings + ORT/ncnn arenas) uses
-# ~1.2 GiB. Reclaim starts at MemoryHigh, the OOM killer at MemoryMax, so a
-# leaking daemon can never take the car computer down with it.
-MemoryHigh=3G
-MemoryMax=3584M
+# No memory throttling: the stack may use what it needs (the earlier 3 GiB
+# MemoryHigh / 3.5 GiB MemoryMax cap was too tight). MemoryMax is only an OOM
+# backstop on the 5.5 GiB reference phone, leaving ~1 GiB to the host; the host
+# protects its own application (the Prius backend: MemoryLow/MemoryMax in its
+# unit) and may restrict the cores with a drop-in (AllowedCPUs).
+MemoryMax=4608M
 TasksMax=512

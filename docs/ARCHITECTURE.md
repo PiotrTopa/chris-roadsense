@@ -549,11 +549,14 @@ and enables `roadsense.target`. Models under `/var/lib/roadsense/models`,
 fetched with `scripts/fetch-models.sh`. A sign provider installs its own unit
 with `PartOf=`/`WantedBy=roadsense.target`; the target does not require it.
 Every unit runs in `roadsense.slice` (`systemd/roadsense.slice`: CPUWeight 100,
-MemoryHigh 3G / MemoryMax 3584M) so whatever else the machine does stays
-responsive while the stack saturates the GPU and the big cores; a sign provider
-puts `Slice=roadsense.slice` in its unit too. The API port is
-`ROADSENSE_API_PORT` (`/etc/roadsense/api.env`, written by
-`API_PORT=N scripts/install-phone.sh`; default 8080).
+no memory throttling, MemoryMax 4608M as an OOM backstop only) so whatever else
+the machine does stays responsive while the stack saturates the GPU and the big
+cores; a sign provider puts `Slice=roadsense.slice` in its unit too. A host may
+add a slice drop-in (e.g. `AllowedCPUs=`) to keep the stack off cores it
+reserves. The API port and bind address are `ROADSENSE_API_PORT` /
+`ROADSENSE_API_HOST` (`/etc/roadsense/api.env`, written by
+`API_PORT=N API_HOST=ADDR scripts/install-phone.sh`; defaults 8080 / 0.0.0.0;
+a loopback bind also removes the nftables opening).
 
 ## Running under a host controller (the car computer)
 
@@ -570,6 +573,13 @@ with this stack is exactly:
 * **health**: `GET /v1/health` on `ROADSENSE_API_PORT` (8090 on that machine,
   because the car backend serves 8080); a silent API is restarted by the host
   after a timeout;
+* **API front**: on that machine the API listens on `127.0.0.1` only
+  (`ROADSENSE_API_HOST`); the car backend re-publishes the HTTP/WS endpoints
+  to its own clients (`/api/v1/roadsense/...`), over HTTP, without importing
+  any roadsense code;
+* **cores**: the host reserves cpu3 for its backend with a
+  `roadsense.slice.d` drop-in (`AllowedCPUs=0-2,4-7`); `--prep-cpus 0-3` /
+  `--cpus 4-7` masks are intersected with that set by the kernel;
 * **camera power**: the host switches the USB hub that carries the DVR camera
   (powerbox relay ch4) on before the start and off after the stop;
   `camerad-dvr --auto` tolerates the camera appearing late;

@@ -16,7 +16,7 @@ def main():
                     help="frame ring file, read for its header only")
     ap.add_argument("--rules", default=os.environ.get("ROADSENSE_RULES", "pl"),
                     help="speed-limit rule set (roadsense_api/rules/<name>.json)")
-    ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--host", default=os.environ.get("ROADSENSE_API_HOST", "0.0.0.0"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("ROADSENSE_API_PORT", 8080)))
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()

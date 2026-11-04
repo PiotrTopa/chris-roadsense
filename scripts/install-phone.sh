@@ -18,11 +18,27 @@ for m in models/*.onnx models/*.param models/*.bin models/*.txt models/*.json; d
 for c in camera.json calib.json modeld.json envd.json; do
     [ -f "/etc/roadsense/$c" ] || { [ -f "config/$c" ] && install -m 644 "config/$c" /etc/roadsense/; }
 done
-# API port: API_PORT=N writes /etc/roadsense/api.env (kept afterwards); the car computer uses 8090
-# because its own backend serves 8080. The nftables rule follows the port in api.env (default 8080).
-if [ -n "${API_PORT:-}" ]; then printf 'ROADSENSE_API_PORT=%s\n' "$API_PORT" > /etc/roadsense/api.env; fi
+# API port/bind: API_PORT=N / API_HOST=ADDR write /etc/roadsense/api.env (kept afterwards; an
+# unset one keeps its current value). The car computer uses 8090 on 127.0.0.1: its own backend
+# serves 8080 and re-publishes this API, so nothing outside the phone talks to it directly.
+# The nftables rule follows api.env: opened for the port (default 8080) unless the API is
+# loopback-only, in which case a previously installed rule is removed.
+OLD_PORT=$(sed -n 's/^ROADSENSE_API_PORT=//p' /etc/roadsense/api.env 2>/dev/null | tail -1)
+OLD_HOST=$(sed -n 's/^ROADSENSE_API_HOST=//p' /etc/roadsense/api.env 2>/dev/null | tail -1)
+if [ -n "${API_PORT:-}" ] || [ -n "${API_HOST:-}" ]; then
+    { printf 'ROADSENSE_API_PORT=%s\n' "${API_PORT:-${OLD_PORT:-8080}}"
+      [ -n "${API_HOST:-$OLD_HOST}" ] && printf 'ROADSENSE_API_HOST=%s\n' "${API_HOST:-$OLD_HOST}"
+    } > /etc/roadsense/api.env
+fi
 PORT=$(sed -n 's/^ROADSENSE_API_PORT=//p' /etc/roadsense/api.env 2>/dev/null | tail -1); PORT=${PORT:-8080}
-[ -d /etc/nftables.d ] && sed "s/8080/$PORT/" phone/50_roadsense.nft > /etc/nftables.d/50_roadsense.nft && systemctl try-restart nftables
+HOST=$(sed -n 's/^ROADSENSE_API_HOST=//p' /etc/roadsense/api.env 2>/dev/null | tail -1); HOST=${HOST:-0.0.0.0}
+if [ -d /etc/nftables.d ]; then
+    case "$HOST" in
+        127.*|localhost|::1) rm -f /etc/nftables.d/50_roadsense.nft ;;
+        *) sed "s/8080/$PORT/" phone/50_roadsense.nft > /etc/nftables.d/50_roadsense.nft ;;
+    esac
+    systemctl try-restart nftables
+fi
 install -m 644 systemd/roadsense-*.service systemd/roadsense.target systemd/roadsense.slice /etc/systemd/system/
 systemctl daemon-reload
 # boot autostart is opt-in (AUTOSTART=1): the reference phone overheats without cooling
