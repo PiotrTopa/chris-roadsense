@@ -27,7 +27,11 @@ plus a unit switch. Phone: Poco F1, postmarketOS, user `user`, sudo password in 
   not charge over USB; run it from the battery eliminator (4.0-4.2 V, NTC resistor) or an
   OTG Y-cable with a power input.
 - Packages (already installed): `libjpeg-turbo-dev`, `onnxruntime-dev`, `g++`, `cmake`.
-- `roadsense.target` autostart is disabled (thermal); start by hand once cooling is in place.
+- `roadsense.target` autostart is disabled: on the Prius car computer the car backend starts it
+  with ACC and stops it at key-off (docs/ARCHITECTURE.md "Running under a host controller"); on the
+  bench, `systemctl start roadsense.target` by hand or the backend's `roadsense_mode on` command.
+- The car computer's own backend serves port 8080, so the roadsense API runs on **8090** there:
+  `API_PORT=8090 sh scripts/install-phone.sh` (writes `/etc/roadsense/api.env`).
 
 ## Steps (from the laptop)
 

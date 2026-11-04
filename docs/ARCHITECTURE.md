@@ -548,3 +548,37 @@ builds, installs to `/usr/local/bin`, writes the systemd units from `systemd/`
 and enables `roadsense.target`. Models under `/var/lib/roadsense/models`,
 fetched with `scripts/fetch-models.sh`. A sign provider installs its own unit
 with `PartOf=`/`WantedBy=roadsense.target`; the target does not require it.
+Every unit runs in `roadsense.slice` (`systemd/roadsense.slice`: CPUWeight 100,
+MemoryHigh 3G / MemoryMax 3584M) so whatever else the machine does stays
+responsive while the stack saturates the GPU and the big cores; a sign provider
+puts `Slice=roadsense.slice` in its unit too. The API port is
+`ROADSENSE_API_PORT` (`/etc/roadsense/api.env`, written by
+`API_PORT=N scripts/install-phone.sh`; default 8080).
+
+## Running under a host controller (the car computer)
+
+roadsense owns no power or ignition logic: it is a set of systemd units that a
+host may start and stop. The reference deployment is the single Prius car
+computer (the same Poco F1 runs the Cyberpunk Prius backend, repo
+`cyberpank-prius-gen2-computer`, `backend/roadsense_power.py`), whose contract
+with this stack is exactly:
+
+* **process boundary only**: `systemctl start|stop|restart --no-block
+  roadsense.target`, `systemctl is-active <unit>...`; nothing is imported or
+  linked (the sign provider is AGPL, this repo is MIT, the car computer is its
+  own project);
+* **health**: `GET /v1/health` on `ROADSENSE_API_PORT` (8090 on that machine,
+  because the car backend serves 8080); a silent API is restarted by the host
+  after a timeout;
+* **camera power**: the host switches the USB hub that carries the DVR camera
+  (powerbox relay ch4) on before the start and off after the stop;
+  `camerad-dvr --auto` tolerates the camera appearing late;
+* **ignition**: the host starts the target when ACC comes on and stops it
+  cleanly (grace, `systemctl stop`, wait for the units) when ACC goes off;
+  `roadsense.target` is therefore **not enabled at boot** on that machine
+  (`install-phone.sh` without `AUTOSTART=1`);
+* **CPU profile**: the host keeps the Gold cluster online while any unit runs
+  (modeld/signd/envd pin cpu4-7) and applies its idle profile only afterwards.
+
+Nothing in this list is specific to that backend: any supervisor that can run
+`systemctl` and read JSON can drive the stack the same way.

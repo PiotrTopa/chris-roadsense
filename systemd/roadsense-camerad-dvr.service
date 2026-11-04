@@ -7,6 +7,7 @@ PartOf=roadsense.target
 
 [Service]
 Type=simple
+Slice=roadsense.slice
 # root: raw block-device reads (read-only, O_EXCL) and the /dev/shm ring (see camerad unit).
 Environment=ROADSENSE_RUNDIR=/run/roadsense
 Environment=ROADSENSE_CONFIG_DIR=/etc/roadsense

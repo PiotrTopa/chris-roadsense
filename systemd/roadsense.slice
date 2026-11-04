@@ -1,0 +1,19 @@
+[Unit]
+Description=roadsense perception stack resource group
+# All roadsense units (and a sign provider's unit) run in this slice so that the
+# machine's other work stays responsive while the stack saturates the GPU and
+# the big cores. The reference deployment shares the phone with the Prius car
+# computer backend, which runs at CPUWeight=1000 outside this slice.
+Documentation=https://github.com/PiotrTopa/roadsense/blob/main/docs/ARCHITECTURE.md
+
+[Slice]
+# cgroup v2 weights only matter under contention: with the host idle the stack
+# still gets every core it asks for.
+CPUWeight=100
+IOWeight=100
+# The phone has 5.5 GiB; the full stack (models + rings + ORT/ncnn arenas) uses
+# ~1.2 GiB. Reclaim starts at MemoryHigh, the OOM killer at MemoryMax, so a
+# leaking daemon can never take the car computer down with it.
+MemoryHigh=3G
+MemoryMax=3584M
+TasksMax=512

@@ -18,8 +18,12 @@ for m in models/*.onnx models/*.param models/*.bin models/*.txt models/*.json; d
 for c in camera.json calib.json modeld.json envd.json; do
     [ -f "/etc/roadsense/$c" ] || { [ -f "config/$c" ] && install -m 644 "config/$c" /etc/roadsense/; }
 done
-[ -d /etc/nftables.d ] && install -m 644 phone/50_roadsense.nft /etc/nftables.d/ && systemctl try-restart nftables
-install -m 644 systemd/roadsense-*.service systemd/roadsense.target /etc/systemd/system/
+# API port: API_PORT=N writes /etc/roadsense/api.env (kept afterwards); the car computer uses 8090
+# because its own backend serves 8080. The nftables rule follows the port in api.env (default 8080).
+if [ -n "${API_PORT:-}" ]; then printf 'ROADSENSE_API_PORT=%s\n' "$API_PORT" > /etc/roadsense/api.env; fi
+PORT=$(sed -n 's/^ROADSENSE_API_PORT=//p' /etc/roadsense/api.env 2>/dev/null | tail -1); PORT=${PORT:-8080}
+[ -d /etc/nftables.d ] && sed "s/8080/$PORT/" phone/50_roadsense.nft > /etc/nftables.d/50_roadsense.nft && systemctl try-restart nftables
+install -m 644 systemd/roadsense-*.service systemd/roadsense.target systemd/roadsense.slice /etc/systemd/system/
 systemctl daemon-reload
 # boot autostart is opt-in (AUTOSTART=1): the reference phone overheats without cooling
 [ "${AUTOSTART:-0}" = 1 ] && systemctl enable roadsense.target >/dev/null || true

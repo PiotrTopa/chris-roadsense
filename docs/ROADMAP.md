@@ -19,6 +19,7 @@
 - [ ] rolling recorder (video + JSON) with ring buffer and USB storage
 - [ ] sign track aggregation (one event per physical sign with best crop and GPS when available)
 - [ ] thermal/battery management, charging strategy in host mode
+- [x] host control (2026-11-04): the stack runs on the single Prius car computer (same Poco F1 as the car backend) and is started/stopped by that backend on ACC through `roadsense.target`; `roadsense.slice` + `ROADSENSE_API_PORT` added for the shared machine (docs/ARCHITECTURE.md "Running under a host controller")
 
 ## Later
 - [ ] car control integration (separate project; this API is the input)

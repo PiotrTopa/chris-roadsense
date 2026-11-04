@@ -5,12 +5,18 @@ PartOf=roadsense.target
 
 [Service]
 Type=simple
+Slice=roadsense.slice
 # TODO: dedicated roadsense user once it exists
 # User=root for now (reads the root-owned sockets/ring; see the daemon units)
 Environment=ROADSENSE_RUNDIR=/run/roadsense
 Environment=ROADSENSE_DATADIR=/var/lib/roadsense
 Environment=PYTHONPATH=/usr/local/lib/roadsense/api
-ExecStart=/usr/bin/python3 -m roadsense_api --port 8080
+# Port: 8080 by default; a host that already serves 8080 (the Prius car computer
+# backend does) sets ROADSENSE_API_PORT in /etc/roadsense/api.env
+# (scripts/install-phone.sh API_PORT=8090 writes it).
+Environment=ROADSENSE_API_PORT=8080
+EnvironmentFile=-/etc/roadsense/api.env
+ExecStart=/usr/bin/python3 -m roadsense_api --port ${ROADSENSE_API_PORT}
 Restart=always
 RestartSec=2
 
