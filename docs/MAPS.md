@@ -49,8 +49,8 @@ touched. Old packs are deleted by hand. `install --dry-run` prints the commands 
 | pack | `~/roadsense-maps/packs/poland-20261114.rsmap`, **262.2 MB** (262,210,224 bytes) |
 | content | 41,894 tiles, 5,518,936 edges, 4,886,175 nodes, 24,712,702 points; 607,379 km of road (service 174,364, residential 163,311, unclassified 104,171, tertiary 95,015, secondary 31,916, primary 15,323, motorway 10,996, living street 7,559, trunk 2,109, links 2,616) |
 | build | 27 min wall, 30 min CPU, 8 GB peak (`systemd-run --user -p MemoryMax=24G -p CPUQuota=300%`; i7-8850H): roads 330 s, landuse 283 s, graph 593 s, write 414 s |
-| verify | `roadsense-maps verify`: every tile decoded, 0 broken references, 4.5 min |
-| mapd on it | 43 MB resident, 0.6 % of one laptop core with GNSS at 1 Hz, motion at 20 Hz and 2 `map` messages per second (docs/lanes/L13-mapd.md); not measured on the phone |
+| verify | `roadsense-maps verify`: every tile decoded, 0 broken references, 4.5 min (phone, one big core: 9.5 min, 317 MB peak) |
+| mapd on it | 43 MB resident, 0.6 % of one laptop core with GNSS at 1 Hz, motion at 20 Hz and 2 `map` messages per second (docs/lanes/L13-mapd.md); phone (2026-11-15, little cores, Nice 10): idle 0.35 %, synthetic drives 8-10 % of one core, 46-52 MB RSS, step 15-22 ms; tile load 10.6 ms cold / 4.4 ms warm (p50) |
 
 ## What a pack holds
 
