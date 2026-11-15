@@ -4,8 +4,11 @@
 
 Sockets in the run directory (newline-delimited JSON, docs/ARCHITECTURE.md):
     mapd.sock       output: one `map` message per step; the last one is sent to a client when it connects
-    position.sock   input:  `gnss` and `motion` messages from a feeder (position input API v1)
-    modeld.sock     read (optional): `road` messages as vision odometry while no vehicle motion arrives
+    ego.sock        output: one `ego` message per vehicle `motion` message accepted (at most --ego-hz): the
+                    car's own motion at the feeder's rate, for consumers such as the api's lead tracker
+    position.sock   input:  `gnss`, `motion` and `reset` messages from a feeder (position input API v1)
+    modeld.sock     read (only with --vision-odometry / "vision_odometry": true; off by default until the
+                    camera is calibrated): `road` messages as vision odometry while no vehicle motion arrives
 """
 import argparse
 import asyncio
@@ -34,10 +37,14 @@ class Mapd:
         self.pack_path = a.pack
         self.pack_id = None
         self.clients = set()
+        self.ego_clients = set()
         self.last_line = None
         self.feeders = 0
         self.step_ms = 0.0
         self._vision_next = 0
+        self._ego_next = 0
+        self._ego_seq = 0
+        self._ego_standstill = None
 
     # ---- pack ----------------------------------------------------------------------------------
     def check_pack(self):
@@ -83,12 +90,40 @@ class Mapd:
 
     def publish(self, msg):
         self.last_line = (json.dumps(msg, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
-        for w in list(self.clients):
+        self._send(self.clients, self.last_line)
+
+    @staticmethod
+    def _send(clients, line):
+        for w in list(clients):
             if w.transport.get_write_buffer_size() > 1 << 20:      # slow client: drop it
                 w.close()
-                self.clients.discard(w)
+                clients.discard(w)
             else:
-                w.write(self.last_line)
+                w.write(line)
+
+    async def ego_client(self, reader, writer):
+        self.ego_clients.add(writer)
+        try:
+            await reader.read()
+        except (OSError, asyncio.CancelledError):
+            pass
+        finally:
+            self.ego_clients.discard(writer)
+            writer.close()
+
+    def relay_ego(self, now_ns):
+        """Pass the vehicle motion just accepted on to ego.sock as an `ego` message (the lead tracker in the
+        api needs the car's speed at the feeder's rate, not at the `map` rate). A change of the standstill
+        flag is never held back by the rate limit."""
+        ego = self.engine.ego
+        if ego is None or ego["seq"] == self._ego_seq or not self.ego_clients:
+            return
+        if now_ns < self._ego_next and self._ego_standstill == ego["standstill"]:
+            return
+        self._ego_seq, self._ego_standstill = ego["seq"], ego["standstill"]
+        self._ego_next = now_ns + int(1e9 / self.a.ego_hz) - 2_000_000
+        msg = dict(ego, ts_real_ns=time.time_ns() - (now_ns - ego["ts_mono_ns"]))
+        self._send(self.ego_clients, (json.dumps(msg, separators=(",", ":")) + "\n").encode())
 
     # ---- input socket ----------------------------------------------------------------------------
     async def in_client(self, reader, writer):
@@ -116,12 +151,15 @@ class Mapd:
                     continue
                 if isinstance(msg, dict) and msg.get("type") == "hello":
                     reply({"type": "hello", "api": API_VERSION, "server": "roadsense-mapd",
-                           "accepts": ["gnss", "motion"], "clock": "CLOCK_MONOTONIC",
+                           "accepts": ["gnss", "motion", "reset"], "clock": "CLOCK_MONOTONIC",
                            "now_mono_ns": time.monotonic_ns()})
                     continue
-                err = self.engine.on_input(msg, time.monotonic_ns())
+                now_ns = time.monotonic_ns()
+                err = self.engine.on_input(msg, now_ns)
                 if err:
                     reply({"type": "error", "line": n, "reason": err})
+                elif self.a.ego_hz > 0:
+                    self.relay_ego(now_ns)
         except (OSError, ValueError, asyncio.LimitOverrunError) as e:
             log.warning("feeder: %s", e)
         finally:
@@ -170,12 +208,14 @@ class Mapd:
         a = self.a
         os.makedirs(a.rundir, exist_ok=True)
         out_path, in_path = os.path.join(a.rundir, "mapd.sock"), os.path.join(a.rundir, "position.sock")
-        for p in (out_path, in_path):
+        ego_path = os.path.join(a.rundir, "ego.sock")
+        for p in (out_path, in_path, ego_path):
             try:
                 os.unlink(p)
             except FileNotFoundError:
                 pass
         out_srv = await asyncio.start_unix_server(self.out_client, path=out_path)
+        ego_srv = await asyncio.start_unix_server(self.ego_client, path=ego_path) if a.ego_hz > 0 else None
         in_srv = await asyncio.start_unix_server(self.in_client, path=in_path, limit=1 << 20)
         os.chmod(in_path, a.input_mode)
         tasks = []
@@ -192,7 +232,8 @@ class Mapd:
         next_stats = nxt + a.stats if a.stats else None
         cpu0, wall0, steps = time.process_time(), nxt, 0
         cpu_pct = 0.0
-        log.info("mapd up: %s (out), %s (in), %.1f Hz", out_path, in_path, a.hz)
+        log.info("mapd up: %s (out), %s (in), %.1f Hz, vision odometry %s", out_path, in_path, a.hz,
+                 "on" if a.vision_odometry else "off")
         while not stop.is_set():
             t0 = time.perf_counter()
             msg = self.engine.step(time.monotonic_ns(), time.time_ns())
@@ -226,9 +267,11 @@ class Mapd:
             t.cancel()
         out_srv.close()
         in_srv.close()
-        for w in list(self.clients):
+        if ego_srv:
+            ego_srv.close()
+        for w in list(self.clients) + list(self.ego_clients):
             w.close()
-        for p in (out_path, in_path):
+        for p in (out_path, in_path, ego_path):
             try:
                 os.unlink(p)
             except OSError:
@@ -256,8 +299,14 @@ def main():
     ap.add_argument("--hz", type=float, default=cfg.pop("hz", 2.0), help="`map` messages per second")
     ap.add_argument("--cache-tiles", type=int, default=cfg.pop("cache_tiles", 24))
     ap.add_argument("--pack-poll", type=float, default=cfg.pop("pack_poll_s", 10.0), help="seconds between pack file checks")
+    ap.add_argument("--vision-odometry", dest="vision_odometry", action="store_true",
+                    default=bool(cfg.pop("vision_odometry", False)),
+                    help="read modeld.sock for speed / yaw rate while no vehicle motion arrives (off by default: "
+                         "its speed depends on the camera calibration)")
     ap.add_argument("--no-vision-odometry", dest="vision_odometry", action="store_false",
-                    default=cfg.pop("vision_odometry", True), help="do not read modeld.sock for speed / yaw rate")
+                    help="do not read modeld.sock (the default)")
+    ap.add_argument("--ego-hz", type=float, default=cfg.pop("ego_hz", 20.0),
+                    help="relay accepted vehicle `motion` messages as `ego` messages on ego.sock at most this often (0 = no ego.sock)")
     ap.add_argument("--vision-hz", type=float, default=cfg.pop("vision_hz", 10.0))
     ap.add_argument("--input-mode", type=lambda s: int(s, 8), default=int(str(cfg.pop("input_mode", "666")), 8),
                     help="permissions of position.sock (octal, default 666)")

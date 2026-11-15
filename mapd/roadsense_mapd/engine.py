@@ -62,6 +62,8 @@ class Engine:
         self.last_gnss = None           # last gnss message (any quality) with its ts
         self.fix_lost = False           # the feeder said fix "none"
         self.motion = None              # {"ts", "source", "v", "yaw_cw", "reverse", "tag"}
+        self.ego = None                 # the last vehicle `motion` as an `ego` message (relayed by the daemon)
+        self.ego_seq = 0
         self.odo = 0.0
         self.odo_fix = 0.0
         self.odo_match = 0.0
@@ -72,11 +74,40 @@ class Engine:
         self.counts = {"gnss": 0, "gnss_used": 0, "gnss_ignored": 0, "motion": 0, "vision": 0, "errors": 0}
         self.last_error = None
         self._anchor = None
+        self.synthetic = False          # the position state was fed by a source tagged synthetic since the last reset
+        self._fed_synth = None          # kind of the GNSS source that fed the state: True synthetic, False real, None nothing yet
+        self.resets = 0
+        self.last_reset = None          # {"ts", "reason"}
 
     def set_pack(self, pack):
         self.pack = pack
         self.matcher = MapMatcher(pack, self.cfg.get("matcher")) if pack is not None else None
         self.match = None
+
+    @staticmethod
+    def is_synthetic(tag):
+        """A `source` tag that marks made-up input: "synthetic", or anything starting with it ("synthetic-drive")."""
+        return isinstance(tag, str) and tag.strip().lower().startswith("synthetic")
+
+    def reset(self, ts, reason=None):
+        """Forget the position: filter, fix, match. The map goes back to `no_source` until a new fix arrives.
+        Motion input (and with it the `ego` relay) is not touched; the odometer keeps counting."""
+        self.filter = PositionFilter(self.cfg.get("filter"))
+        self.t_filter = None
+        self.last_fix = None
+        self.last_gnss = None
+        self.fix_lost = False
+        self.match = None
+        self.t_match = None
+        if self.matcher:
+            self.matcher.reset()
+        self.state = "no_source"
+        self._anchor = None
+        self.odo_fix = self.odo_match = self.odo
+        self.synthetic = False
+        self._fed_synth = None
+        self.resets += 1
+        self.last_reset = {"ts": ts, "reason": reason}
 
     # ---- input -------------------------------------------------------------------------------
     def on_input(self, msg, now_ns):
@@ -87,7 +118,7 @@ class Engine:
             t = msg.get("type")
             if t == "hello":
                 return None
-            if t not in ("gnss", "motion"):
+            if t not in ("gnss", "motion", "reset"):
                 raise ValueError("unknown type %r" % (t,))
             ts = msg.get("ts_mono_ns")
             if ts is None:
@@ -99,7 +130,12 @@ class Engine:
                                  % ((now_ns - ts) / NS))
             elif ts > now_ns + self.cfg["max_input_future_s"] * NS:
                 raise ValueError("ts_mono_ns is in the future (CLOCK_MONOTONIC of this host expected)")
-            if t == "gnss":
+            if t == "reset":
+                reason = msg.get("reason")
+                if reason is not None and not isinstance(reason, str):
+                    raise ValueError("reason must be a string")
+                self.reset(ts, (reason or "requested")[:80])
+            elif t == "gnss":
                 self._on_gnss(msg, ts)
             else:
                 self._on_motion(msg, ts)
@@ -156,6 +192,18 @@ class Engine:
         self.filter.update_speed(vs, sig_v)
         self.motion = {"ts": ts, "source": source, "v": vs, "yaw_cw": yaw_cw, "reverse": reverse,
                        "tag": m.get("source")}
+        if self.filter.initialised and self.is_synthetic(m.get("source")):
+            self.synthetic = True                     # a real fix carried on by made-up motion is made up too
+        if source == "vehicle":
+            wheels = [float(x) for x in ws] if isinstance(ws, list) and len(ws) == 4 \
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in ws) else None
+            self.ego_seq += 1
+            self.ego = {"type": "ego", "seq": self.ego_seq, "ts_mono_ns": ts, "api": API_VERSION,
+                        "speed_mps": vs, "gear": gear, "reverse": reverse,
+                        "standstill": v == 0.0 and (wheels is None or not any(wheels)),
+                        "wheel_speeds_mps": wheels,
+                        "yaw_rate_rps": None if yaw_cw is None else round(-yaw_cw, 5),
+                        "source": "vehicle", "tag": m.get("source")}
 
     def on_vision(self, road, now_ns):
         """A modeld `road` message as a motion source of last resort (used only while no vehicle motion arrives)."""
@@ -185,6 +233,11 @@ class Engine:
         fix = g.get("fix", "3d")
         if fix not in ("none", "2d", "3d", "dgps", "rtk", "dr"):
             raise ValueError("fix must be one of none 2d 3d dgps rtk dr")
+        synth = self.is_synthetic(g.get("source"))
+        if self._fed_synth is not None and synth != self._fed_synth:
+            # a synthetic session ended and the real receiver speaks (or the other way round): the position of
+            # the one must not live on as the position of the other
+            self.reset(ts, "gnss source changed from %s to %s" % (("real", "synthetic") if synth else ("synthetic", "real")))
         meta = {"ts": ts, "fix": fix, "source": g.get("source"), "sats": g.get("sats"), "hdop": g.get("hdop"),
                 "hacc_m": None, "utc_ms": g.get("utc_ms")}
         if fix == "none":
@@ -241,6 +294,9 @@ class Engine:
             self.last_fix = ts
             self.fix_lost = False
             self.odo_fix = self.odo
+            self._fed_synth = synth
+            if synth:
+                self.synthetic = True
         else:
             self.counts["gnss_ignored"] += 1
 
@@ -340,7 +396,11 @@ class Engine:
         mo = self.motion
         out["input"] = {"gnss": gn, "motion": {"source": src, "tag": mo["tag"] if mo and src != "none" else None,
                                                "age_s": round((now_ns - mo["ts"]) / NS, 2) if mo else None},
-                        "errors": self.counts["errors"], "last_error": self.last_error}
+                        "errors": self.counts["errors"], "last_error": self.last_error,
+                        "synthetic": self.synthetic, "resets": self.resets,
+                        "last_reset": None if self.last_reset is None else {
+                            "reason": self.last_reset["reason"],
+                            "age_s": round((now_ns - self.last_reset["ts"]) / NS, 2)}}
         if located:
             lat, lon = f.latlon
             age = (now_ns - self.last_fix) / NS

@@ -9,10 +9,12 @@ from roadsense. It connects to <rundir>/position.sock, reconnects on its own, ne
     feed.gnss(lat=52.2297, lon=21.0122, hacc_m=4.0, speed_mps=13.9, course_deg=271.5, sats=14, source="headunit")
     feed.motion(speed_mps=13.8, steering_wheel_deg=-2.5, gear="D", source="prius-can")
     feed.no_fix(source="headunit")            # the receiver reports that it lost the fix
+    feed.reset("synthetic session ended")     # forget the position (map: no_source until the next fix)
 
 Command line (one message, or a stream of JSON lines from stdin):
 
     tools/position_client.py --rundir /tmp/roadsense gnss 52.2297 21.0122 --hacc 4 --speed 13.9 --course 271.5
+    tools/position_client.py --rundir /tmp/roadsense reset --reason "test over"
     some-source | tools/position_client.py --rundir /tmp/roadsense stdin
 """
 import argparse
@@ -109,6 +111,16 @@ class PositionFeed:
         m.update(extra)
         return self.send(m)
 
+    def reset(self, reason=None, ts_mono_ns=None):
+        """Make mapd forget the position (filter, fix, match): the map is `no_source` until a new fix arrives.
+        Send it when the input so far must not live on, e.g. after a synthetic test drive. Motion is unaffected."""
+        m = {"type": "reset"}
+        if reason is not None:
+            m["reason"] = str(reason)
+        if ts_mono_ns is not None:
+            m["ts_mono_ns"] = ts_mono_ns
+        return self.send(m)
+
     def motion(self, speed_mps, yaw_rate_rps=None, steering_wheel_deg=None, wheel_speeds_mps=None, gear=None,
                reverse=None, ts_mono_ns=None, **extra):
         m = {"type": "motion", "speed_mps": speed_mps}
@@ -142,6 +154,8 @@ def main():
     g.add_argument("--source", default="cli")
     g.add_argument("--repeat", type=int, default=1, help="send N times, one per second")
     sub.add_parser("nofix")
+    r = sub.add_parser("reset", help="make mapd forget the position")
+    r.add_argument("--reason")
     m = sub.add_parser("motion")
     m.add_argument("speed", type=float)
     m.add_argument("--yaw-rate", type=float)
@@ -156,6 +170,8 @@ def main():
                 time.sleep(1.0)
     elif a.cmd == "nofix":
         ok = feed.no_fix(source="cli")
+    elif a.cmd == "reset":
+        ok = feed.reset(a.reason)
     elif a.cmd == "motion":
         ok = feed.motion(a.speed, yaw_rate_rps=a.yaw_rate, steering_wheel_deg=a.steering, source="cli")
     else:

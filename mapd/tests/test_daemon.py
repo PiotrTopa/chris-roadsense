@@ -117,6 +117,45 @@ class DaemonTest(unittest.TestCase):
         self.assertEqual((err["type"], err["reason"], err["line"]), ("error", "bad JSON", 2))
         s.close()
 
+    def test_4b_vehicle_motion_is_relayed_as_ego(self):
+        """ego.sock: one `ego` message per accepted vehicle motion (rate limited, standstill changes at once);
+        mapd.sock keeps carrying `map` messages only."""
+        ego = Sub(os.path.join(self.rundir, "ego.sock"))
+        time.sleep(0.2)
+        feed = PositionFeed(self.rundir, name="test")
+        t0 = time.monotonic_ns()
+        self.assertTrue(feed.motion(3.5, gear="D", wheel_speeds_mps=[3.4, 3.6, 3.4, 3.6], source="prius-can", ts_mono_ns=t0))
+        m = ego.next()
+        self.assertEqual((m["type"], m["api"], m["source"], m["tag"], m["gear"], m["reverse"], m["standstill"]),
+                         ("ego", 1, "vehicle", "prius-can", "D", False, False))
+        self.assertEqual((m["speed_mps"], m["wheel_speeds_mps"], m["ts_mono_ns"]), (3.5, [3.4, 3.6, 3.4, 3.6], t0))
+        self.assertAlmostEqual(m["yaw_rate_rps"], (3.6 - 3.4) / 1.48, places=4)       # right wheel faster: turning left (+)
+        self.assertLess(abs(m["ts_real_ns"] - time.time_ns()), 2e9)
+        # 100 messages in a burst: the relay is rate limited (20 per second) ...
+        for i in range(100):
+            feed.motion(3.0, gear="D", wheel_speeds_mps=[3.0] * 4)
+        # ... but the standstill flag (speed and all wheels exactly zero) is never held back
+        feed.motion(0.0, gear="D", wheel_speeds_mps=[0.0] * 4)
+        feed.motion(0.0, gear="D", wheel_speeds_mps=[0.0, 0.0, 0.0, 0.01])       # one wheel still turning: not standing
+        time.sleep(0.1)                                                          # (past the rate limit)
+        feed.motion(2.0, gear="R")
+        got = []
+        end = time.monotonic() + 3.0
+        while time.monotonic() < end:
+            got.append(ego.next())
+            if got[-1]["reverse"]:
+                break
+        self.assertLess(len(got), 20)
+        self.assertEqual([g["standstill"] for g in got[-3:]], [True, False, False])
+        self.assertEqual((got[-3]["speed_mps"], got[-1]["speed_mps"], got[-1]["gear"]), (0.0, -2.0, "R"))
+        feed.send({"type": "motion", "speed_mps": -1.0})                          # rejected input is not relayed
+        ego.s.settimeout(0.4)
+        self.assertRaises(socket.timeout, ego.next)
+        for _ in range(5):
+            self.assertEqual(self.sub.next()["type"], "map")
+        feed.close()
+        ego.s.close()
+
     def test_5_fix_lost_then_unknown(self):
         m = self.sub.until(lambda m: m["state"] == "dead_reckoning", 10)       # no input since test 3
         self.assertIsNotNone(m["position"])

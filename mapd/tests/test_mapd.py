@@ -359,6 +359,108 @@ class TestStates(PackCase):
         eng.on_vision({"type": "road", "ts_mono_ns": t, "v_ego": 99.0, "pose": {"yaw_rate": 0.0}}, t)
         self.assertEqual(eng.step(t)["position"]["motion_source"], "vehicle")
 
+    def test_ego_snapshot_comes_from_vehicle_motion_only(self):
+        eng = Engine(self.pack)
+        t = T0
+        eng.on_vision({"type": "road", "ts_mono_ns": t, "v_ego": 15.0, "pose": {"yaw_rate": 0.0}}, t)
+        self.assertIsNone(eng.ego)                            # the camera's own speed is not relayed as the car's
+        eng.on_input({"type": "motion", "ts_mono_ns": t, "speed_mps": 0.0, "gear": "D",
+                      "wheel_speeds_mps": [0, 0, 0, 0], "source": "can"}, t)
+        e = eng.ego
+        self.assertEqual((e["type"], e["seq"], e["speed_mps"], e["standstill"], e["gear"], e["tag"], e["ts_mono_ns"]),
+                         ("ego", 1, 0.0, True, "D", "can", t))
+        eng.on_input({"type": "motion", "ts_mono_ns": t + 1, "speed_mps": 0.0}, t + 1)
+        self.assertEqual((eng.ego["standstill"], eng.ego["wheel_speeds_mps"], eng.ego["yaw_rate_rps"]), (True, None, None))
+        eng.on_input({"type": "motion", "ts_mono_ns": t + 2, "speed_mps": 0.02}, t + 2)
+        self.assertFalse(eng.ego["standstill"])
+        self.assertIsNotNone(eng.on_input({"type": "motion", "ts_mono_ns": t + 3, "speed_mps": 500.0}, t + 3))
+        self.assertEqual(eng.ego["seq"], 3)
+
+    def fixes(self, eng, t, n, source, x0=100.0, motion_tag="can"):
+        out = None
+        for i in range(n):
+            la, lo = SP.ll(x0 + 15 * i, 0)
+            self.assertIsNone(eng.on_input({"type": "gnss", "ts_mono_ns": t, "lat": la, "lon": lo, "hacc_m": 4,
+                                            "speed_mps": 15.0, "course_deg": 90.0, "source": source}, t))
+            self.assertIsNone(eng.on_input({"type": "motion", "ts_mono_ns": t, "speed_mps": 15.0, "yaw_rate_rps": 0.0,
+                                            "source": motion_tag}, t))
+            out = eng.step(t)
+            t += NS
+        return t, out
+
+    def test_reset_forgets_the_position(self):
+        eng = Engine(self.pack)
+        t, out = self.fixes(eng, T0, 5, "headunit")
+        self.assertEqual((out["state"], out["available"], out["input"]["synthetic"], out["input"]["resets"],
+                          out["input"]["last_reset"]), ("good", True, False, 0, None))
+        self.assertIsNone(eng.on_input({"type": "reset", "ts_mono_ns": t, "reason": "test over"}, t))
+        out = eng.step(t)
+        self.assertEqual((out["state"], out["available"], out["reason"]), ("no_source", False, "no_position"))
+        for k in ("position", "match", "road", "speed_limit", "ahead"):
+            self.assertIsNone(out[k])
+        self.assertEqual((out["input"]["gnss"], out["input"]["resets"], out["input"]["last_reset"]["reason"]),
+                         (None, 1, "test over"))
+        # motion keeps being accepted (and relayed) but makes no position on its own
+        for i in range(30):
+            t += NS // 10
+            self.assertIsNone(eng.on_input({"type": "motion", "ts_mono_ns": t, "speed_mps": 15.0, "yaw_rate_rps": 0.0}, t))
+        out = eng.step(t)
+        self.assertEqual((out["state"], out["input"]["motion"]["source"], eng.ego["speed_mps"]), ("no_source", "vehicle", 15.0))
+        self.assertEqual(out["input"]["last_reset"]["age_s"], 3.0)
+        # a new fix starts over, anywhere
+        t, out = self.fixes(eng, t, 4, "headunit", x0=900.0)
+        self.assertEqual((out["state"], out["available"]), ("good", True))
+        self.assertLess(geo.dist_m(out["position"]["lat"], out["position"]["lon"], *SP.ll(900 + 45, 0)), 25.0)
+        # reason is optional; a wrong type is rejected and resets nothing
+        self.assertIsNone(eng.on_input({"type": "reset"}, t))
+        self.assertEqual(eng.step(t)["input"]["last_reset"]["reason"], "requested")
+        self.assertIn("reason", eng.on_input({"type": "reset", "reason": 5}, t))
+        self.assertEqual(eng.resets, 2)
+
+    def test_synthetic_source_is_flagged_and_never_mixed_with_a_real_one(self):
+        eng = Engine(self.pack)
+        t, out = self.fixes(eng, T0, 5, "synthetic", motion_tag="synthetic")
+        self.assertEqual((out["state"], out["input"]["synthetic"], out["input"]["resets"]), ("good", True, 0))
+        # the synthetic drive stops; the car's real motion keeps coming: dead reckoning, still flagged
+        for i in range(50):
+            t += NS // 10
+            eng.on_input({"type": "motion", "ts_mono_ns": t, "speed_mps": 0.0, "source": "prius-can"}, t)
+        out = eng.step(t)
+        self.assertEqual((out["state"], out["input"]["synthetic"]), ("dead_reckoning", True))
+        # the real receiver reports (even "no fix"): the synthetic position is dropped at once
+        eng.on_input({"type": "gnss", "ts_mono_ns": t, "fix": "none", "source": "headunit"}, t)
+        out = eng.step(t)
+        self.assertEqual((out["state"], out["position"], out["input"]["synthetic"], out["input"]["resets"]),
+                         ("no_source", None, False, 1))
+        self.assertIn("synthetic to real", out["input"]["last_reset"]["reason"])
+        t, out = self.fixes(eng, t + NS, 4, "headunit", x0=600.0)
+        self.assertEqual((out["state"], out["input"]["synthetic"], out["input"]["resets"]), ("good", False, 1))
+        # and the other way round: a synthetic session starting over a real position
+        t, out = self.fixes(eng, t, 3, "Synthetic-drive", x0=1500.0, motion_tag="synthetic")
+        self.assertEqual((out["state"], out["input"]["synthetic"], out["input"]["resets"]), ("good", True, 2))
+        self.assertLess(geo.dist_m(out["position"]["lat"], out["position"]["lon"], *SP.ll(1500 + 30, 0)), 25.0)
+        # two real receivers, or untagged fixes, are not a change of kind
+        eng2 = Engine(self.pack)
+        t, _ = self.fixes(eng2, T0, 3, "headunit")
+        t, _ = self.fixes(eng2, t, 3, "phone", x0=145.0)
+        t, out = self.fixes(eng2, t, 3, None, x0=190.0)
+        self.assertEqual((out["input"]["resets"], out["input"]["synthetic"]), (0, False))
+        # synthetic motion under a real fix taints the position too (no reset: the fix itself is real)
+        eng2.on_input({"type": "motion", "ts_mono_ns": t, "speed_mps": 15.0, "source": "synthetic"}, t)
+        self.assertEqual(eng2.step(t)["input"]["synthetic"], True)
+
+    def test_vision_odometry_is_off_unless_asked_for(self):
+        import subprocess
+        import sys as _sys
+        out = subprocess.run([_sys.executable, "-m", "roadsense_mapd", "--help"], capture_output=True, text=True,
+                             env=dict(os.environ, PYTHONPATH=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                                      ROADSENSE_CONFIG_DIR="/nonexistent")).stdout
+        self.assertIn("--vision-odometry", out)
+        self.assertIn("off by default", out)
+        import json as _json
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config", "mapd.json")) as f:
+            self.assertIs(_json.load(f)["vision_odometry"], False)
+
 
 class TestLimits(PackCase):
     def lim(self, x, y, direction=1):

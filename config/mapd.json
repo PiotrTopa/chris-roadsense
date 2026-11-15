@@ -1,7 +1,7 @@
 {
   "pack": "/var/lib/roadsense/maps/current.rsmap",
   "hz": 2,
-  "vision_odometry": true,
+  "vision_odometry": false,
   "wheelbase_m": 2.70,
   "steering_ratio": 19.1,
   "track_m": 1.48,
