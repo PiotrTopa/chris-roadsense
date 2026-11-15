@@ -21,3 +21,12 @@ captures/
 *.mp4
 *.log
 .venv-models/
+# map data and map packs are never committed (docs/MAPS.md): they live in ~/roadsense-maps and on the device
+*.rsmap
+*.osm.pbf
+*.pbf
+*.osm
+*.osm.bz2
+*.o5m
+roadsense-maps/
+maps-data/

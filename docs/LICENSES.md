@@ -13,6 +13,8 @@
 | envd image encoder: OpenAI CLIP ViT-B/32 image tower (`models/envd-image.onnx`, exported by `scripts/fetch-envd-model.sh` from open_clip `ViT-B-32` / `openai`) | not committed; fetched from the Hugging Face hub by open_clip | MIT (OpenAI CLIP) | chosen in docs/lanes/L2-envd.md; the class text embeddings derived from it (`models/envd-classes.json`) are committed |
 | open_clip 3.3.0 (+ torch, torchvision) | dev box only, `.venv-models` | MIT | export + text embeddings; not shipped |
 | Candidate encoders evaluated but not shipped (docs/lanes/L2-envd.md) | - | LAION CLIP ViT-B/32 (MIT), SigLIP2 B/32-256 (Apache-2.0), TinyCLIP (MIT) | MobileCLIP/MobileCLIP2 (Apple ML Research Model License, research only) excluded without evaluation |
+| OpenStreetMap data (Geofabrik extract of Poland) and the map packs built from it (`*.rsmap`) | `scripts/roadsense-maps`; `~/roadsense-maps` on the dev box, `/var/lib/roadsense/maps` on the device; never committed | ODbL 1.0, © OpenStreetMap contributors (https://www.openstreetmap.org/copyright) | a pack is a derived database (share-alike applies to the pack, not to roadsense's code); attribution is in the pack manifest, on the status page and in docs/MAPS.md |
+| pyosmium (+ libosmium), Pillow, numpy | dev box only, `~/roadsense-maps/.venv` (pack build); numpy also on the device (`py3-numpy`) | BSD-2-Clause (pyosmium), BSL-1.0 (libosmium), MIT-CMU (Pillow), BSD-3-Clause (numpy) | not shipped |
 | Evaluation datasets (never shipped, outside the repo): BDD100K val, DAWN, Places365 val | `~/datasets/` on the dev box | BDD100K licence (research / not-for-profit), CC BY-NC 3.0, Places (research) | a linear probe trained on them is not committed |
 
 Sign detection is not part of roadsense. The reference sign provider,

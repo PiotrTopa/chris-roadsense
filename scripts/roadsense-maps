@@ -1,0 +1,4 @@
+#!/bin/sh
+# roadsense-maps: fetch / build / info / verify / install map packs (tools/roadsense_maps.py).
+# `build` needs pyosmium, numpy and Pillow: PYTHON=~/roadsense-maps/.venv/bin/python scripts/roadsense-maps build
+exec "${PYTHON:-python3}" "$(dirname "$(readlink -f "$0")")/../tools/roadsense_maps.py" "$@"
