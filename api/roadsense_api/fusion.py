@@ -12,6 +12,14 @@ Every fact is combined on its own, keeps the unfused inputs next to the result a
 
 With no map (no mapd, no pack, no position, or a poor match) every fact falls back to its vision value
 and says so; the vision topics themselves are never modified.
+
+Match-confidence hold: the matcher's confidence dips below `min_match_conf` for a message or two where a side
+road branches off while the matched road stays the same; without a hold every fact (the speed limit above all)
+would fall back to vision for that moment. A low-confidence message is still used, with the last good
+confidence, when the map is otherwise available and fresh, it is the same road as the last confident message
+(same edge, or the same class with the same name / ref), its map speed limit is unchanged, and it comes within
+`match_hold_s` and `match_hold_msgs` of that message. `map.match_hold` says so. Never across a change of the
+matched road, an unavailable or stale map (a real loss of position) or a changed map limit.
 """
 MAP_MAX_AGE_S = 3.0
 PLACES = ("highway", "city_street", "residential", "rural_road", "forest_road", "tunnel", "parking_lot",
@@ -24,6 +32,8 @@ DEFAULT_CFG = dict(
     junction_pass_m=10.0,
     lane_prob=0.5, lane_prob_inner=0.3,
     tunnel_env_conf=0.5,
+    match_hold_s=2.0,            # a low-confidence match of the same road is used this long after a good one
+    match_hold_msgs=3,           # and for at most this many low-confidence map messages in a row
 )
 IMPLICIT_AREA_RULES = ("built_up", "outside", "outside_dual_2x2")
 
@@ -37,6 +47,37 @@ class Fusion:
         self.junctions_passed = 0
         self._pending_j = None       # absolute map odometer of the next real junction ahead
         self._last_map_seq = None
+        self._good_match = None      # the last map message matched with confidence: ts, confidence, road identity
+        self._low_seqs = set()       # low-confidence map messages since then
+
+    @staticmethod
+    def _road_id(m):
+        """What has to stay the same for a match-confidence hold: the edge, the road and its map limit."""
+        r = m.get("road") or {}
+        sl = m.get("speed_limit") or {}
+        return {"edge": ((m.get("match") or {}).get("edge"), (m.get("match") or {}).get("dir")),
+                "road": (r.get("class"), r.get("name"), r.get("ref")),
+                "named": bool(r.get("name") or r.get("ref")),
+                "limit": (sl.get("limit_kmh"), sl.get("source"), sl.get("rule"))}
+
+    def _match_hold(self, m, now_mono_ns):
+        """The low-confidence `m` as a usable map message with the last good confidence, or None."""
+        g = self._good_match
+        if g is None or not (m.get("match") or {}).get("matched") or m.get("position") is None:
+            return None
+        if m.get("ts_mono_ns") is None or (m["ts_mono_ns"] - g["ts"]) / 1e9 > self.cfg["match_hold_s"]:
+            return None
+        rid = self._road_id(m)
+        same_edge = rid["edge"][0] is not None and rid["edge"] == g["id"]["edge"]
+        same_road = rid["named"] and rid["road"] == g["id"]["road"]
+        if not (same_edge or same_road) or rid["limit"] != g["id"]["limit"]:
+            return None
+        self._low_seqs.add(m.get("seq"))
+        if len(self._low_seqs) > self.cfg["match_hold_msgs"]:
+            return None
+        held = dict(m, match=dict(m["match"], confidence=g["confidence"]))
+        return held, {"messages": len(self._low_seqs), "age_s": round((m["ts_mono_ns"] - g["ts"]) / 1e9, 2),
+                      "confidence": g["confidence"]}
 
     # ---- helpers -----------------------------------------------------------------------------
     def _map(self, latest, now_mono_ns):
@@ -50,12 +91,23 @@ class Fusion:
                 "match_confidence": (m.get("match") or {}).get("confidence")}
         if age is not None and age > MAP_MAX_AGE_S:
             info.update(available=False, reason="stale")
+            self._good_match = None                      # a real loss: no hold across it
             return None, info
         if not m.get("available"):
+            self._good_match = None
             return None, info
         if (info["match_confidence"] or 0.0) < self.cfg["min_match_conf"]:
+            hold = self._match_hold(m, now_mono_ns)
+            if hold is not None:
+                info["match_hold"] = hold[1]
+                return hold[0], info
+            self._good_match = None                      # road / limit changed or the hold ran out: no more
             info.update(available=False, reason="low_match_confidence")
             return None, info
+        if m.get("ts_mono_ns") is not None:
+            self._good_match = {"ts": m["ts_mono_ns"], "confidence": info["match_confidence"],
+                                "id": self._road_id(m)}
+            self._low_seqs = set()
         return m, info
 
     def _track_junctions(self, m):

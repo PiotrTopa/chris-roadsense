@@ -758,8 +758,20 @@ A ride change or camera restart replaces the engine (L10), like the speed limit.
 `no_pack`, `no_position`, `position_unknown`, `off_road`, `low_match_confidence`) and every fact is its
 vision value: without a position source the output is vision only.
 
+Match-confidence hold (since 2026-11-15): the matcher's confidence dips under 0.5 for a message or two where a
+side road branches off while the matched road stays the same, and every fact (the speed limit that consumers
+show and act on above all) would fall back to vision for that moment. A `map` message with a low confidence is
+still used when it is otherwise available and fresh, it is the same road as the last message matched with
+confidence (the same `match.edge` and `dir`, or the same `road.class` with the same `name` / `ref`, which must
+not both be empty), its map speed limit (value, source, rule) is unchanged, it comes within 2 s
+(`match_hold_s`) of that message and is at most the third low one in a row (`match_hold_msgs`). The facts are
+then computed with that message's last good confidence and `map.match_hold` =
+`{"messages":1,"age_s":0.5,"confidence":0.9}` is added (`match_confidence` stays the true value). It never
+holds across a change of the matched road or of its map limit, an unavailable map (no position, off road) or a
+stale one; once a hold has run out or been refused, only a confident message starts a new one.
+
 ```
-"map": {"available":true,"state":"good","reason":null,"age_s":0.2,"match_confidence":0.97},
+"map": {"available":true,"state":"good","reason":null,"age_s":0.2,"match_confidence":0.97},   // + "match_hold":{..} only while held
 "speed_limit": {"limit_kmh":40,
                 "source":"sign|sign_held|map|map_implicit|vision_default|unknown",
                 "confidence":0.8,"rule":null,"sign":"B-33","track_id":164,

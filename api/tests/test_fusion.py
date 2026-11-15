@@ -226,6 +226,95 @@ class FusionTest(unittest.TestCase):
         out = self.fuse(Fusion(), map=four)["lanes"]                                             # no model output
         self.assertEqual((out["count"], out["ego_index"], out["oncoming_left"]), (4, None, None))
 
+    # ---- match-confidence hold ----------------------------------------------------------------------
+    def drive(self, f, msgs, vis=None):
+        """Feed map messages 0.5 s apart (mapd's 2 per second); the fused limit (value, source) after each."""
+        out = []
+        for i, kw in enumerate(msgs):
+            t = 0.5 * i
+            m = map_msg(seq=i + 1, t=t, odo=7.0 * i, **kw)
+            r = self.fuse(f, t=t + 0.05, map=m, speed_limit=vis or vis_msg(50))
+            out.append(((r["speed_limit"]["limit_kmh"], r["speed_limit"]["source"]), r["map"]))
+        return out
+
+    def test_a_short_dip_at_a_side_road_keeps_the_map_limit(self):
+        f = Fusion()
+        out = self.drive(f, [dict(limit=70, conf=0.9), dict(limit=70, conf=0.9), dict(limit=70, conf=0.35),
+                             dict(limit=70, conf=0.42), dict(limit=70, conf=0.9)])
+        self.assertEqual([o[0] for o in out], [(70, "map")] * 5)
+        held = out[2][1]
+        self.assertTrue(held["available"])
+        self.assertIsNone(held["reason"])
+        self.assertEqual(held["match_confidence"], 0.35)                 # the true value is reported
+        self.assertEqual(held["match_hold"], {"messages": 1, "age_s": 0.5, "confidence": 0.9})
+        self.assertEqual(out[3][1]["match_hold"]["messages"], 2)
+        self.assertNotIn("match_hold", out[4][1])
+        # the facts use the last good confidence, so the limit's confidence does not dip either
+        r = self.fuse(Fusion(), t=0.05, map=map_msg(limit=70, conf=0.9), speed_limit=vis_msg(50))
+        self.assertEqual(r["speed_limit"]["confidence"], round(0.9 * 0.9, 2))
+
+    def test_implicit_limit_is_held_too(self):
+        out = self.drive(Fusion(), [dict(conf=0.8), dict(conf=0.3), dict(conf=0.8)])
+        self.assertEqual([o[0] for o in out], [(50, "map_implicit")] * 3)
+
+    def test_no_hold_across_a_change_of_road(self):
+        for change in (dict(name="Side", ref=None), dict(**{"class": "residential"}), dict(name=None, ref=None)):
+            out = self.drive(Fusion(), [dict(limit=70, conf=0.9), dict(limit=70, conf=0.3, **change)])
+            self.assertEqual(out[1][0], (50, "vision_default"), change)
+            self.assertEqual(out[1][1]["reason"], "low_match_confidence")
+
+    def test_no_hold_when_the_map_limit_changes(self):
+        out = self.drive(Fusion(), [dict(limit=70, conf=0.9), dict(limit=50, conf=0.3)])
+        self.assertEqual(out[1][0], (50, "vision_default"))
+        self.assertEqual(out[1][1]["reason"], "low_match_confidence")
+
+    def test_same_edge_holds_an_unnamed_road(self):
+        f = Fusion()
+        ms = [map_msg(seq=1, t=0.0, limit=70, conf=0.9, name=None, ref=None),
+              map_msg(seq=2, t=0.5, limit=70, conf=0.3, name=None, ref=None)]
+        for m in ms:
+            m["match"].update(edge="ab:1", dir=1)
+        self.fuse(f, t=0.05, map=ms[0], speed_limit=vis_msg(50))
+        r = self.fuse(f, t=0.55, map=ms[1], speed_limit=vis_msg(50))
+        self.assertEqual((r["speed_limit"]["limit_kmh"], r["speed_limit"]["source"]), (70, "map"))
+        ms[1]["match"]["edge"] = "ab:2"                                   # another unnamed edge: not the same road
+        f = Fusion()
+        self.fuse(f, t=0.05, map=ms[0], speed_limit=vis_msg(50))
+        r = self.fuse(f, t=0.55, map=ms[1], speed_limit=vis_msg(50))
+        self.assertEqual(r["speed_limit"]["source"], "vision_default")
+
+    def test_no_hold_after_a_loss_of_position(self):
+        out = self.drive(Fusion(), [dict(limit=70, conf=0.9), dict(available=False), dict(limit=70, conf=0.3)])
+        self.assertEqual([o[0] for o in out], [(70, "map"), (50, "vision_default"), (50, "vision_default")])
+        self.assertEqual(out[2][1]["reason"], "low_match_confidence")
+        # a stale map in between ends it the same way
+        f = Fusion()
+        self.fuse(f, t=0.05, map=map_msg(seq=1, t=0.0, limit=70, conf=0.9), speed_limit=vis_msg(50))
+        r = self.fuse(f, t=3.5, map=map_msg(seq=1, t=0.0, limit=70, conf=0.9), speed_limit=vis_msg(50))
+        self.assertEqual(r["map"]["reason"], "stale")
+        r = self.fuse(f, t=1.05, map=map_msg(seq=2, t=1.0, limit=70, conf=0.3), speed_limit=vis_msg(50))
+        self.assertEqual(r["speed_limit"]["source"], "vision_default")
+
+    def test_hold_is_short(self):
+        # at most match_hold_msgs low messages in a row, and within match_hold_s of the last good one
+        out = self.drive(Fusion(), [dict(limit=70, conf=0.9)] + [dict(limit=70, conf=0.3)] * 5)
+        self.assertEqual([o[0][1] for o in out], ["map"] * 4 + ["vision_default"] * 2)
+        f = Fusion(cfg={"match_hold_msgs": 10})
+        out = self.drive(f, [dict(limit=70, conf=0.9)] + [dict(limit=70, conf=0.3)] * 6)
+        self.assertEqual([o[0][1] for o in out], ["map"] * 5 + ["vision_default"] * 2)     # 2.0 s
+        # once it has run out it does not come back without a confident message
+        out = self.drive(Fusion(), [dict(limit=70, conf=0.9)] + [dict(limit=70, conf=0.3)] * 4 +
+                         [dict(limit=70, conf=0.9), dict(limit=70, conf=0.3)])
+        self.assertEqual([o[0][1] for o in out], ["map"] * 4 + ["vision_default", "map", "map"])
+
+    def test_a_repeated_low_message_counts_once(self):
+        f = Fusion()
+        self.fuse(f, t=0.05, map=map_msg(seq=1, t=0.0, limit=70, conf=0.9), speed_limit=vis_msg(50))
+        low = map_msg(seq=2, t=0.5, limit=70, conf=0.3)
+        for i in range(6):                                              # fusion runs on other topics too
+            r = self.fuse(f, t=0.55 + 0.1 * i, map=low, speed_limit=vis_msg(50))
+            self.assertEqual(r["map"]["match_hold"]["messages"], 1)
+
     def test_inputs_are_not_modified(self):
         latest = {"map": map_msg(limit=70), "speed_limit": vis_msg(40, "sign"), "env": env_msg("city_street"),
                   "road": road_msg([0.9, 0.9, 0.9, 0.9])}
