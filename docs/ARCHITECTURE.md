@@ -1,9 +1,10 @@
 # Architecture and inter-process contract
 
-Four core processes (camerad, modeld, envd, api) plus any number of external
+Five core processes (camerad, modeld, envd, mapd, api) plus any number of external
 consumers such as a sign provider, all talking through two simple mechanisms: a
 shared-memory frame ring (camerad -> consumers) and newline-delimited JSON over
-Unix stream sockets (every daemon -> api / tools). These two mechanisms are the
+Unix stream sockets (every daemon -> api / tools; and, in the other direction,
+an external position feeder -> mapd). These two mechanisms are the
 whole contract: a process that writes the ring as described below is a valid
 camerad (any camera, any device), and a process that reads the ring and serves
 `<rundir>/signd.sock` is a valid sign provider. Nothing else couples the
@@ -19,7 +20,8 @@ camerad ──frame ring (shm)──┬──> modeld ────────�
                             ├──> envd (1 fps) ─────────────JSON──┤
                             ├──> sign provider (external) ─JSON──┼──> api ──> HTTP / WebSocket / MJPEG
                             └──> light provider (external) ─JSON─┤
-camerad ──JSON (frame meta)──────────────────────────────────────┘
+camerad ──JSON (frame meta)──────────────────────────────────────┤
+position feeder (external) ──JSON (gnss, motion)──> mapd ──JSON──┘      (mapd: no camera; map pack on disk)
 ```
 
 ## Frame ring (`/dev/shm/roadsense-frames`)
@@ -447,6 +449,175 @@ message-level `ego` for the light that applies to the ego lane:
         "agree": 2, "n_relevant": 2, "source": "path"}     // null when no light is relevant
 ```
 
+### mapd: `{"type":"map", ...}` on `<rundir>/mapd.sock`, position input on `<rundir>/position.sock`
+`mapd/roadsense_mapd` (Python, numpy; `python3 -m roadsense_mapd`) owns everything that has to do with
+where the car is: it takes raw GNSS fixes and vehicle motion from an external feeder, filters them,
+matches the position to the road graph of a map pack (OpenStreetMap, `docs/MAPS.md`) and publishes the
+map context of that position. It never touches the camera. It runs, and says "unavailable", without a
+feeder and without a pack; the vision stack does not depend on it.
+
+```
+feeder ──gnss, motion──> position.sock ─┐
+modeld.sock (road: v_ego, yaw rate) ────┼─> filter (EKF) ─> map matcher ─> road, speed limit, look-ahead ─> mapd.sock
+                       pack (.rsmap) ───┘        ▲──── cross-track + bearing while dead reckoning ───┘
+```
+
+**Position input API v1** (the contract of a feeder; reference client `tools/position_client.py`, a single
+file without dependencies that a feeder may copy; nothing is imported from roadsense):
+
+* Transport: Unix stream socket `<rundir>/position.sock` (mode 0666, `--input-mode`), UTF-8 JSON, one
+  object per line, any number of feeders. A valid message gets no reply. An invalid one gets
+  `{"type":"error","line":<n>,"reason":"..."}` on the same connection and is dropped; the connection stays
+  open. `{"type":"hello","api":1,"name":"..."}` is answered with
+  `{"type":"hello","api":1,"server":"roadsense-mapd","accepts":["gnss","motion"],"clock":"CLOCK_MONOTONIC","now_mono_ns":<int>}`.
+  The same messages can be sent over HTTP: `POST /v1/position` (one object, a JSON array, or JSON lines;
+  answer `{"api":1,"accepted":n,"rejected":[{"index":i,"reason":"..."}]}`); the socket is the path for
+  motion at its rate. A feeder must never block on the socket: when mapd is away, drop.
+* Clock: `ts_mono_ns` (integer) is CLOCK_MONOTONIC **of the roadsense host** at the instant the sample was
+  valid (the measurement, not the send time); the same clock as every other roadsense message. Omitted:
+  mapd stamps the message on arrival. Older than 5 s or more than 0.5 s in the future: rejected. A feeder
+  that relays samples from another device subtracts the known transport delay, or omits the field.
+* Unknown fields are ignored. Additions keep `api` 1; a change of meaning raises it.
+
+`{"type":"gnss", ...}`: one raw fix of the receiver, unfiltered (1..10 Hz; roadsense does the filtering).
+
+| field | unit | required | meaning |
+|---|---|---|---|
+| `fix` | | no (default `"3d"`) | `"none"`, `"2d"`, `"3d"`, `"dgps"`, `"rtk"`, `"dr"` (receiver's own dead reckoning). `"none"` = the receiver has no fix now: mapd starts dead reckoning at once instead of after `fix_timeout_s`; no other field is needed |
+| `lat`, `lon` | degrees WGS84 | yes unless `fix` is `none` | position of the antenna |
+| `hacc_m` | m | recommended (default 10) | horizontal accuracy as a 68 % radius (Android `Location.getAccuracy()`); fixes above 100 m are ignored |
+| `speed_mps` | m/s | no | speed over ground, >= 0 |
+| `speed_acc_mps` | m/s | no | 68 % accuracy of the speed |
+| `course_deg` | degrees, clockwise from true north, 0..360 | no | direction of travel over ground; used only at `speed_mps` >= 2.5 and not in reverse |
+| `course_acc_deg` | degrees | no | 68 % accuracy of the course |
+| `sats`, `hdop`, `utc_ms` | | no | satellites used, HDOP, UTC time of the fix in Unix ms (reported back in `input.gnss`, not used by the filter) |
+| `alt_m`, `vacc_m` | m | no | accepted, not used |
+| `source` | string | no | tag of the receiver, e.g. `"headunit"`, `"phone"` (reported back) |
+
+`{"type":"motion", ...}`: the car's own motion (5..50 Hz, 10..20 Hz recommended).
+
+| field | unit | required | meaning |
+|---|---|---|---|
+| `speed_mps` | m/s | yes | vehicle speed, magnitude (>= 0), from the wheels |
+| `gear` | `"P"`, `"R"`, `"N"`, `"D"`, `"B"` | no | `"R"` makes the speed negative along the heading |
+| `reverse` | bool | no | the same as `gear` `"R"` for cars without a gear signal |
+| `yaw_rate_rps` | rad/s, positive = turning left (counter-clockwise seen from above, ISO 8855) | no | from a gyroscope / yaw-rate sensor |
+| `wheel_speeds_mps` | m/s, `[front left, front right, rear left, rear right]`, >= 0 | no | yaw rate is derived from the rear pair and `track_m` |
+| `steering_wheel_deg` | degrees of the steering wheel, positive = left | no | yaw rate is derived with `steering_ratio` and `wheelbase_m` (kinematic bicycle) |
+| `source` | string | no | tag, e.g. `"prius-can"` (reported back) |
+
+Yaw rate is taken from the first of `yaw_rate_rps`, `wheel_speeds_mps`, `steering_wheel_deg` that is
+present; with none of them the heading is held between fixes. `motion` without any `gnss` never makes a
+position.
+
+**Filter** (`posfilter.py`): an extended Kalman filter over east, north, heading, speed and yaw-rate bias in a
+local tangent plane. Yaw rate is the control input, speed a measurement, GNSS position / speed / course are
+measurements; a fix more than 99.9 % unlikely is dropped, five such fixes in a row restart the filter on the
+fix. Without `course_deg` the first heading comes from the displacement between fixes. Motion sources, in
+order: vehicle `motion` (fresh for `motion_timeout_s` 1.5 s); else **vision odometry**, modeld's `road`
+message (`v_ego`, `pose.yaw_rate`; read from `modeld.sock`, at most 10 Hz, not parsed while vehicle motion
+arrives; `--no-vision-odometry`); else constant velocity for `coast_s` 5 s.
+
+**States** (`state`):
+
+| state | meaning | leaves when |
+|---|---|---|
+| `no_source` | no usable fix since start | a fix arrives |
+| `good` | a fix was used within `fix_timeout_s` (3 s) | no fix for 3 s, or `fix: "none"` |
+| `dead_reckoning` | the position is carried by motion input and the map | a fix arrives; or it runs out: no motion input for more than `coast_s`, longer than `dr_max_s` (vehicle 900 s, vision 120 s), farther than `dr_max_m` (vehicle 25 km, vision 3 km), or `hacc_m` above `dr_max_hacc_m` (150 m) |
+| `unknown` | the fix is lost and dead reckoning ran out; `position` is null | a fix arrives (the filter restarts on it) |
+
+`available` is true only in `good` / `dead_reckoning` with a pack loaded and a matched road; otherwise
+`reason` is `no_pack`, `no_position`, `position_unknown` or `off_road`, and `match` / `road` /
+`speed_limit` / `ahead` are null. While dead reckoning with a confident match the matcher feeds the road
+back to the filter (cross-track position, 4 m; road bearing, 6 degrees, not while turning; only a match
+within 10 m and 10 degrees of the filter is fed back, so a wrong branch at a fork cannot drag the position
+with it), which is what holds the position in a tunnel; along the road the uncertainty grows by 2 % of the distance travelled
+(`filter.odo_scale_sigma`, the odometer scale is not calibrated) until the next fix, so `hacc_m` reaches
+`dr_max_hacc_m` after about 7.5 km without a fix.
+
+**Map matching** (`matcher.py`): every 0.45 s the edges within 35..120 m are scored by distance, by the
+heading against the edge bearing (one-way edges only in their direction), a class prior (service and
+restricted roads lose a tie) and a transition term: no penalty for the current edge and for edges reachable
+from it along the graph within the distance travelled, a penalty for everything else. A road that is not
+connected to the current one wins only when it fits far better at once or clearly better over 250 m, so a
+parallel road does not capture the match during a multipath excursion and a wrong match corrects itself.
+At a fork the continuation of the same road (same class and ref or name) is followed freely, a branch
+(an exit ramp, a side street) has to be clearly nearer; the alternatives of the last fork stay reachable
+for 150 m.
+`match.confidence` is the winner's share among the candidate roads, scaled by how well the winner fits.
+
+**Message** (2 per second, `--hz`; the last one is sent to a client when it connects):
+
+```
+"api": 1,
+"state": "good", "available": true, "reason": null,
+"pack": {"region":"poland","osm_timestamp":"2026-11-14T21:20:41Z","built":"...","format":1},      // null without a pack
+"input": {"gnss": {"source":"headunit","fix":"3d","age_s":0.4,"hacc_m":4.0,"sats":14,"hdop":0.8,
+                   "used":812,"ignored":0,"rejected":2,"resets":0},                                // null before the first gnss message
+          "motion": {"source":"vehicle|vision|none","tag":"prius-can","age_s":0.03},
+          "errors": 0, "last_error": null},
+"position": {"lat":52.1512345,"lon":21.0456789,"heading_deg":93.2,"heading_acc_deg":1.4,"speed_mps":22.31,
+             "hacc_m":2.1,                 // RMS radial error of the filter, m
+             "confidence":0.96,"source":"gnss|dead_reckoning","fix_age_s":0.4,"dr_distance_m":0.0,
+             "motion_source":"vehicle","odometer_m":18234.5},                                      // null in no_source / unknown
+"match": {"matched":true,"confidence":0.97,"ambiguous":false,"distance_m":1.8,"heading_diff_deg":0.6,
+          "lat":..,"lon":..,"bearing_deg":92.6,"edge":"11bb1a2c:531","dir":1,"offset_m":212.4,"candidates":3},
+"road": {"class":"primary",               // motorway, motorway_link, trunk, trunk_link, primary .. tertiary(_link), unclassified, residential, living_street, service
+         "name":"Wrocławska","ref":"DK46","oneway":false,
+         "lanes":{"total":2,"forward":1,"backward":1,"source":"tagged|tagged_total|assumed"},     // forward = the car's direction
+         "tunnel":false,"bridge":false,"covered":false,"lit":true,                                 // lit: true / false / null (not tagged)
+         "surface":"asphalt","roundabout":false,"link":false,"motorroad":false,"expressway":false,"dual_carriageway":false,
+         "access_restricted":false,"toll":false,"parking":false,"forest":false,"layer":0,
+         "built_up":{"value":true,"source":"tagged|landuse|class"}},
+"speed_limit": {"limit_kmh":70,"source":"maxspeed|implicit",
+                "rule":null,               // implicit: built_up, outside, outside_dual_2x2, residential_zone, expressway, expressway_single, motorway, link (null limit)
+                "detail":"tagged|sign|zone" /* maxspeed */ or "built_up:tagged|landuse|class" /* implicit */,
+                "confidence":0.9,"variable":false},
+"ahead": {"horizon_m":1500.0,"path_confidence":0.62,                                               // along the most likely path
+          "features":[{"kind":"traffic_signals","dist_m":230.0,"confidence":0.9}],                 // also crossing, crossing_signals, level_crossing, tram_crossing, stop, give_way, mini_roundabout, speed_bump, toll_booth, motorway_junction
+          "junctions":[{"dist_m":412.0,"kind":"junction|roundabout|roundabout_exit|dead_end|no_way_on","branches":3,
+                        "turn_deg":-2.0,           // turn of the most likely path there, positive = right
+                        "minor":false,             // every side branch is a service road
+                        "confidence":0.62}],
+          "tunnel":{"in_tunnel":false,"entry_m":840.0,"length_m":2310.0,"exit_m":3150.0},          // in a tunnel: exit_m = distance to its end (the path is followed past the horizon for it)
+          "built_up_change":{"dist_m":655.0,"to":false,"source":"landuse","confidence":0.4},
+          "speed_limit_changes":[{"dist_m":655.0,"limit_kmh":90,"source":"implicit","rule":"outside","detail":"built_up:landuse","confidence":0.4}],
+          "road_change":{"dist_m":1210.0,"class":"secondary","name":null,"ref":"414"},
+          "shape":{"s":[0,20,..600],"x":[..],"y":[..],"curvature":[..]},   // road ahead beyond camera range; x forward, y right (modeld's frame), origin at the matched position; curvature 1/m, positive = bending right
+          "curves":[{"start_m":300.0,"apex_m":380.0,"end_m":480.0,"min_radius_m":150.0,"direction":"left","angle_deg":-88.0}]},   // radius below 500 m, at most 4
+"proc": {"step_ms":0.9,"cpu_pct":0.8,"feeders":1,"tile_loads":14}
+```
+
+Speed limit: the `maxspeed` tag of the matched direction when present, else the Polish statutory limit
+(`mapd/roadsense_mapd/limits/pl.json`: built-up 50, living street 20, outside 90, dual carriageway with two
+lanes per direction 100, expressway 120 / single carriageway 100, motorway 140), `source` says which. An
+expressway is a way with `motorroad=yes` or a `highway=motorway` whose refs are all S-numbers (`road.expressway`). The
+built-up state comes from a tag on the way (`maxspeed`, `zone:traffic`, `source:maxspeed` = `PL:urban` /
+`PL:rural`), else from landuse polygons (inferred, confidence 0.5); `built_up.source` says which. The most
+likely path follows, at every junction, the continuation with the same ref, name and class and the smallest
+turn; `path_confidence` is the product of its choices, and every `ahead` entry carries the confidence of the
+path up to it. Turn restrictions are not in the pack.
+
+Config `/etc/roadsense/mapd.json` (`ROADSENSE_CONFIG_DIR`), every key optional: `pack`
+(`/var/lib/roadsense/maps/current.rsmap`; env `ROADSENSE_MAP_PACK`; the file is checked every 10 s and a
+new one, e.g. a re-pointed symlink, is loaded without a restart), `hz`, `vision_odometry`, `wheelbase_m`,
+`steering_ratio`, `track_m` (defaults: Toyota Prius XW20 nominal 2.70 m, 19.1, 1.48 m), `horizon_m`, the
+timeouts above, `country`. CLI: `python3 -m roadsense_mapd --help`. Offline and live drivers:
+`tools/synth_drive.py` (a synthetic drive over a pack: route, GNSS noise, tunnel and window dropouts, bias,
+motion as yaw rate / steering angle / wheel speeds).
+
+```sh
+python3 -m unittest discover -s mapd/tests -t mapd      # filter, matcher, states, limits, look-ahead, input, daemon; drives on the Poland pack when one is built
+PACK=~/roadsense-maps/packs/poland-YYYYMMDD.rsmap
+tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --offline          # timeline + summary, no daemon
+# whole stack without hardware: fake camera daemons, the real mapd, the api, a synthetic drive in real time
+tools/fake_daemons.py --rundir /tmp/roadsense --no-mapd &
+ROADSENSE_CONFIG_DIR=/tmp/roadsense PYTHONPATH=mapd python3 -m roadsense_mapd --rundir /tmp/roadsense --pack $PACK &
+(cd api && python3 -m roadsense_api --rundir /tmp/roadsense --ring /tmp/roadsense/roadsense-frames --port 8080) &
+tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsense     # then open http://localhost:8080/
+```
+
 ## api (Python, aiohttp, port 8080)
 
 | Endpoint | Content |
@@ -458,13 +629,16 @@ message-level `ego` for the light that applies to the ego lane:
 | `GET /v1/speed_limit` | current speed limit derived by the api (topic `speed_limit`, below) plus `recent_changes` and `ignored` sign tracks |
 | `GET /v1/lights` | latest `lights` message with the api's ego-lane annotation (`ego`, per light `dist_m`, `lateral_m`, `relevance`) |
 | `GET /v1/rules` | rules in effect for the car derived by the api (topic `rules`, below: `in_effect`, `recent`, `ahead`) plus `pending`, `recent_changes` and `ignored` sign tracks |
+| `GET /v1/map` | latest `map` message of mapd (position state, matched road, map speed limit, look-ahead); 503 while mapd is not running |
+| `GET /v1/fused` | map and camera combined per fact with provenance (topic `fused`, below) |
+| `POST /v1/position` | position input API v1 over HTTP (body: one `gnss` / `motion` object, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
 | `GET /v1/camera` | latest `camera` message + ring header fields |
-| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light; CPU temp, battery |
+| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share) and `fused` (limit and source, place, lanes, tunnel) summaries; CPU temp, battery |
 | `GET /v1/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
-| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit` and `rules`; `?topics=road,signs,env,speed_limit,rules,lights` filters |
+| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules` and `fused`; `?topics=road,signs,env,speed_limit,rules,lights,map,fused` filters |
 
-api never touches the camera or the models; it is a fan-out and overlay layer, plus the two derived
+api never touches the camera or the models; it is a fan-out and overlay layer, plus the three derived
 topics below.
 
 ### api-derived topic: `{"type":"speed_limit", ...}`
@@ -528,6 +702,66 @@ and the offline evaluation: `docs/lanes/L11-signs-in-effect.md`; offline runner 
 "recent": ["B-2 no entry"], "ahead": ["A-8 roundabout ahead ~60 m"]}` (a trailing `?` marks an uncertain entry).
 A ride change or camera restart replaces the engine (L10), like the speed limit.
 
+### api-derived topic: `{"type":"fused", ...}`
+`api/roadsense_api/fusion.py` combines the map layer (`map`) with the camera perception (`speed_limit`,
+`env`, `road`), one fact at a time; every fact names its `source` and carries the unfused inputs
+(`vision`, `map`) next to the result. The vision topics are not modified. About 2 per second on `/ws`;
+`/v1/fused`. The map is used only when the `map` message is younger than 3 s, `available`, and
+`match.confidence` >= 0.5; otherwise `map.available` is false with a `reason` (`no_mapd`, `stale`,
+`no_pack`, `no_position`, `position_unknown`, `off_road`, `low_match_confidence`) and every fact is its
+vision value: without a position source the output is vision only.
+
+```
+"map": {"available":true,"state":"good","reason":null,"age_s":0.2,"match_confidence":0.97},
+"speed_limit": {"limit_kmh":40,
+                "source":"sign|sign_held|map|map_implicit|vision_default|unknown",
+                "confidence":0.8,"rule":null,"sign":"B-33","track_id":164,
+                "agreement":"agree|conflict|vision_only|map_only|none",   // vision value against map value
+                "note":null,"variable":false,
+                "vision":{"limit_kmh":40,"kind":"sign","sign":"B-33","rule":null,"confidence":0.71},
+                "map":{"limit_kmh":70,"source":"maxspeed","rule":null,"detail":"tagged","confidence":0.9}},
+"built_up": {"value":true,"source":"sign|map_tagged|map_class|map_landuse+env|map_landuse|env|none","confidence":0.7,
+             "vision":{"value":true,"source":"env","confidence":0.4},"map":{"value":true,"source":"landuse"}},
+"place": {"label":"tunnel","confidence":0.93,"source":"fused|fused(map)|fused(vision)|map|vision|none",
+          "scores":{...},"vision":{"label":"city_street","confidence":0.5},"map":{"label":"tunnel","prior":{...}}},
+"lanes": {"count":4,"forward":2,"backward":2,          // lanes of the road, own direction, oncoming
+          "ego_index":0,                               // 0 = leftmost lane of the own direction; null = unknown
+          "oncoming_left":true,                        // the lane to the left is oncoming traffic; null = unknown
+          "source":"map:tagged+vision","confidence":0.8,
+          "vision":{"lane_to_left":true,"lane_to_right":true},"map":{"total":4,"forward":2,"backward":2,"source":"tagged"}},
+"tunnel": {"in_tunnel":true,"exit_in_m":640.0,"entry_in_m":null,"length_m":null,"source":"map|vision|map+vision|none",
+           "vision":{"in_tunnel":true,"confidence":0.9},"map":{...}},
+"road": {"class","name","ref","oneway","bridge","lit","surface","roundabout","link","motorroad","expressway","dual_carriageway","toll"},   // null without the map
+"ahead": {"horizon_m","path_confidence","features","junctions","curves","speed_limit_changes","built_up_change","road_change"},   // as in `map`; null without the map
+"position": {"lat","lon","heading_deg","speed_mps","hacc_m","confidence","source"}                                               // null without the map
+```
+
+Rules:
+
+* **Speed limit.** (1) A sign the camera reads (`speed_limit.source.kind` `sign`) overrides the map from the
+  moment it is read. (2) With the map available that sign limit is then *held by the map*: it stays in
+  effect (`sign`, or `sign_held` once the vision engine has dropped it by its distance cap or its junction
+  proxies) until the car has passed a real junction of the road graph (a node with a side road that is not a
+  service road; counted from 20 m past the sign, because a sign is read before it is reached and often stands
+  just after a junction; not on motorways and expressways, where a limit lasts until it is cancelled), until
+  the tagged map limit changes to a third value at least 100 m after the sign, until a tagged or signed
+  built-up boundary, or 5 km. (3) Otherwise the tagged map limit (`map`), else the implicit map limit
+  (`map_implicit`, with the built-up state from an area sign when the camera saw one and the pack only
+  inferred it), else the vision engine's default (`vision_default`), else `unknown`. Without the map the
+  vision engine decides alone, as before.
+* **Built-up area.** Area sign seen by the camera > tag on the way > road class > landuse (confidence 0.7
+  when envd agrees, 0.45 when not) > envd.
+* **Place.** envd's smoothed scores are multiplied by a prior from the matched road raised to the match
+  confidence (tunnel x20 on a tunnel edge and x0.15 elsewhere; motorway / expressway -> highway; forest
+  flag -> forest_road; built-up -> city_street or residential by class; parking aisle -> parking_lot or
+  underground_parking; bridge x3) and renormalised. Without envd the map label alone is served (`map`).
+* **Lanes.** Counts from the map (`road.lanes`, source marked: tagged per direction, tagged total, assumed).
+  The ego lane comes from the model's four lane lines (a lane to the right exists when the far-right line has
+  probability >= 0.5 and the right line >= 0.3; likewise to the left): nothing to the right = the rightmost
+  lane; `oncoming_left` is false on one-way carriageways, true in the leftmost own lane of a two-way road.
+* **Tunnel.** In a tunnel when the matched edge is one (then `exit_in_m` is the map distance to its end) or
+  when envd's label is `tunnel` with confidence >= 0.5 (no distance).
+
 Overlays project the 3D road outputs into the image with the pinhole model
 from the ring header (focal_px, cx, cy) and the calibration used by modeld,
 published by modeld in a `{"type":"calib", ...}` message to every client when it
@@ -546,7 +780,10 @@ postmarketOS) everything is built on the phone (`g++`, `cmake`,
 `onnxruntime-dev`, `libcamera-dev` from Alpine); `scripts/install-phone.sh`
 builds, installs to `/usr/local/bin`, writes the systemd units from `systemd/`
 and enables `roadsense.target`. Models under `/var/lib/roadsense/models`,
-fetched with `scripts/fetch-models.sh`. A sign provider installs its own unit
+fetched with `scripts/fetch-models.sh`. mapd is Python (`py3-numpy`), installed to
+`/usr/local/lib/roadsense/mapd` with `roadsense-mapd.service`; its map pack is not part of
+the tree: it is built on a dev box and copied with `scripts/roadsense-maps install` to
+`/var/lib/roadsense/maps/current.rsmap` ([MAPS.md](MAPS.md)). A sign provider installs its own unit
 with `PartOf=`/`WantedBy=roadsense.target`; the target does not require it.
 Every unit runs in `roadsense.slice` (`systemd/roadsense.slice`: CPUWeight 100,
 no memory throttling, MemoryMax 4608M as an OOM backstop only) so whatever else
@@ -589,6 +826,11 @@ with this stack is exactly:
   (`install-phone.sh` without `AUTOSTART=1`);
 * **CPU profile**: the host keeps the Gold cluster online while any unit runs
   (modeld/signd/envd pin cpu4-7) and applies its idle profile only afterwards.
+
+* **position** (optional): the host may feed GNSS fixes and vehicle motion to
+  `<rundir>/position.sock` (position input API v1, "mapd" above); roadsense does
+  all filtering and map matching. Without a feeder the map layer reports
+  `unavailable` and the stack runs on vision only.
 
 Nothing in this list is specific to that backend: any supervisor that can run
 `systemctl` and read JSON can drive the stack the same way.

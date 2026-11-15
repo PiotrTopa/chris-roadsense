@@ -21,6 +21,21 @@
 - [ ] thermal/battery management, charging strategy in host mode
 - [x] host control (2026-11-04): the stack runs on the single Prius car computer (same Poco F1 as the car backend) and is started/stopped by that backend on ACC through `roadsense.target`; `roadsense.slice` + `ROADSENSE_API_PORT` added for the shared machine (docs/ARCHITECTURE.md "Running under a host controller")
 
+## Map layer (mapd + fusion; built 2026-11-15, verified on synthetic position only)
+- [x] position input API v1 (`gnss`, `motion` over `<rundir>/position.sock` or `POST /v1/position`), reference client `tools/position_client.py`
+- [x] mapd: EKF over GNSS + vehicle motion (yaw rate, wheel speeds or steering angle), vision odometry as fallback motion source, dead reckoning with map feedback, states `no_source` / `good` / `dead_reckoning` / `unknown`
+- [x] map matching with heading and continuity, confidence, parallel-road protection
+- [x] map context: road attributes, tagged or Polish statutory speed limit with its source, look-ahead along the most likely path (shape, curves, junctions, roundabouts, crossings, signals, tunnel entry / exit, built-up and limit changes)
+- [x] api topic `fused` (speed limit, built-up, place, lanes, tunnel with provenance), `/v1/map`, `/v1/fused`, status page
+- [x] `scripts/roadsense-maps` (fetch, build, info, verify, install); Poland pack built on the dev box (docs/MAPS.md, docs/lanes/L13-mapd.md)
+- [ ] a real position source: no feeder exists yet (the car's head-unit GNSS and the Prius CAN motion are to be fed by the car backend); every number so far comes from `tools/synth_drive.py`
+- [ ] mapd on the phone: not deployed, CPU and memory there not measured; the pack is not installed on the phone
+- [ ] vehicle constants (`wheelbase_m`, `steering_ratio`, `track_m`) are nominal Prius values, not calibrated; vision odometry speed depends on the camera calibration
+- [ ] built-up area is inferred from landuse where no tag states it (D-42 / D-43 sign nodes are not used); turn restrictions, turn lanes and lane-level geometry are not in the pack
+- [ ] the most likely path ignores the driver's intent (blinkers, a navigation route)
+- [ ] the recorded rides carry no position (video only), so no ride replays the map layer; a ride with a GNSS track is needed for a camera + map replay
+- [ ] pack updates are manual (re-run fetch / build / install)
+
 ## Later
 - [ ] car control integration (separate project; this API is the input)
 - [ ] GPU inference via ncnn/Vulkan: integrated 2026-10-21 (`modeld --backend ncnn`, ~60 ms/run, ~15 % of a core). Two blockers solved (turnip cache flush, fp16 overflow in the feature normalisation); full-replay accuracy still misses the gate on far-range outliers (lane y max 0.28 m at 192 m, lead x 1.9 m at 100 m; HARDWARE.md), so the unit stays on ORT. Open: reduce the fp16 activation error (ncnn per-layer fp32 is broken on Vulkan) or relax the gate to the ranges that matter

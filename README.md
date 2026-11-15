@@ -19,6 +19,8 @@ separate project.
 | `camera` | camerad | frame metadata (exposure, gain, colour gains, fps), optional MJPEG preview with overlays |
 | `signs` | external sign provider (optional), e.g. [roadsense-signs](https://github.com/PiotrTopa/roadsense-signs) | per-frame detections with class, box, score; persistent track ids, first/last seen, best crop |
 | `env` | envd: zero-shot CLIP-type image encoder, 1 fps | place (highway, city street, residential, rural/forest road, tunnel, parking lot, underground parking, gas station, bridge), weather (clear, overcast, rain, snow, fog), light (day, dusk/dawn, night): smoothed scores, label, confidence |
+| `map` | mapd: position filter + map matching on an OpenStreetMap pack (needs an external position feeder: GNSS fixes and vehicle motion) | position state (good / dead reckoning / unknown / no source), matched road (class, name, ref, lanes, tunnel, bridge, lit, surface), map speed limit (tagged or Polish statutory default, source marked), look-ahead along the most likely path (road shape and curves, junctions, roundabouts, crossings, signals, tunnel entry / exit distance, built-up and limit changes) |
+| `fused` | api: map and camera combined per fact, with provenance | speed limit (sign > sign held to the next map junction > map > default), built-up state, place, lane count / ego lane / oncoming neighbour, tunnel with exit distance; vision-only values next to each result |
 | `health` | all daemons | fps per stage, model latency, CPU temperature, battery |
 
 ## Architecture and contract
@@ -30,6 +32,7 @@ separate project.
                      modeld (C++, ONNX Runtime / ncnn)   envd (C++, 1 fps)   sign provider (optional, external)
                                │   newline-delimited JSON over Unix sockets  │                      │
                                └──────────────┬───────────┴──────────────────────┘
+ position feeder (GNSS, vehicle motion) ──> mapd (Python; map pack) ──┤
                                               ▼
                                     api (Python, aiohttp) ──> HTTP /v1/*, WebSocket /ws, MJPEG /preview
 ```
@@ -67,6 +70,14 @@ The processes share nothing but two mechanisms, specified in
   the CPU; any Linux box that runs ONNX Runtime can host them.
 * **Consumers:** further perception daemons (the sign provider is one) read the
   ring and serve their own socket; the api fans out whatever arrives.
+* **Position and maps:** any process may feed raw GNSS fixes and the car's motion
+  (speed, yaw rate or steering angle or wheel speeds) to `<rundir>/position.sock`
+  (position input API v1, docs/ARCHITECTURE.md; reference client
+  `tools/position_client.py`); mapd filters, dead-reckons through dropouts and
+  matches to the map. Without a feeder, or without a pack, the map layer reports
+  "unavailable" and everything else runs on vision alone. Map packs are built from
+  OpenStreetMap with `scripts/roadsense-maps` and are never part of the repository
+  ([docs/MAPS.md](docs/MAPS.md); map data © OpenStreetMap contributors, ODbL).
 
 ## Reference deployment: Poco F1 on postmarketOS
 
@@ -110,6 +121,8 @@ next to it; its unit joins `roadsense.target`.
 
 MIT, see [LICENSE](LICENSE). Third-party models and their licenses are listed
 in [docs/LICENSES.md](docs/LICENSES.md); they are downloaded by
-`scripts/fetch-models.sh` and never committed. The sign provider
+`scripts/fetch-models.sh` and never committed. Map packs are derived from
+OpenStreetMap (© OpenStreetMap contributors, ODbL 1.0) and are never committed
+either ([docs/MAPS.md](docs/MAPS.md)). The sign provider
 roadsense-signs is a separate AGPL-3.0 project and is not part of this
 repository.
