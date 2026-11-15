@@ -75,12 +75,17 @@ class PositionFeed:
         if self.sock is None and not self._connect():
             self.dropped += 1
             return False
+        data = (json.dumps(msg, separators=(",", ":")) + "\n").encode()
         try:
-            self.sock.send((json.dumps(msg, separators=(",", ":")) + "\n").encode())
+            n = self.sock.send(data)
         except BlockingIOError:              # mapd is not reading: drop rather than block the car
             self.dropped += 1
             return False
         except OSError:
+            self.close()
+            self.dropped += 1
+            return False
+        if n != len(data):                   # half a line in the stream: start over on a new connection
             self.close()
             self.dropped += 1
             return False
