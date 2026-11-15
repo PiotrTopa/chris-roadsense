@@ -8,6 +8,7 @@ Every fact is combined on its own, keeps the unfused inputs next to the result a
     place         envd's smoothed scores multiplied by a prior from the matched road
     lanes         lane counts from the map, ego lane and oncoming neighbour with the model's lane lines
     tunnel        map tunnel (with the distance to its end) and / or envd's tunnel label
+    lead          the tracked lead vehicle (lead.py; vision + the car's own motion), a copy of the `lead` topic
 
 With no map (no mapd, no pack, no position, or a poor match) every fact falls back to its vision value
 and says so; the vision topics themselves are never modified.
@@ -328,6 +329,17 @@ class Fusion:
                 "source": "map+vision" if m_in and v_in else "map" if m_in or not v_in else "vision",
                 "vision": vision, "map": t}
 
+    @staticmethod
+    def _lead(latest, now_mono_ns):
+        """The lead vehicle as the tracker (lead.py, topic `lead`) has it, with the raw vision value alongside.
+        `fused` is slow (about 2 per second): a consumer that draws the lead reads the `lead` topic itself."""
+        ld = latest.get("lead")
+        if not ld or ld.get("ts_mono_ns") is None or now_mono_ns - ld["ts_mono_ns"] > 1.0e9:
+            return None
+        keys = ("present", "mode", "track_id", "dist_m", "dist_std_m", "lateral_m", "v_rel_mps", "v_lead_mps",
+                "a_lead_mps2", "time_gap_s", "ttc_s", "standing", "departed", "source", "vision")
+        return {k: ld.get(k) for k in keys}
+
     # ---- output ------------------------------------------------------------------------------
     def update(self, latest, now_mono_ns, now_real_ns=None):
         m, info = self._map(latest, now_mono_ns)
@@ -343,7 +355,8 @@ class Fusion:
                "built_up": built_up,
                "place": self._place(m, env),
                "lanes": self._lanes(m, latest.get("road")),
-               "tunnel": self._tunnel(m, env)}
+               "tunnel": self._tunnel(m, env),
+               "lead": self._lead(latest, now_mono_ns)}
         if m:
             r, a = m["road"], m.get("ahead") or {}
             out["road"] = {k: r.get(k) for k in ("class", "name", "ref", "oneway", "bridge", "lit", "surface",

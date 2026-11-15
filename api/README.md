@@ -22,7 +22,9 @@ Modules: `sockets.py` (one reconnecting client per daemon, backoff 0.2-5 s),
 `state.py` (latest messages, rolling fps, live/ended sign tracks, ring header,
 CPU temperature, battery), `overlay.py` (Pillow drawing + pinhole projection),
 `server.py` (aiohttp routes), `speedlimit.py` / `rules.py` (derived topics from
-signs), `fusion.py` (derived topic `fused`: map + camera per fact), `__main__.py`.
+signs), `fusion.py` (derived topic `fused`: map + camera per fact), `lead.py` (derived topic `lead`:
+the lead vehicle tracked over time, with the car's own motion from mapd's `ego.sock` when a feeder sends
+it; optional constants in `<config dir>/lead.json`), `__main__.py`.
 
 `GET /` is a small status page: the `/preview` stream plus health, road and live
 signs polled once per second. CORS allows all origins.

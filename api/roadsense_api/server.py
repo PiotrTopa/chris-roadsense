@@ -188,9 +188,15 @@ async def h_fused(req):
     return _json(msg or {"error": "no fused message yet"}, 200 if msg else 503)
 
 
+async def h_lead(req):
+    st = req.app["state"]
+    msg = st.latest.get("lead")
+    return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
+
+
 async def h_position(req):
     """Position input over HTTP: the body is one message, a JSON array of messages, or JSON lines
-    (`gnss` / `motion`, position input API v1). Forwarded to mapd's position.sock; mapd validates."""
+    (`gnss` / `motion` / `reset`, position input API v1). Forwarded to mapd's position.sock; mapd validates."""
     try:
         text = (await req.text()).strip()
     except Exception:
@@ -368,6 +374,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
     app.router.add_get("/v1/lights", h_lights)
     app.router.add_get("/v1/map", h_map)
     app.router.add_get("/v1/fused", h_fused)
+    app.router.add_get("/v1/lead", h_lead)
     app.router.add_post("/v1/position", h_position)
     app.router.add_get("/v1/camera", h_camera)
     app.router.add_get("/v1/health", h_health)
@@ -425,7 +432,10 @@ async function tick(){
       const names = ["far left", "left", "right", "far right"];
       let s = (r.lane_lines || []).map((l, i) => `${names[i] || i}: p ${f(l.prob, 2)}`).join("\\n");
       const lead = (r.leads || [])[0];
-      s += "\\nlead: " + (lead ? `${f(lead.x[0])} m  p ${f(lead.prob, 2)}  v ${f(lead.v[0])} m/s` : "-");
+      s += "\\nlead (raw): " + (lead ? `${f(lead.x[0])} m  p ${f(lead.prob, 2)}  v ${f(lead.v[0])} m/s` : "-");
+      const ld = await get("/v1/lead");
+      s += "\\nlead (tracked): " + (ld && ld.present ? `${f(ld.dist_m)} +- ${f(ld.dist_std_m)} m  v_rel ${f(ld.v_rel_mps)} m/s  ` +
+        `gap ${f(ld.time_gap_s)} s  ${ld.mode}${ld.departed ? " DEPARTED" : ""}  ego ${f(ld.ego.speed_mps)} m/s (${ld.ego.source})` : "-");
       s += `\\nseq ${r.seq}  model ${f(r.model_ms, 0)} ms`;
       $("road").textContent = s;
     } else $("road").textContent = "no data";

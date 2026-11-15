@@ -9,11 +9,12 @@ import time
 from . import lights as lights_mod
 from . import signctx
 from .fusion import Fusion
+from .lead import LeadTracker
 from .rules import RulesInEffect
 from .speedlimit import load_rules
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd", "mapd")
-TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused")
+TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead")
 FUSED_PERIOD_S = 0.45
 SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
@@ -69,6 +70,20 @@ def battery():
     return out
 
 
+def load_lead_config():
+    """Optional overrides of the lead tracker's constants: `<config dir>/lead.json` (lead.py DEFAULT_CFG keys)."""
+    path = os.path.join(os.environ.get("ROADSENSE_CONFIG_DIR", "/etc/roadsense"), "lead.json")
+    try:
+        with open(path) as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(cfg, dict):
+        return None
+    from .lead import DEFAULT_CFG
+    return {k: v for k, v in cfg.items() if k in DEFAULT_CFG}
+
+
 class State:
     def __init__(self, rundir, datadir=None, ring_path=None, rules="pl"):
         self.rundir = rundir
@@ -97,6 +112,7 @@ class State:
         self.ride_changes = 0
         self.fusion = Fusion(load_rules(rules).get("defaults_kmh"))   # derived topic `fused` (fusion.py)
         self._fused_emit = 0.0
+        self.lead = LeadTracker(load_lead_config())        # derived topic `lead` (lead.py)
 
     # ---- ingestion -------------------------------------------------------
     def on_message(self, daemon, msg, line):
@@ -122,6 +138,8 @@ class State:
                 logging.getLogger("roadsense_api.state").exception("sign context failed")
         if mtype == "camera":
             self._on_camera(msg)
+        if mtype == "ego":         # the vehicle's own motion, relayed by mapd: input of the lead tracker
+            self.lead.on_ego(msg)
         self.latest[mtype] = msg
         self.arrivals[mtype].append(now)
         self.version += 1
@@ -129,6 +147,14 @@ class State:
             self._on_signs(msg, now)
         for cb in list(self.subscribers):
             cb(mtype, line)
+        if mtype == "road":
+            try:
+                out = self.lead.on_road(msg)
+                if out is not None:
+                    self._emit("lead", out, now)
+            except Exception:                 # a malformed road message must not stop the fan-out
+                import logging
+                logging.getLogger("roadsense_api.state").exception("lead tracker failed")
         if mtype in ("road", "signs", "env", "lights"):
             self._on_speed(msg, now)
         if now - self._fused_emit >= FUSED_PERIOD_S and mtype in ("map", "road", "env", "signs"):
@@ -160,6 +186,7 @@ class State:
         self.suppressed_tracks.clear()
         self.signctx = signctx.SignContext()
         self.fusion = Fusion(load_rules(self._rules).get("defaults_kmh"))
+        self.lead.reset()
 
     def _on_speed(self, msg, now):
         if not self._speed_geom:
@@ -297,6 +324,7 @@ class State:
             "rules": self.rules_engine.summary() if "rules" in self.latest else None,
             "map": self._map_summary(now),
             "fused": self.fusion.summary(self.latest["fused"]) if "fused" in self.latest else None,
+            "lead": self.lead.summary(self.latest["lead"]) if "lead" in self.latest else None,
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
             "battery": battery(),

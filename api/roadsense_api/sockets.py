@@ -8,7 +8,8 @@ log = logging.getLogger("roadsense_api.sockets")
 LINE_LIMIT = 16 * 1024 * 1024
 
 
-async def daemon_client(state, daemon, path, backoff_min=0.2, backoff_max=5.0):
+async def daemon_client(state, daemon, path, backoff_min=0.2, backoff_max=5.0, track=True):
+    """`track` False: a second socket of a daemon (mapd's ego.sock); it does not own the daemon's `connected` flag."""
     backoff = backoff_min
     while True:
         try:
@@ -18,7 +19,8 @@ async def daemon_client(state, daemon, path, backoff_min=0.2, backoff_max=5.0):
             backoff = min(backoff * 2, backoff_max)
             continue
         log.info("connected to %s", path)
-        state.connected[daemon] = True
+        if track:
+            state.connected[daemon] = True
         backoff = backoff_min
         try:
             while True:
@@ -38,12 +40,17 @@ async def daemon_client(state, daemon, path, backoff_min=0.2, backoff_max=5.0):
         except (OSError, ValueError, asyncio.LimitOverrunError) as e:
             log.warning("%s: %s", daemon, e)
         finally:
-            state.connected[daemon] = False
+            if track:
+                state.connected[daemon] = False
             writer.close()
         log.info("disconnected from %s", path)
         await asyncio.sleep(backoff)
 
 
 def start_clients(state, rundir, daemons):
-    return [asyncio.create_task(daemon_client(state, d, os.path.join(rundir, d + ".sock")),
-                                name="sock-" + d) for d in daemons]
+    tasks = [asyncio.create_task(daemon_client(state, d, os.path.join(rundir, d + ".sock")),
+                                 name="sock-" + d) for d in daemons]
+    if "mapd" in daemons:       # the car's own motion as mapd accepted it (`ego` messages), for the lead tracker
+        tasks.append(asyncio.create_task(daemon_client(state, "mapd", os.path.join(rundir, "ego.sock"), track=False,
+                                                       backoff_max=2.0), name="sock-ego"))
+    return tasks

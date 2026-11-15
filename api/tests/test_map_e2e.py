@@ -166,6 +166,67 @@ class MapE2E(unittest.TestCase):
             return seen
         self.assertEqual(asyncio.run(go()), {"map", "fused"})
 
+    def test_5_reset_over_http_forgets_the_position(self):
+        t = time.monotonic_ns()
+        msgs = []
+        for i in range(6):
+            lat, lon = SP.ll(100 + 3 * i, 0)
+            msgs.append({"type": "gnss", "ts_mono_ns": t - (6 - i) * 150_000_000, "lat": lat, "lon": lon, "hacc_m": 4.0,
+                         "speed_mps": 20.0, "course_deg": 90.0, "source": "synthetic"})
+        self.assertEqual(self.post("/v1/position", json.dumps(msgs))[1]["accepted"], 6)
+        self.wait(lambda: self.get("/v1/map")["state"] == "good", 5)
+        self.assertEqual(self.get("/v1/map")["input"]["synthetic"], True)
+        code, rep = self.post("/v1/position", json.dumps({"type": "reset", "reason": "e2e"}))
+        self.assertEqual((code, rep["accepted"], rep["rejected"]), (200, 1, []))
+        self.wait(lambda: self.get("/v1/map")["state"] == "no_source", 5)
+        m = self.get("/v1/map")
+        self.assertEqual((m["available"], m["reason"], m["position"], m["input"]["last_reset"]["reason"]),
+                         (False, "no_position", None, "e2e"))
+        self.assertEqual(m["input"]["synthetic"], False)
+        self.wait(lambda: self.get("/v1/fused")["map"]["available"] is False, 5)
+        self.assertIsNone(self.get("/v1/fused")["position"])
+
+    def test_4_lead_topic_uses_vehicle_motion_from_the_feeder(self):
+        """`lead`: vision only without a feeder; with `motion` on position.sock mapd relays it (ego.sock) and
+        the tracker takes the car's speed from it. The vision topics stay as they are."""
+        self.wait(lambda: (self.get("/v1/lead") or {}).get("present"), 10)
+        ld = self.get("/v1/lead")
+        self.assertEqual((ld["type"], ld["source"], ld["ego"]["source"], ld["mode"]), ("lead", "vision", "vision", "track"))
+        road = self.get("/v1/road")
+        self.assertAlmostEqual(ld["dist_m"], road["leads"][0]["x"][0], delta=1.5)
+        self.assertEqual(set(ld["vision"]), {"dist_m", "dist_std_m", "lateral_m", "v_lead_mps", "v_rel_mps", "a_lead_mps2", "prob"})
+        self.assertEqual(self.get("/v1/health")["lead"]["present"], True)
+        self.wait(lambda: (self.get("/v1/fused") or {}).get("lead"), 5)
+        self.assertEqual(self.get("/v1/fused")["lead"]["source"], "vision")
+        sys.path.insert(0, os.path.join(REPO, "tools"))
+        from position_client import PositionFeed
+        feed = PositionFeed(self.rundir, name="e2e")
+        end = time.monotonic() + 4.0
+        got = None
+        while time.monotonic() < end:
+            feed.motion(19.0, gear="D", wheel_speeds_mps=[19.0] * 4, source="e2e-can")
+            time.sleep(0.1)
+            ld = self.get("/v1/lead")
+            if ld["source"] == "vision+ego":
+                got = ld
+        self.assertIsNotNone(got, "the lead tracker never saw the vehicle motion")
+        self.assertEqual((got["ego"]["source"], got["ego"]["tag"], got["ego"]["speed_mps"]), ("vehicle", "e2e-can", 19.0))
+        self.assertLess(got["ego"]["age_s"], 0.3)
+        self.assertEqual(self.get("/v1/health")["daemons"]["mapd"]["connected"], True)
+        feed.close()
+        self.wait(lambda: self.get("/v1/lead")["source"] == "vision", 5)       # the feeder is gone: vision again
+
+        import aiohttp
+
+        async def go():
+            seen = set()
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(self.base + "/ws?topics=lead,ego") as ws:
+                    for _ in range(10):
+                        seen.add(json.loads((await asyncio.wait_for(ws.receive(), 5)).data)["type"])
+            return seen
+        self.assertEqual(asyncio.run(go()), {"lead"})
+
 
 if __name__ == "__main__":
     unittest.main()
