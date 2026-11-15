@@ -1,0 +1,20 @@
+{
+  "country": "PL",
+  "vehicle": "passenger_car",
+  "source": "Prawo o ruchu drogowym (Dz.U. 2024 poz. 1251) art. 20 ust. 1 (obszar zabudowany 50 km/h), ust. 2 (strefa zamieszkania 20 km/h), ust. 3 pkt 1 (autostrada 140; droga ekspresowa dwujezdniowa 120; droga ekspresowa jednojezdniowa oraz droga dwujezdniowa co najmniej o dwoch pasach dla kazdego kierunku 100; pozostale drogi 90)",
+  "implicit_kmh": {
+    "built_up": 50,
+    "residential_zone": 20,
+    "outside": 90,
+    "outside_dual_2x2": 100,
+    "expressway": 120,
+    "expressway_single": 100,
+    "motorway": 140
+  },
+  "expressway_ref_prefix": "S",
+  "notes": {
+    "expressway": "an expressway is a way with motorroad=yes or a highway=motorway whose refs are all S-numbers (Polish expressways are commonly mapped as highway=motorway)",
+    "built_up": "the built-up area is defined by the D-42/D-43 signs; the pack knows it from way tags (PL:urban, zone:traffic ...) or infers it from landuse polygons, and marks which",
+    "link": "an untagged motorway/expressway slip road gets no implicit limit (null)"
+  }
+}
