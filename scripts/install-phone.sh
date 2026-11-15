@@ -44,7 +44,13 @@ if [ -d /etc/nftables.d ]; then
     esac
     systemctl try-restart nftables
 fi
-install -m 644 systemd/roadsense-*.service systemd/roadsense.target systemd/roadsense.slice /etc/systemd/system/
+# A masked unit (symlink to /dev/null, e.g. roadsense-camerad.service after
+# scripts/install-camerad-dvr.sh --enable) stays masked: install(1) would replace the symlink.
+for u in systemd/roadsense-*.service systemd/roadsense.target systemd/roadsense.slice; do
+    d=/etc/systemd/system/$(basename "$u")
+    if [ -L "$d" ] && [ "$(readlink "$d")" = /dev/null ]; then echo "kept masked: $(basename "$u")"; continue; fi
+    install -m 644 "$u" /etc/systemd/system/
+done
 systemctl daemon-reload
 # boot autostart is opt-in (AUTOSTART=1): the reference phone overheats without cooling
 [ "${AUTOSTART:-0}" = 1 ] && systemctl enable roadsense.target >/dev/null || true
