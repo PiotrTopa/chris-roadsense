@@ -14,8 +14,13 @@ install -m 755 "$BUILD/camerad/camerad" "$BUILD/modeld/modeld" /usr/local/bin/
 for t in modeld/modeld_replay tools/ringdump camerad-dvr/camerad-dvr envd/envd envd/envd_replay; do [ -x "$BUILD/$t" ] && install -m 755 "$BUILD/$t" /usr/local/bin/ || true; done
 mkdir -p /usr/local/lib/roadsense /var/lib/roadsense/models /etc/roadsense
 rm -rf /usr/local/lib/roadsense/api && cp -r api /usr/local/lib/roadsense/api
+# mapd (Python, needs py3-numpy) and its tools; map packs live in /var/lib/roadsense/maps and are
+# installed separately (scripts/roadsense-maps install, docs/MAPS.md), never from this tree.
+rm -rf /usr/local/lib/roadsense/mapd && mkdir -p /usr/local/lib/roadsense/mapd /var/lib/roadsense/maps
+cp -r mapd/roadsense_mapd /usr/local/lib/roadsense/mapd/
+install -m 755 tools/position_client.py /usr/local/bin/roadsense-position
 for m in models/*.onnx models/*.param models/*.bin models/*.txt models/*.json; do [ -f "$m" ] && install -m 644 "$m" /var/lib/roadsense/models/; done
-for c in camera.json calib.json modeld.json envd.json; do
+for c in camera.json calib.json modeld.json envd.json mapd.json; do
     [ -f "/etc/roadsense/$c" ] || { [ -f "config/$c" ] && install -m 644 "config/$c" /etc/roadsense/; }
 done
 # API port/bind: API_PORT=N / API_HOST=ADDR write /etc/roadsense/api.env (kept afterwards; an

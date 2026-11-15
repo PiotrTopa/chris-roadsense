@@ -1,0 +1,27 @@
+[Unit]
+Description=roadsense mapd (position filter, map matching, map context from an OpenStreetMap pack)
+PartOf=roadsense.target
+
+[Service]
+Type=simple
+Slice=roadsense.slice
+# Phase 1: root, like the other daemons. Needs no camera: it runs (and answers "unavailable") without a
+# position source and without a pack.
+Environment=ROADSENSE_RUNDIR=/run/roadsense
+Environment=ROADSENSE_CONFIG_DIR=/etc/roadsense
+Environment=PYTHONPATH=/usr/local/lib/roadsense/mapd
+RuntimeDirectory=roadsense
+RuntimeDirectoryPreserve=yes
+StateDirectory=roadsense
+# Pack: /var/lib/roadsense/maps/current.rsmap (a symlink set by the install step of
+# `roadsense-maps install`, docs/MAPS.md); a changed pack is reloaded without a restart.
+# Two `map` messages per second; the little cores are plenty (about 1 % of one laptop core, docs/MAPS.md).
+ExecStart=/usr/bin/python3 -m roadsense_mapd --hz 2 --stats 60
+CPUAffinity=0-3
+Nice=10
+MemoryMax=384M
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=roadsense.target
