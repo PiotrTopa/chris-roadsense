@@ -22,6 +22,7 @@ camerad ──frame ring (shm)──┬──> modeld ────────�
                             └──> light provider (external) ─JSON─┤
 camerad ──JSON (frame meta)──────────────────────────────────────┤
 position feeder (external) ──JSON (gnss, motion)──> mapd ──JSON──┘      (mapd: no camera; map pack on disk)
+                                                     └──JSON (ego: the car's own motion, as fed)──> api (lead tracker)
 ```
 
 ## Frame ring (`/dev/shm/roadsense-frames`)
@@ -449,7 +450,7 @@ message-level `ego` for the light that applies to the ego lane:
         "agree": 2, "n_relevant": 2, "source": "path"}     // null when no light is relevant
 ```
 
-### mapd: `{"type":"map", ...}` on `<rundir>/mapd.sock`, position input on `<rundir>/position.sock`
+### mapd: `{"type":"map", ...}` on `<rundir>/mapd.sock`, `{"type":"ego", ...}` on `<rundir>/ego.sock`, position input on `<rundir>/position.sock`
 `mapd/roadsense_mapd` (Python, numpy; `python3 -m roadsense_mapd`) owns everything that has to do with
 where the car is: it takes raw GNSS fixes and vehicle motion from an external feeder, filters them,
 matches the position to the road graph of a map pack (OpenStreetMap, `docs/MAPS.md`) and publishes the
@@ -457,9 +458,10 @@ map context of that position. It never touches the camera. It runs, and says "un
 feeder and without a pack; the vision stack does not depend on it.
 
 ```
-feeder ──gnss, motion──> position.sock ─┐
-modeld.sock (road: v_ego, yaw rate) ────┼─> filter (EKF) ─> map matcher ─> road, speed limit, look-ahead ─> mapd.sock
-                       pack (.rsmap) ───┘        ▲──── cross-track + bearing while dead reckoning ───┘
+feeder ──gnss, motion──> position.sock ─┬──────────────── motion, as accepted ────────────────────────> ego.sock
+modeld.sock (road: v_ego, yaw rate) ····┼─> filter (EKF) ─> map matcher ─> road, speed limit, look-ahead ─> mapd.sock
+   (only with vision_odometry on)       │        ▲──── cross-track + bearing while dead reckoning ───┘
+                       pack (.rsmap) ───┘
 ```
 
 **Position input API v1** (the contract of a feeder; reference client `tools/position_client.py`, a single
@@ -469,7 +471,8 @@ file without dependencies that a feeder may copy; nothing is imported from roads
   object per line, any number of feeders. A valid message gets no reply. An invalid one gets
   `{"type":"error","line":<n>,"reason":"..."}` on the same connection and is dropped; the connection stays
   open. `{"type":"hello","api":1,"name":"..."}` is answered with
-  `{"type":"hello","api":1,"server":"roadsense-mapd","accepts":["gnss","motion"],"clock":"CLOCK_MONOTONIC","now_mono_ns":<int>}`.
+  `{"type":"hello","api":1,"server":"roadsense-mapd","accepts":["gnss","motion","reset"],"clock":"CLOCK_MONOTONIC","now_mono_ns":<int>}`
+  (`reset` is listed since 2026-11-15; a feeder that needs it checks `accepts`).
   The same messages can be sent over HTTP: `POST /v1/position` (one object, a JSON array, or JSON lines;
   answer `{"api":1,"accepted":n,"rejected":[{"index":i,"reason":"..."}]}`); the socket is the path for
   motion at its rate. A feeder must never block on the socket: when mapd is away, drop.
@@ -510,19 +513,59 @@ Yaw rate is taken from the first of `yaw_rate_rps`, `wheel_speeds_mps`, `steerin
 present; with none of them the heading is held between fixes. `motion` without any `gnss` never makes a
 position.
 
+`{"type":"reset", "reason":"..."}` (`reason` optional, a string, reported back): **forget the position**. The
+filter, the last fix and the match are dropped; the next `map` message is `state: "no_source"`,
+`available: false`, `reason: "no_position"`, `position: null`, and stays so until a new fix arrives (which
+starts the filter afresh, wherever it is). Motion input keeps being accepted and relayed; the odometer keeps
+counting. Without it a position lives on by dead reckoning for as long as vehicle motion flows (up to 900 s /
+25 km), which is right for a tunnel and wrong after a test session: a feeder sends `reset` when what it fed
+so far must not be presented any longer (a synthetic drive ended, the receiver was swapped). A feeder that
+never sends it gets the behaviour of before.
+
+**Synthetic input.** A `source` tag that is `synthetic` or starts with it (any case; `tools/synth_drive.py`
+uses it) marks made-up input. mapd keeps the two kinds apart on its own: a `gnss` message (a fix, or
+`fix: "none"`) from a real receiver while the position was fed by a synthetic one, or the other way round, is
+an implicit `reset` first (`last_reset.reason` "gnss source changed from synthetic to real"). And
+`input.synthetic` in the `map` message is true when the current position was fed by a synthetic fix, or
+carried on by synthetic motion, at any time since the last reset: a consumer that must not act on a made-up
+place checks this one flag.
+
+**`{"type":"ego", ...}` on `<rundir>/ego.sock`** (output; since 2026-11-15): every vehicle `motion` message
+mapd accepted, passed on as it was measured, at most `ego_hz` (20) per second; a change of `standstill` is
+never held back by that limit. It exists because the car's own speed is needed at the feeder's rate by
+consumers other than the position filter (the api's lead tracker, below), and `map` comes twice a second.
+Nothing is sent without a feeder; vision odometry is never relayed. `mapd.sock` carries `map` messages only,
+as before.
+
+```
+{"type":"ego","seq":812,"ts_mono_ns":<the motion message's time>,"ts_real_ns":<int>,"api":1,
+ "speed_mps":3.21,                 // signed along the heading: negative in reverse
+ "standstill":false,               // speed_mps is exactly 0 and, when wheel speeds were sent, every wheel is exactly 0
+ "gear":"D","reverse":false,       // gear: null when the feeder sends none
+ "wheel_speeds_mps":[3.2,3.2,3.2,3.2],   // as fed, or null
+ "yaw_rate_rps":0.004,             // as fed or derived (wheels, steering angle); positive = turning left; null = unknown
+ "source":"vehicle","tag":"prius-can"}
+```
+`standstill` is as good as the car's sensors: wheel-speed sensors read zero below some creep speed (the feeder
+knows which), so "exactly zero" means "below the sensor's threshold".
+
 **Filter** (`posfilter.py`): an extended Kalman filter over east, north, heading, speed and yaw-rate bias in a
 local tangent plane. Yaw rate is the control input, speed a measurement, GNSS position / speed / course are
 measurements; a fix more than 99.9 % unlikely is dropped, five such fixes in a row restart the filter on the
 fix. Without `course_deg` the first heading comes from the displacement between fixes. Motion sources, in
-order: vehicle `motion` (fresh for `motion_timeout_s` 1.5 s); else **vision odometry**, modeld's `road`
+order: vehicle `motion` (fresh for `motion_timeout_s` 1.5 s), the normal source; else, **only when switched
+on** (`"vision_odometry": true` in `mapd.json`, or `--vision-odometry`), **vision odometry**: modeld's `road`
 message (`v_ego`, `pose.yaw_rate`; read from `modeld.sock`, at most 10 Hz, not parsed while vehicle motion
-arrives; `--no-vision-odometry`); else constant velocity for `coast_s` 5 s.
+arrives); else constant velocity for `coast_s` 5 s. Vision odometry is **off by default** (since 2026-11-15):
+its speed scales with the camera calibration (focal length, pitch, height), and an uncalibrated camera would
+dead-reckon the position at a wrong speed. Switch it on once the camera is calibrated. With it off and no
+vehicle motion, a lost fix means 5 s of coasting and then `unknown`.
 
 **States** (`state`):
 
 | state | meaning | leaves when |
 |---|---|---|
-| `no_source` | no usable fix since start | a fix arrives |
+| `no_source` | no usable fix since start or since the last `reset` | a fix arrives |
 | `good` | a fix was used within `fix_timeout_s` (3 s) | no fix for 3 s, or `fix: "none"` |
 | `dead_reckoning` | the position is carried by motion input and the map | a fix arrives; or it runs out: no motion input for more than `coast_s`, longer than `dr_max_s` (vehicle 900 s, vision 120 s), farther than `dr_max_m` (vehicle 25 km, vision 3 km), or `hacc_m` above `dr_max_hacc_m` (150 m) |
 | `unknown` | the fix is lost and dead reckoning ran out; `position` is null | a fix arrives (the filter restarts on it) |
@@ -556,7 +599,9 @@ for 150 m.
 "input": {"gnss": {"source":"headunit","fix":"3d","age_s":0.4,"hacc_m":4.0,"sats":14,"hdop":0.8,
                    "used":812,"ignored":0,"rejected":2,"resets":0},                                // null before the first gnss message
           "motion": {"source":"vehicle|vision|none","tag":"prius-can","age_s":0.03},
-          "errors": 0, "last_error": null},
+          "errors": 0, "last_error": null,
+          "synthetic": false,                                   // the position was fed by input tagged synthetic since the last reset
+          "resets": 0, "last_reset": null},                     // or {"reason":"...","age_s":12.3}: `reset` messages and source changes
 "position": {"lat":52.1512345,"lon":21.0456789,"heading_deg":93.2,"heading_acc_deg":1.4,"speed_mps":22.31,
              "hacc_m":2.1,                 // RMS radial error of the filter, m
              "confidence":0.96,"source":"gnss|dead_reckoning","fix_age_s":0.4,"dr_distance_m":0.0,
@@ -601,7 +646,8 @@ path up to it. Turn restrictions are not in the pack.
 
 Config `/etc/roadsense/mapd.json` (`ROADSENSE_CONFIG_DIR`), every key optional: `pack`
 (`/var/lib/roadsense/maps/current.rsmap`; env `ROADSENSE_MAP_PACK`; the file is checked every 10 s and a
-new one, e.g. a re-pointed symlink, is loaded without a restart), `hz`, `vision_odometry`, `wheelbase_m`,
+new one, e.g. a re-pointed symlink, is loaded without a restart), `hz`, `vision_odometry` (default `false`,
+above), `ego_hz` (default 20; the `ego` relay below, 0 = no `ego.sock`), `wheelbase_m`,
 `steering_ratio`, `track_m` (defaults: Toyota Prius XW20 nominal 2.70 m, 19.1, 1.48 m), `horizon_m`, the
 timeouts above, `country`. CLI: `python3 -m roadsense_mapd --help`. Offline and live drivers:
 `tools/synth_drive.py` (a synthetic drive over a pack: route, GNSS noise, tunnel and window dropouts, bias,
@@ -631,15 +677,16 @@ tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsens
 | `GET /v1/rules` | rules in effect for the car derived by the api (topic `rules`, below: `in_effect`, `recent`, `ahead`) plus `pending`, `recent_changes` and `ignored` sign tracks |
 | `GET /v1/map` | latest `map` message of mapd (position state, matched road, map speed limit, look-ahead); 503 while mapd is not running |
 | `GET /v1/fused` | map and camera combined per fact with provenance (topic `fused`, below) |
-| `POST /v1/position` | position input API v1 over HTTP (body: one `gnss` / `motion` object, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
+| `GET /v1/lead` | the tracked lead vehicle (topic `lead`, below): distance, relative speed, time gap, standstill hold, `departed` cue, with the raw vision value alongside; 503 before the first `road` message |
+| `POST /v1/position` | position input API v1 over HTTP (body: one `gnss` / `motion` / `reset` object, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
 | `GET /v1/camera` | latest `camera` message + ring header fields |
 | `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share) and `fused` (limit and source, place, lanes, tunnel) summaries; CPU temp, battery |
 | `GET /v1/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
-| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules` and `fused`; `?topics=road,signs,env,speed_limit,rules,lights,map,fused` filters |
+| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused` and `lead`; mapd's `ego` (the car's motion, while a feeder sends it) passes through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,ego` filters |
 
-api never touches the camera or the models; it is a fan-out and overlay layer, plus the three derived
-topics below.
+api never touches the camera or the models; it is a fan-out and overlay layer, plus the four derived
+topics below (`speed_limit`, `rules`, `fused`, `lead`).
 
 ### api-derived topic: `{"type":"speed_limit", ...}`
 `api/roadsense_api/speedlimit.py` turns the documented `signs` contract (only `detections[]`
@@ -731,6 +778,8 @@ vision value: without a position source the output is vision only.
           "vision":{"lane_to_left":true,"lane_to_right":true},"map":{"total":4,"forward":2,"backward":2,"source":"tagged"}},
 "tunnel": {"in_tunnel":true,"exit_in_m":640.0,"entry_in_m":null,"length_m":null,"source":"map|vision|map+vision|none",
            "vision":{"in_tunnel":true,"confidence":0.9},"map":{...}},
+"lead": {"present","mode","track_id","dist_m","dist_std_m","lateral_m","v_rel_mps","v_lead_mps","a_lead_mps2","time_gap_s","ttc_s",
+         "standing","departed","source","vision":{...}},   // the `lead` topic's latest message, shortened (below); null when it is older than 1 s. Added 2026-11-15
 "road": {"class","name","ref","oneway","bridge","lit","surface","roundabout","link","motorroad","expressway","dual_carriageway","toll"},   // null without the map
 "ahead": {"horizon_m","path_confidence","features","junctions","curves","speed_limit_changes","built_up_change","road_change"},   // as in `map`; null without the map
 "position": {"lat","lon","heading_deg","speed_mps","hacc_m","confidence","source"}                                               // null without the map
@@ -761,6 +810,79 @@ Rules:
   lane; `oncoming_left` is false on one-way carriageways, true in the leftmost own lane of a two-way road.
 * **Tunnel.** In a tunnel when the matched edge is one (then `exit_in_m` is the map distance to its end) or
   when envd's label is `tunnel` with confidence >= 0.5 (no distance).
+
+### api-derived topic: `{"type":"lead", ...}`
+`api/roadsense_api/lead.py` tracks the lead vehicle over time: one message per `road` message (so at the
+model's rate, 10-14 per second on the reference phone), about 0.7 kB; `/v1/lead`. `road.leads[]` is not
+modified and stays the network's frame-by-frame output; `lead` is what a consumer should draw or act on
+(added 2026-11-15, docs/lanes/L14-lead.md).
+
+Why: `road.leads[0].x[0]` jitters by about 1.5 % of the distance from frame to frame (0.08 m at 4 m, with
+single frames 0.5-1 m off, e.g. under a wiper) and wanders by a few decimetres over seconds even behind a
+standing car; shown rounded to metres it flips between two values several times a second whenever the true
+distance is near a half metre.
+
+Inputs: `road` (`leads[0]`: `prob`, `x[0]`, `y[0]`, `v[0]`, `x_std[0]`, `v_std[0]`; `v_ego`) and, when a
+position feeder sends vehicle motion, mapd's `ego` messages (speed, standstill). Without `ego` (no feeder, no
+mapd, or the last one more than 0.5 s from the frame) the model's own `v_ego` is the ego speed and the
+message says `source: "vision"`: the tracker runs the same way on vision alone.
+
+```
+"present": true,                 // a lead is tracked; false: every numeric field below is null
+"mode": "track|hold|coast|none", // see below
+"track_id": 12,                  // changes when the tracked vehicle is replaced (cut-in, lead change, lost and found)
+"age_s": 31.4,                   // of this track
+"source": "vision+ego|vision",   // vision+ego: the ego speed / standstill came from vehicle motion
+"dist_m": 3.61,                  // camera -> rear of the lead along x, the same quantity as road.leads[0].x[0]
+"dist_std_m": 0.62,              // 68 %: the filter's uncertainty and the network's own x_std (its absolute accuracy) in quadrature
+"dist_filter_std_m": 0.021,      // the filter's part alone: how steady the value is, not how true
+"gap_m": 2.11,                   // only when `camera_to_front_m` is configured: dist_m minus the camera -> front bumper distance
+"lateral_m": -0.07,              // y, right positive, smoothed
+"v_rel_mps": 0.0, "v_rel_std_mps": 0.0,   // lead speed minus ego speed (negative = closing); d(dist)/dt of the track
+"v_lead_mps": 0.0,               // the lead's own speed over the ground (along the ego heading)
+"a_lead_mps2": 0.0,              // its acceleration: the derivative of v_lead within the filter, slow (about 1 s); a hint, not a measurement
+"time_gap_s": null,              // (gap_m or dist_m) / ego speed; null below 1 m/s
+"ttc_s": null,                   // (gap_m or dist_m) / closing speed; null unless closing faster than 0.5 m/s
+"standing": true,                // mode is hold: both stand
+"pending_change": false,         // the last frame(s) did not fit the track; a replacement is being considered
+"prob": 0.99,                    // road.leads[0].prob of this frame (null when the frame had no usable lead output)
+"departed": false,               // the lead moved off while ego still stands (below)
+"departure": null,               // or {"age_s":0.4,"dist_at_stop_m":3.61,"moved_m":0.8}
+"event": {"kind":"acquired|cut_in|changed|departed|gap_changed|lost|reset","ts_mono_ns":..,"track_id":12,"age_s":31.4},   // the last one; null before the first
+"ego": {"speed_mps":0.0,"standstill":true,"source":"vehicle|vision","age_s":0.04,"tag":"prius-can"},   // what the tracker used; age_s: distance in time between the frame and the nearest motion sample
+"vision": {"dist_m":3.58,"dist_std_m":0.61,"lateral_m":-0.07,"v_lead_mps":0.0,"v_rel_mps":0.0,"a_lead_mps2":0.0,"prob":0.99}   // road.leads[0] of this frame, unfused; null without a lead output
+```
+`seq`, `ts_mono_ns`, `ts_real_ns` are those of the `road` message: the estimate refers to the frame, no
+prediction to "now" is applied.
+
+Estimator. State: distance `d`, the lead's speed `v_lead` and acceleration `a_lead` over the ground; the ego
+speed is a known input: `d' = v_lead - v_ego`, `v_lead' = a_lead`, `a_lead` a random walk decaying over 3 s
+(Kalman filter, jerk noise 30 (m/s3)2 s). So "both stand" and "the gap closes" are different states of the
+model, and the relative speed is by construction the rate of change of the distance. Measurements per frame:
+`x[0]` (sigma = max(hypot(0.10 m, 2 % of d), 0.2 x_std)) and the relative speed `v[0] - road.v_ego`, the
+model's own pair (sigma = max(0.15, 2 v_std) + 0.1 d m/s: trusted near, little beyond 30 m where it is biased).
+The model's `a[0]` is not used (it made the track lag). Modes:
+
+| mode | when | what |
+|---|---|---|
+| `track` | a lead with `prob` >= 0.5 for 2 frames | the filter. A frame whose distance is more than 4 sigma and more than max(0.6 m, 12 % of d) from the prediction is **not averaged in**: the track coasts and the frame starts a candidate. Frames that agree with the candidate replace the track after 0.15 s when it is nearer (`cut_in`) and after 0.5 s when it is farther (`changed`); a new `track_id` either way. A candidate that does not persist was an outlier or the model flickering between two vehicles: nothing between the two is ever reported |
+| `hold` | ego stands (vehicle: `standstill` for 0.3 s; vision only: the model's `v_ego` under 0.15 m/s for 1 s) and the lead stands (estimate under 0.35 m/s, measured under 0.12 m/s) for 0.5 s | the true gap is constant, so `dist_m` is **frozen**: it follows a slow mean (4 s) of the measurements for the first 2 s (the model is still settling after the stop) and afterwards moves only when that mean is max(0.3 m, 0.6 x_std) away from it. `v_rel_mps`, `v_lead_mps`, `a_lead_mps2` are 0. A change detector watches for consistent evidence of motion: a two-sided CUSUM on the model's lead speed (sigma 0.12 m/s, slack 1 sigma, 3.5 sigma-tenths-of-a-second: a lead rolling at 0.3 m/s is caught in about 0.25 s) and, for creeping the speed output does not show, a 1.5 s mean of the distance residual beyond max(0.6 m, 1.3 x_std) (event `gap_changed`, or `departed` when the lead speed agrees). The thresholds follow the model's own `x_std` because behind a standing car its distance can wander by more than a metre for seconds (a vehicle passing in the next lane, wipers) while its speed output stays at zero. Ego moving (a wheel turns) ends the hold on that frame and the filter continues from the held value |
+| `coast` | `prob` under 0.3 | prediction only, for 0.6 s (2.5 s in a hold); then `present: false`, event `lost` |
+| `none` | no track | `vision` still carries the raw value |
+
+`departed`: the hold ended because the lead moved away while ego still stands; true from that frame until ego
+moves, the lead stands again (a new hold), or 8 s. `departure.moved_m` is how far it has gone. On the replayed
+rides it comes 0.25-0.95 s (median 0.45 s) after the lead starts to roll, when the raw distance has grown by about 0.3-0.8 m
+(docs/lanes/L14-lead.md). It is information for a "the car ahead is leaving" hint, not a go signal.
+
+Latency against smoothing: at short range the distance measurement is weighted heavily and the model's
+relative speed feeds the filter directly, so on the rides the tracked distance trails a zero-phase reference
+by about 10 ms under 40 m (135 ms beyond, where the model's speed is weighted little) while the gap closes faster than 2 m/s, with a third to a half less noise than the raw value; the
+standstill hold costs nothing while moving. Constants: `DEFAULT_CFG` in `lead.py`, overridable per key in
+`<config dir>/lead.json` (e.g. `{"camera_to_front_m": 1.6}`).
+
+Replay and measurement on recorded `road` lines: `tools/lead_replay.py ROAD.jsonl[.gz] [--ego surrogate]
+[--every N] [--csv OUT]`.
 
 Overlays project the 3D road outputs into the image with the pinhole model
 from the ring header (focal_px, cx, cy) and the calibration used by modeld,
@@ -830,7 +952,9 @@ with this stack is exactly:
 * **position** (optional): the host may feed GNSS fixes and vehicle motion to
   `<rundir>/position.sock` (position input API v1, "mapd" above); roadsense does
   all filtering and map matching. Without a feeder the map layer reports
-  `unavailable` and the stack runs on vision only.
+  `unavailable` and the stack runs on vision only. The same `motion` messages
+  give the lead tracker (topic `lead`) the car's speed and standstill; a host
+  that feeds test input sends `reset` when the test ends.
 
 Nothing in this list is specific to that backend: any supervisor that can run
 `systemctl` and read JSON can drive the stack the same way.

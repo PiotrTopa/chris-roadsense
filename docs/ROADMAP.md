@@ -23,7 +23,8 @@
 
 ## Map layer (mapd + fusion; built 2026-11-15, verified on synthetic position only)
 - [x] position input API v1 (`gnss`, `motion` over `<rundir>/position.sock` or `POST /v1/position`), reference client `tools/position_client.py`
-- [x] mapd: EKF over GNSS + vehicle motion (yaw rate, wheel speeds or steering angle), vision odometry as fallback motion source, dead reckoning with map feedback, states `no_source` / `good` / `dead_reckoning` / `unknown`
+- [x] mapd: EKF over GNSS + vehicle motion (yaw rate, wheel speeds or steering angle), dead reckoning with map feedback, states `no_source` / `good` / `dead_reckoning` / `unknown`; vision odometry as fallback motion source exists but is **off by default since 2026-11-15** (`"vision_odometry": true` in `mapd.json` once the camera is calibrated; vehicle motion over the position input is the normal source)
+- [x] position input `reset` (2026-11-15): a feeder can make mapd forget the position; a change between a `synthetic` and a real GNSS source resets on its own; `map.input.synthetic` flags a position fed by synthetic input
 - [x] map matching with heading and continuity, confidence, parallel-road protection
 - [x] map context: road attributes, tagged or Polish statutory speed limit with its source, look-ahead along the most likely path (shape, curves, junctions, roundabouts, crossings, signals, tunnel entry / exit, built-up and limit changes)
 - [x] api topic `fused` (speed limit, built-up, place, lanes, tunnel with provenance), `/v1/map`, `/v1/fused`, status page
@@ -36,6 +37,15 @@
 - [ ] the most likely path ignores the driver's intent (blinkers, a navigation route)
 - [ ] the recorded rides carry no position (video only), so no ride replays the map layer; a ride with a GNSS track is needed for a camera + map replay
 - [ ] pack updates are manual (re-run fetch / build / install)
+
+## Lead vehicle (tracker in the api; built 2026-11-15, not deployed)
+- [x] topic `lead` / `/v1/lead` / `fused.lead` (`api/roadsense_api/lead.py`, docs/lanes/L14-lead.md): Kalman track of `road.leads[0]` with the ego speed as input, a standstill hold (frozen distance while both stand), gating of inconsistent frames (cut-in, lead change, flicker between two vehicles), `departed` cue, uncertainty, the raw vision value alongside; `tools/lead_replay.py`
+- [x] the car's own motion for it: mapd relays accepted vehicle `motion` as `ego` on `<rundir>/ego.sock`; without a feeder the tracker runs on vision alone
+- [x] measured on replayed rides (laptop, ORT fp32, 20 fps and every 2nd frame) and on synthetic scenes with the measured noise; numbers in docs/lanes/L14-lead.md
+- [ ] not verified on the car: no drive with the lead output and the CAN motion recorded together exists (the 2026-11-13 trip log has CAN but no roadsense messages); the ego path ran on synthetic scenes and with a stand-in wheel speed derived from the model's own speed
+- [ ] the phone runs the ncnn fp16 backend at 10-14 Hz with skipped frames; the noise figures come from the fp32 backend on every frame
+- [ ] distance is from the camera (`camera_to_front_m` unset): `gap_m` and a bumper-to-bumper time gap need the camera position; the DVR camera's focal / pitch / height are uncalibrated, which scales every distance
+- [ ] `/preview` still draws the raw `leads[0]` box
 
 ## Later
 - [ ] car control integration (separate project; this API is the input)
