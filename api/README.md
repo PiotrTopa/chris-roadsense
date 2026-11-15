@@ -1,7 +1,7 @@
 # roadsense api
 
-Python fan-out and overlay layer: connects to `camerad.sock`, `modeld.sock` and
-`signd.sock` in the run directory, keeps the latest message per type and serves
+Python fan-out and overlay layer: connects to `camerad.sock`, `modeld.sock`,
+`signd.sock`, `envd.sock`, `lightd.sock` and `mapd.sock` in the run directory, keeps the latest message per type and serves
 the endpoints listed in [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 It never touches the camera or the models.
 
@@ -21,7 +21,8 @@ cd api && python3 -m roadsense_api --rundir /run/roadsense --port 8080
 Modules: `sockets.py` (one reconnecting client per daemon, backoff 0.2-5 s),
 `state.py` (latest messages, rolling fps, live/ended sign tracks, ring header,
 CPU temperature, battery), `overlay.py` (Pillow drawing + pinhole projection),
-`server.py` (aiohttp routes), `__main__.py`.
+`server.py` (aiohttp routes), `speedlimit.py` / `rules.py` (derived topics from
+signs), `fusion.py` (derived topic `fused`: map + camera per fact), `__main__.py`.
 
 `GET /` is a small status page: the `/preview` stream plus health, road and live
 signs polled once per second. CORS allows all origins.
@@ -39,7 +40,7 @@ Only lead hypothesis 0 (now) is drawn.
 ## Testing without hardware
 
 ```sh
-tools/fake_daemons.py --rundir /tmp/roadsense-fake     # synthetic camerad/modeld/signd
+tools/fake_daemons.py --rundir /tmp/roadsense-fake     # synthetic camerad/modeld/signd/envd/lightd/mapd (--no-mapd: run the real mapd)
 tools/smoke_api.sh                                     # fake daemons + api, every endpoint
 OVERLAY_OUT=/tmp/overlay.jpg tools/smoke_api.sh        # also save one overlay frame
 ```

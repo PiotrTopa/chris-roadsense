@@ -8,11 +8,13 @@ import time
 
 from . import lights as lights_mod
 from . import signctx
+from .fusion import Fusion
 from .rules import RulesInEffect
 from .speedlimit import load_rules
 
-DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd")
-TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules")
+DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd", "mapd")
+TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused")
+FUSED_PERIOD_S = 0.45
 SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
 LIVE_TRACK_TIMEOUT_S = 2.0
@@ -93,6 +95,8 @@ class State:
         self._camera_key = None                            # (ride, ride_index) of the last camera message
         self._camera_seq = 0
         self.ride_changes = 0
+        self.fusion = Fusion(load_rules(rules).get("defaults_kmh"))   # derived topic `fused` (fusion.py)
+        self._fused_emit = 0.0
 
     # ---- ingestion -------------------------------------------------------
     def on_message(self, daemon, msg, line):
@@ -127,6 +131,13 @@ class State:
             cb(mtype, line)
         if mtype in ("road", "signs", "env", "lights"):
             self._on_speed(msg, now)
+        if now - self._fused_emit >= FUSED_PERIOD_S and mtype in ("map", "road", "env", "signs"):
+            self._fused_emit = now
+            try:
+                self._emit("fused", self.fusion.update(self.latest, time.monotonic_ns(), time.time_ns()), now)
+            except Exception:                 # a malformed map message must not stop the fan-out
+                import logging
+                logging.getLogger("roadsense_api.state").exception("fusion failed")
 
     def _on_camera(self, msg):
         """A new ride (camerad-replay --playlist) or a camera restart (seq backwards) is not driving on:
@@ -148,6 +159,7 @@ class State:
         self.live_tracks.clear()
         self.suppressed_tracks.clear()
         self.signctx = signctx.SignContext()
+        self.fusion = Fusion(load_rules(self._rules).get("defaults_kmh"))
 
     def _on_speed(self, msg, now):
         if not self._speed_geom:
@@ -243,6 +255,21 @@ class State:
         cy = ring.get("cy") or h / 2.0
         return float(f), float(cx), float(cy), int(w), int(h)
 
+    def _map_summary(self, now):
+        m = self.latest.get("map")
+        if not m:
+            return None
+        pos, road, lim = m.get("position") or {}, m.get("road") or {}, m.get("speed_limit") or {}
+        inp = m.get("input") or {}
+        return {"state": m.get("state"), "available": m.get("available"), "reason": m.get("reason"),
+                "pack": (m.get("pack") or {}).get("osm_timestamp"),
+                "hacc_m": pos.get("hacc_m"), "motion_source": (inp.get("motion") or {}).get("source"),
+                "gnss_age_s": (inp.get("gnss") or {}).get("age_s"),
+                "match_confidence": (m.get("match") or {}).get("confidence"),
+                "road": road.get("ref") or road.get("name") or road.get("class"),
+                "limit_kmh": lim.get("limit_kmh"), "limit_source": lim.get("source"),
+                "cpu_pct": (m.get("proc") or {}).get("cpu_pct")}
+
     def health(self):
         now = time.monotonic()
         daemons = {}
@@ -268,6 +295,8 @@ class State:
             "lights_ms": lt.get("lights_ms"),
             "lights": lt.get("ego") if lt else None,
             "rules": self.rules_engine.summary() if "rules" in self.latest else None,
+            "map": self._map_summary(now),
+            "fused": self.fusion.summary(self.latest["fused"]) if "fused" in self.latest else None,
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
             "battery": battery(),

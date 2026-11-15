@@ -48,6 +48,9 @@ class PreviewRenderer:
                 if ego else "ego none"))
         if "rules" in st.latest:
             hud += rules_hud(st.rules_engine.summary())
+        fused = st.latest.get("fused")
+        if fused and fused["map"]["available"]:
+            hud.append(map_hud(fused))
         ride = ride_line(cam, ascii_only=True)
         if ride:
             hud.append(ride)
@@ -91,6 +94,26 @@ def rules_hud(summary, width=92):
     return out
 
 
+def _ascii(s):
+    s = unicodedata.normalize("NFKD", s.replace("\u2014", "-").replace("\u0142", "l").replace("\u0141", "L"))
+    return s.encode("ascii", "ignore").decode()
+
+
+def map_hud(fused, width=92):
+    """One ASCII HUD line from the `fused` topic: road, limit with its source, lanes, tunnel exit."""
+    r, sl, ln, tn = fused["road"] or {}, fused["speed_limit"], fused["lanes"], fused["tunnel"]
+    s = "MAP: " + " ".join(x for x in (r.get("ref"), r.get("name") or r.get("class")) if x)
+    s += f"  limit {sl['limit_kmh'] if sl['limit_kmh'] is not None else '-'} ({sl['source']})"
+    if ln["count"] is not None:
+        s += f"  lanes {ln['forward']}+{ln['backward']}"
+    if tn["in_tunnel"] and tn["exit_in_m"] is not None:
+        s += f"  tunnel exit {tn['exit_in_m']:.0f} m"
+    elif tn.get("entry_in_m") is not None:
+        s += f"  tunnel in {tn['entry_in_m']:.0f} m"
+    s = _ascii(s)
+    return s if len(s) <= width else s[:width - 3] + "..."
+
+
 def ride_line(cam, ascii_only=False):
     """'Ride: <slug> — <author>, <licence>' for a camerad-replay source (attribution wherever frames are shown).
     ascii_only: for the /preview HUD, whose bitmap font has no Polish letters or dashes."""
@@ -101,8 +124,7 @@ def ride_line(cam, ascii_only=False):
         s += f"  ({cam.get('ride_index', 0) + 1}/{cam.get('ride_count', 1)}, " \
              f"{cam.get('ride_t_s', 0) / 60:.0f}/{cam.get('ride_duration_s', 0) / 60:.0f} min)"
     if ascii_only:
-        s = unicodedata.normalize("NFKD", s.replace("\u2014", "-").replace("\u0142", "l").replace("\u0141", "L"))
-        s = s.encode("ascii", "ignore").decode()
+        s = _ascii(s)
     return s
 
 
@@ -152,6 +174,61 @@ async def h_lights(req):
     st = req.app["state"]
     msg = st.latest.get("lights")
     return _json(msg or {"error": "no lights message yet"}, 200 if msg else 503)
+
+
+async def h_map(req):
+    st = req.app["state"]
+    msg = st.latest.get("map")
+    return _json(msg or {"error": "no map message yet (mapd not running)"}, 200 if msg else 503)
+
+
+async def h_fused(req):
+    st = req.app["state"]
+    msg = st.latest.get("fused")
+    return _json(msg or {"error": "no fused message yet"}, 200 if msg else 503)
+
+
+async def h_position(req):
+    """Position input over HTTP: the body is one message, a JSON array of messages, or JSON lines
+    (`gnss` / `motion`, position input API v1). Forwarded to mapd's position.sock; mapd validates."""
+    try:
+        text = (await req.text()).strip()
+    except Exception:
+        return _json({"error": "unreadable body"}, 400)
+    try:
+        if text.startswith("["):
+            msgs = json.loads(text)
+        else:
+            msgs = [json.loads(ln) for ln in text.splitlines() if ln.strip()]
+    except ValueError:
+        return _json({"error": "body must be a JSON object, a JSON array or JSON lines"}, 400)
+    if not msgs or not all(isinstance(m, dict) for m in msgs):
+        return _json({"error": "no messages"}, 400)
+    path = os.path.join(req.app["state"].rundir, "position.sock")
+    try:
+        reader, writer = await asyncio.open_unix_connection(path)
+    except OSError:
+        return _json({"error": "mapd is not running (no position.sock)"}, 503)
+    rejected = []
+    try:
+        for m in msgs:
+            writer.write((json.dumps(m, separators=(",", ":")) + "\n").encode())
+        writer.write(b'{"type":"hello","api":1,"name":"roadsense-api"}\n')   # its reply marks the end of ours
+        await writer.drain()
+        while True:
+            raw = await asyncio.wait_for(reader.readline(), 2.0)
+            if not raw:
+                break
+            rep = json.loads(raw)
+            if rep.get("type") == "hello":
+                break
+            if rep.get("type") == "error":
+                rejected.append({"index": rep.get("line", 0) - 1, "reason": rep.get("reason")})
+    except (OSError, ValueError, asyncio.TimeoutError):
+        return _json({"error": "mapd did not answer"}, 503)
+    finally:
+        writer.close()
+    return _json({"api": 1, "accepted": len(msgs) - len(rejected), "rejected": rejected})
 
 
 async def h_camera(req):
@@ -246,7 +323,7 @@ async def h_index(req):
 
 async def h_options(req):
     return web.Response(status=204, headers={
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "*"})
 
 
@@ -289,6 +366,9 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
     app.router.add_get("/v1/speed_limit", h_speed_limit)
     app.router.add_get("/v1/rules", h_rules)
     app.router.add_get("/v1/lights", h_lights)
+    app.router.add_get("/v1/map", h_map)
+    app.router.add_get("/v1/fused", h_fused)
+    app.router.add_post("/v1/position", h_position)
     app.router.add_get("/v1/camera", h_camera)
     app.router.add_get("/v1/health", h_health)
     app.router.add_get("/v1/frame.jpg", h_frame)
@@ -317,7 +397,9 @@ pre{margin:0;white-space:pre-wrap}
 <h2>environment</h2><pre id="env">...</pre>
 <h2>rules in effect</h2><pre id="rules">...</pre>
 <h2>speed limit</h2><pre id="speed">...</pre>
-<h2>traffic lights</h2><pre id="lights">...</pre></section>
+<h2>traffic lights</h2><pre id="lights">...</pre>
+<h2>map</h2><pre id="map">...</pre>
+<h2>fused (map + camera)</h2><pre id="fused">...</pre></section>
 </main><script>
 const $ = id => document.getElementById(id);
 const f = (v, d=1) => v == null ? "-" : Number(v).toFixed(d);
@@ -388,6 +470,27 @@ async function tick(){
         ...(lt.lights || []).map(l => `#${l.track_id} ${l.state.padEnd(10)} ${f(l.state_conf, 2)}  ${f(l.dist_m, 0)} m  ` +
           `lat ${f(l.lateral_m, 1)}  rel ${f(l.relevance, 2)}  hits ${l.hits}${l.ego ? "  EGO" : ""}`),
         `${f(lt.lights_ms, 0)} ms`
+      ].join("\\n") : "no data";
+    const mp = await get("/v1/map");
+    $("map").textContent = mp ? [
+        `position ${mp.state}` + (mp.position ? `  ${f(mp.position.lat, 5)} ${f(mp.position.lon, 5)}  +-${f(mp.position.hacc_m, 0)} m  ` +
+          `hdg ${f(mp.position.heading_deg, 0)}  ${f(mp.position.speed_mps * 3.6, 0)} km/h  motion ${mp.position.motion_source}` : ""),
+        mp.available ? `road ${mp.road.class} ${mp.road.ref || ""} ${mp.road.name || ""}  match ${f(mp.match.confidence, 2)} (${f(mp.match.distance_m, 0)} m)` +
+          `  lanes ${mp.road.lanes.forward}+${mp.road.lanes.backward} (${mp.road.lanes.source})` : `map unavailable: ${mp.reason}`,
+        mp.available ? `limit ${mp.speed_limit.limit_kmh == null ? "-" : mp.speed_limit.limit_kmh} (${mp.speed_limit.source} ${mp.speed_limit.rule || mp.speed_limit.detail || ""})` +
+          `  built-up ${mp.road.built_up.value} (${mp.road.built_up.source})` +
+          (mp.ahead.tunnel.in_tunnel ? `  TUNNEL exit ${f(mp.ahead.tunnel.exit_m, 0)} m` : mp.ahead.tunnel.entry_m != null ? `  tunnel in ${f(mp.ahead.tunnel.entry_m, 0)} m` : "") : "",
+        mp.available ? "ahead: " + (mp.ahead.features.slice(0, 5).map(x => `${x.kind} ${f(x.dist_m, 0)} m`).join(", ") || "-") +
+          (mp.ahead.curves.length ? `  curve ${mp.ahead.curves[0].direction} R ${f(mp.ahead.curves[0].min_radius_m, 0)} m in ${f(mp.ahead.curves[0].start_m, 0)} m` : "") : "",
+        mp.pack ? `pack ${mp.pack.region} OSM ${mp.pack.osm_timestamp}  (c) OpenStreetMap contributors` : "no pack"
+      ].filter(Boolean).join("\\n") : "mapd not running";
+    const fu = await get("/v1/fused");
+    $("fused").textContent = fu ? [
+        `limit ${fu.speed_limit.limit_kmh == null ? "unknown" : fu.speed_limit.limit_kmh + " km/h"}  ${fu.speed_limit.source}  conf ${f(fu.speed_limit.confidence, 2)}  (${fu.speed_limit.agreement})` +
+          (fu.speed_limit.note ? `  ${fu.speed_limit.note}` : ""),
+        `place ${fu.place.label || "-"}  ${fu.place.source}  conf ${f(fu.place.confidence, 2)}   built-up ${fu.built_up.value} (${fu.built_up.source})`,
+        `lanes ${fu.lanes.count == null ? "-" : fu.lanes.count}  ego ${fu.lanes.ego_index == null ? "-" : fu.lanes.ego_index}  oncoming left ${fu.lanes.oncoming_left == null ? "-" : fu.lanes.oncoming_left}  (${fu.lanes.source})`,
+        `tunnel ${fu.tunnel.in_tunnel}` + (fu.tunnel.exit_in_m != null ? `  exit in ${f(fu.tunnel.exit_in_m, 0)} m` : "") + `  (${fu.tunnel.source})`
       ].join("\\n") : "no data";
   } catch (e) { $("health").textContent = "api unreachable"; }
 }

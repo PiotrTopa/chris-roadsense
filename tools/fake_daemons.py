@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Synthetic camerad/modeld/signd publishers for exercising the api without hardware.
 
-Creates <rundir>/{camerad,modeld,signd,envd,lightd}.sock, emits contract-shaped JSON at
-30/5/10/1/3 Hz, writes <rundir>/preview.jpg (960x540, every 3rd frame) and a
+Creates <rundir>/{camerad,modeld,signd,envd,lightd,mapd}.sock, emits contract-shaped JSON at
+30/5/10/1/3/2 Hz (the fake mapd cycles: no position -> on a road -> tunnel ahead -> in the tunnel;
+--no-mapd leaves mapd.sock and position.sock to a real mapd), writes <rundir>/preview.jpg (960x540, every 3rd frame) and a
 header-only frame ring <rundir>/roadsense-frames (pass --ring to the api).
 
     python3 tools/fake_daemons.py --rundir /tmp/roadsense-fake
@@ -81,6 +82,8 @@ class Fake:
         self.env_pub = Publisher(os.path.join(rundir, "envd.sock"), on_connect=self.env)
         self.light_pub = Publisher(os.path.join(rundir, "lightd.sock"))
         self.light_n = 0
+        self.map_pub = Publisher(os.path.join(rundir, "mapd.sock"), on_connect=self.map)
+        self.map_n = 0
         self.env_n = 0
         self.sign_frame = 0
         self.track_id = 0
@@ -262,21 +265,90 @@ class Fake:
             self.light_n += 1
             self.light_pub.send(self.lights())
 
-    async def run(self):
-        for p in (self.cam, self.model, self.sign, self.env_pub, self.light_pub):
+    # ---- mapd -----------------------------------------------------------------
+    def map(self):
+        n = self.map_n
+        msg = {**self.hdr("map"), "seq": n, "api": 1, "pack": {"region": "fake", "osm_timestamp": None,
+                                                                "built": None, "format": 1},
+               "input": {"gnss": None, "motion": {"source": "none", "tag": None, "age_s": None}, "errors": 0,
+                         "last_error": None},
+               "proc": {"step_ms": 0.5, "cpu_pct": 0.5, "feeders": 0, "tile_loads": 1}}
+        phase = n % 60
+        if phase < 6:                                  # no position: the whole map layer is unavailable
+            msg.update(state="no_source", available=False, reason="no_position", position=None, match=None,
+                       road=None, speed_limit=None, ahead=None)
+            return msg
+        in_tunnel = phase >= 40
+        to_tunnel = max(0.0, (40 - phase) * 10.0)
+        left = 400.0 - (phase - 40) * 20.0 if in_tunnel else None
+        msg.update(
+            state="good", available=True, reason=None,
+            position={"lat": 52.0 + n * 1e-4, "lon": 21.0, "heading_deg": 0.0, "heading_acc_deg": 2.0,
+                      "speed_mps": 20.0, "hacc_m": 3.0, "confidence": 0.95, "source": "gnss", "fix_age_s": 0.3,
+                      "dr_distance_m": 0.0, "motion_source": "none", "odometer_m": n * 10.0},
+            match={"matched": True, "confidence": 0.93, "ambiguous": False, "distance_m": 1.5,
+                   "heading_diff_deg": 0.5, "lat": 52.0 + n * 1e-4, "lon": 21.0, "bearing_deg": 0.0,
+                   "edge": "00000000:0", "dir": 1, "offset_m": n * 10.0, "candidates": 2},
+            road={"class": "secondary", "name": "Fake Street", "ref": "799", "oneway": False,
+                  "lanes": {"total": 2, "forward": 1, "backward": 1, "source": "tagged_total"},
+                  "tunnel": in_tunnel, "bridge": False, "covered": False, "lit": True, "surface": "asphalt",
+                  "roundabout": False, "link": False, "motorroad": False, "expressway": False, "dual_carriageway": False,
+                  "access_restricted": False, "toll": False, "parking": False, "forest": False, "layer": 0,
+                  "built_up": {"value": True, "source": "tagged"}},
+            speed_limit={"limit_kmh": 70, "source": "maxspeed", "rule": None, "detail": "tagged",
+                         "confidence": 0.9, "variable": False},
+            ahead={"horizon_m": 1500.0, "path_confidence": 0.8,
+                   "features": [{"kind": "traffic_signals", "dist_m": 120.0, "confidence": 0.9},
+                                {"kind": "crossing", "dist_m": 135.0, "confidence": 0.9}],
+                   "junctions": [{"dist_m": 125.0, "kind": "junction", "branches": 3, "turn_deg": 0.0,
+                                  "minor": False, "confidence": 0.8}],
+                   "tunnel": {"in_tunnel": in_tunnel, "exit_m": left, "entry_m": None if in_tunnel else to_tunnel,
+                              "length_m": None if in_tunnel else 400.0},
+                   "built_up_change": None, "speed_limit_changes": [], "road_change": None,
+                   "shape": {"s": [0.0, 20.0, 40.0], "x": [0.0, 20.0, 40.0], "y": [0.0, 0.1, 0.4],
+                             "curvature": [0.0, 0.0005, 0.0]},
+                   "curves": []})
+        return msg
+
+    async def mapd(self):
+        async def feeder(reader, writer):            # position.sock: answer hello, swallow the rest
+            try:
+                while True:
+                    raw = await reader.readline()
+                    if not raw:
+                        break
+                    if b'"hello"' in raw:
+                        writer.write(b'{"type":"hello","api":1,"server":"fake-mapd"}\n')
+            finally:
+                writer.close()
+        path = os.path.join(self.rundir, "position.sock")
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        await asyncio.start_unix_server(feeder, path=path)
+        while True:
+            await asyncio.sleep(0.5)
+            self.map_n += 1
+            self.map_pub.send(self.map())
+
+    async def run(self, mapd=True):
+        for p in (self.cam, self.model, self.sign, self.env_pub, self.light_pub) + ((self.map_pub,) if mapd else ()):
             await p.start()
         self.write_preview()
         self.write_ring()
-        await asyncio.gather(self.camerad(), self.modeld(), self.signd(), self.envd(), self.lightd())
+        await asyncio.gather(self.camerad(), self.modeld(), self.signd(), self.envd(), self.lightd(),
+                             *([self.mapd()] if mapd else []))
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--rundir", default=os.environ.get("ROADSENSE_RUNDIR", "/tmp/roadsense-fake"))
+    ap.add_argument("--no-mapd", action="store_true", help="do not fake mapd (run the real one on this rundir)")
     a = ap.parse_args()
     os.makedirs(a.rundir, exist_ok=True)
     try:
-        asyncio.run(Fake(a.rundir).run())
+        asyncio.run(Fake(a.rundir).run(mapd=not a.no_mapd))
     except KeyboardInterrupt:
         pass
 
