@@ -31,6 +31,7 @@ DEFAULT_CFG = dict(
     map_change_min_m=100.0,      # a tagged limit change this far after the sign overrides the sign
     junction_pass_m=10.0,
     lane_prob=0.5, lane_prob_inner=0.3,
+    lanes_max_age_s=1.0,         # a `lanes` (tracker) message older than this is not used for the ego lane
     tunnel_env_conf=0.5,
     match_hold_s=2.0,            # a low-confidence match of the same road is used this long after a good one
     match_hold_msgs=3,           # and for at most this many low-confidence map messages in a row
@@ -328,15 +329,20 @@ class Fusion:
                 "fused(map)" if label != ep.get("label") else "fused(vision)",
                 "scores": {k: round(v, 3) for k, v in post.items()}, "vision": vision, "map": mapinfo}
 
-    def _lanes(self, m, road_msg):
+    def _lanes(self, m, road_msg, lanes_msg=None, now_mono_ns=None):
         c = self.cfg
         left = right = None
         ll = (road_msg or {}).get("lane_lines")
-        if ll and len(ll) == 4:
+        tracked = False
+        if isinstance(lanes_msg, dict) and isinstance(lanes_msg.get("lane_to_left"), bool) and (
+                now_mono_ns is None or abs(now_mono_ns - (lanes_msg.get("ts_mono_ns") or 0)) <= c["lanes_max_age_s"] * 1e9):
+            # the road-geometry tracker's presence (lanes.py): the same question with hysteresis over time
+            left, right, tracked = lanes_msg["lane_to_left"], bool(lanes_msg.get("lane_to_right")), True
+        elif ll and len(ll) == 4:
             p = [float(x.get("prob") or 0.0) for x in ll]
             left = p[0] >= c["lane_prob"] and p[1] >= c["lane_prob_inner"]
             right = p[3] >= c["lane_prob"] and p[2] >= c["lane_prob_inner"]
-        vision = {"lane_to_left": left, "lane_to_right": right} if ll else None
+        vision = {"lane_to_left": left, "lane_to_right": right, "tracked": tracked} if (ll or tracked) else None
         if not m:
             return {"count": None, "forward": None, "backward": None, "ego_index": None, "oncoming_left": None,
                     "source": "none", "confidence": 0.0, "vision": vision, "map": None}
@@ -406,7 +412,7 @@ class Fusion:
                "speed_limit": self._speed_limit(m, vis, built_up),
                "built_up": built_up,
                "place": self._place(m, env),
-               "lanes": self._lanes(m, latest.get("road")),
+               "lanes": self._lanes(m, latest.get("road"), latest.get("lanes"), now_mono_ns),
                "tunnel": self._tunnel(m, env),
                "lead": self._lead(latest, now_mono_ns)}
         if m:

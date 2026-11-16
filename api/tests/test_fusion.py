@@ -80,7 +80,7 @@ class FusionTest(unittest.TestCase):
         self.assertEqual(sl["vision"]["limit_kmh"], vis["limit_kmh"])
         self.assertEqual((out["place"]["label"], out["place"]["source"]), ("city_street", "vision"))
         self.assertEqual((out["lanes"]["count"], out["lanes"]["source"]), (None, "none"))
-        self.assertEqual(out["lanes"]["vision"], {"lane_to_left": True, "lane_to_right": False})
+        self.assertEqual(out["lanes"]["vision"], {"lane_to_left": True, "lane_to_right": False, "tracked": False})
         self.assertEqual((out["tunnel"]["in_tunnel"], out["tunnel"]["source"]), (False, "vision"))
         self.assertIsNone(out["road"])
         self.assertIsNone(out["ahead"])
@@ -209,6 +209,19 @@ class FusionTest(unittest.TestCase):
         self.assertEqual((out["tunnel"]["in_tunnel"], out["tunnel"]["source"], out["tunnel"]["exit_in_m"]), (True, "vision", None))
 
     # ---- lanes ------------------------------------------------------------------------------------
+    def test_lanes_use_the_tracked_presence_when_fresh(self):
+        # the frame says "a lane to the right" (far-right 0.9), the tracker (hysteresis over time) says no
+        dual = map_msg(oneway=True, lanes={"total": 2, "forward": 2, "backward": 0, "source": "tagged"})
+        raw = road_msg([0.1, 0.9, 0.9, 0.9])
+        trk = {"type": "lanes", "ts_mono_ns": 0, "lane_to_left": True, "lane_to_right": False}
+        out = self.fuse(Fusion(), map=dual, road=raw, lanes=trk)["lanes"]
+        self.assertEqual(out["vision"], {"lane_to_left": True, "lane_to_right": False, "tracked": True})
+        self.assertEqual(out["ego_index"], 1)                                   # nothing to the right: the right lane
+        stale = dict(trk, ts_mono_ns=-5 * NS)
+        out = self.fuse(Fusion(), map=dual, road=raw, lanes=stale)["lanes"]     # an old tracker message: the frame decides
+        self.assertEqual(out["vision"], {"lane_to_left": False, "lane_to_right": True, "tracked": False})
+        self.assertEqual(out["ego_index"], 0)
+
     def test_lanes(self):
         two_way = map_msg()
         out = self.fuse(Fusion(), map=two_way, road=road_msg([0.8, 0.9, 0.9, 0.1]))["lanes"]

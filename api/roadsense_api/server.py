@@ -10,6 +10,7 @@ import weakref
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import overlay
+from . import recorder as recorder_mod
 from .sockets import start_clients
 from .state import DAEMONS, State
 
@@ -194,6 +195,12 @@ async def h_lead(req):
     return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
 
 
+async def h_lanes(req):
+    st = req.app["state"]
+    msg = st.latest.get("lanes")
+    return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
+
+
 async def h_position(req):
     """Position input over HTTP: the body is one message, a JSON array of messages, or JSON lines
     (`gnss` / `motion` / `reset`, position input API v1). Forwarded to mapd's position.sock; mapd validates."""
@@ -248,7 +255,10 @@ async def h_camera(req):
 
 
 async def h_health(req):
-    return _json(req.app["state"].health())
+    h = req.app["state"].health()
+    rec = req.app.get("recorder")
+    h["recorder"] = rec.status() if rec is not None else None
+    return _json(h)
 
 
 async def h_frame(req):
@@ -337,11 +347,18 @@ async def _cors(req, resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
 
 
-def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
+def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", record="config"):
+    """`record`: a recorder config dict, None for no recording, or "config" to read `<config dir>/recorder.json`
+    (recorder.py; without that file nothing is recorded)."""
     state = State(rundir, datadir=datadir, ring_path=ring_path, rules=rules)
     app = web.Application()
     app["state"] = state
     app["preview_path"] = os.path.join(rundir, "preview.jpg")
+    rec_cfg = recorder_mod.load_config() if record == "config" else record
+    app["recorder"] = None
+    if rec_cfg:
+        app["recorder"] = recorder_mod.Recorder(rec_cfg, app["preview_path"])
+        state.subscribers.add(app["recorder"].on_message)
     app["websockets"] = weakref.WeakSet()
     app.on_response_prepare.append(_cors)
 
@@ -355,6 +372,9 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
         for t in app["tasks"]:
             t.cancel()
         await asyncio.gather(*app["tasks"], return_exceptions=True)
+        if app["recorder"] is not None:
+            state.subscribers.discard(app["recorder"].on_message)
+            app["recorder"].close()
 
     async def shutdown(app):      # wake /preview handlers and close /ws clients so they finish (else systemd waits 90 s)
         app["renderer"].event.set()
@@ -375,6 +395,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl"):
     app.router.add_get("/v1/map", h_map)
     app.router.add_get("/v1/fused", h_fused)
     app.router.add_get("/v1/lead", h_lead)
+    app.router.add_get("/v1/lanes", h_lanes)
     app.router.add_post("/v1/position", h_position)
     app.router.add_get("/v1/camera", h_camera)
     app.router.add_get("/v1/health", h_health)
@@ -431,6 +452,9 @@ async function tick(){
     if (r) {
       const names = ["far left", "left", "right", "far right"];
       let s = (r.lane_lines || []).map((l, i) => `${names[i] || i}: p ${f(l.prob, 2)}`).join("\\n");
+      const tl = await get("/v1/lanes");
+      if (tl) s += "\\ntracked: lines " + tl.lines.map(l => l.present ? (l.mode === "coast" ? "c" : "|") : ".").join("") +
+        "  edges " + tl.edges.map(l => l.present ? "|" : ".").join("") + `  width ${f(tl.lane_width_m)} m  (${tl.source})`;
       const lead = (r.leads || [])[0];
       s += "\\nlead (raw): " + (lead ? `${f(lead.x[0])} m  p ${f(lead.prob, 2)}  v ${f(lead.v[0])} m/s` : "-");
       const ld = await get("/v1/lead");
