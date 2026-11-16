@@ -431,14 +431,23 @@ frame, a 48x24 state CNN per light, a small tracker; models and licences: roadse
 ```
 "lights_ms": 160.0,                      // provider time for this frame (detector + state + tracker)
 "frame": [1280, 720],                    // ring frame size; boxes are in these pixels
-"roi": [0, 0, 1280, 446],                // part of the frame the detector looked at
+"roi": [0, 0, 1280, 446],                // part of the frame the detector looked at in this frame
+"view": 0,                               // optional: 0 = the wide view, 1 = the provider's second (far) view
 "lights": [ {"track_id": 7, "state": "red",          // smoothed per track: red, yellow, red_yellow, green, off, unknown
              "state_conf": 0.97, "state_s": 4.2,      // confidence of the state, seconds since it last changed
-             "frame_state": "red",                    // this frame's observation
+             "frame_state": "red",                    // this frame's observation ("unknown" while coasting)
              "flashing": false,                       // yellow <-> off alternating within 4 s
-             "score": 0.66, "box": [x0,y0,x1,y1], "horizontal": false, "hits": 12, "age": 13} ]
+             "score": 0.66, "box": [x0,y0,x1,y1], "horizontal": false, "hits": 12, "age": 13,
+             "coast": 0} ]                            // optional: processed frames since the track was last detected
 ```
-Only confirmed tracks (>= 2 hits) matched in the current frame are listed. `red_yellow` is inferred from
+Confirmed tracks (>= 2 hits) are listed: those matched in the current frame and, since 2026-11-16 (lane L15),
+those the reference provider is coasting (`coast` 1..`--lights-coast`, the box predicted, the state the last
+smoothed one), so a light the detector misses in one frame, or one that only the other view can see, does not
+drop out of the message. A provider that lists matched tracks only simply never sends `coast`. The reference
+provider can alternate two views (`--lights-roi2`: every other frame looks at a smaller part of the picture
+at a higher scale, for the far lights that are too small after the wide view's downscale; `roi` / `view` say
+which one a message used) and can let boxes below the detection threshold continue an existing track
+(`--lights-thr-keep`); both are measured in `docs/lanes/L15-stability.md`. `red_yellow` is inferred from
 the sequence (a yellow observation straight after red; the Vienna-convention phase before green), `off`
 covers dark housings and side or back views. The api annotates every `lights` message before storing and
 forwarding it (`api/roadsense_api/lights.py`): per light `dist_m` (from the housing size, rough),
@@ -447,8 +456,20 @@ message-level `ego` for the light that applies to the ego lane:
 
 ```
 "ego": {"track_id": 7, "state": "red", "flashing": false, "dist_m": 34.0, "lateral_m": 2.1, "relevance": 0.71,
-        "agree": 2, "n_relevant": 2, "source": "path"}     // null when no light is relevant
+        "agree": 2, "n_relevant": 2, "source": "path",
+        "held": false}                                     // null when no light is relevant
 ```
+The ego light over time (`EgoLightSelector`, since 2026-11-16): the light that is the ego light stays it while
+its relevance is at least 0.07 (it becomes it at 0.15: hysteresis), a coasting track counts with 0.85 per
+missed frame, and when no light qualifies the last ego light is served for up to 1.2 s more with
+`"held": true` and `"age_s"` (how old that state is). A consumer that must not show a state older than a
+frame checks `held`.
+Map prior (soft, optional): when the `map` message is usable (available, younger than 3 s, match confidence
+>= 0.5) and its look-ahead lists `traffic_signals` or `crossing_signals` within 150 m on the most likely path,
+the message carries `"map_signal": {"kind": "traffic_signals", "dist_m": 80.0, "confidence": 0.8}`, a light
+becomes the ego light from relevance 0.10 instead of 0.15 and the hold is 2 s. Without a position source
+`map_signal` is null and nothing changes; `map_signal` set with `ego` null is "the map expects a light here
+and the camera has none". Not exercised on the car yet (no live GNSS fix).
 
 ### mapd: `{"type":"map", ...}` on `<rundir>/mapd.sock`, `{"type":"ego", ...}` on `<rundir>/ego.sock`, position input on `<rundir>/position.sock`
 `mapd/roadsense_mapd` (Python, numpy; `python3 -m roadsense_mapd`) owns everything that has to do with
@@ -677,16 +698,17 @@ tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsens
 | `GET /v1/rules` | rules in effect for the car derived by the api (topic `rules`, below: `in_effect`, `recent`, `ahead`) plus `pending`, `recent_changes` and `ignored` sign tracks |
 | `GET /v1/map` | latest `map` message of mapd (position state, matched road, map speed limit, look-ahead); 503 while mapd is not running |
 | `GET /v1/fused` | map and camera combined per fact with provenance (topic `fused`, below) |
+| `GET /v1/lanes` | the tracked road geometry (topic `lanes`, below): four lane lines and two road edges with a presence that has hysteresis and a filtered geometry; 503 before the first `road` message |
 | `GET /v1/lead` | the tracked lead vehicle (topic `lead`, below): distance, relative speed, time gap, standstill hold, `departed` cue, with the raw vision value alongside; 503 before the first `road` message |
 | `POST /v1/position` | position input API v1 over HTTP (body: one `gnss` / `motion` / `reset` object, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
 | `GET /v1/camera` | latest `camera` message + ring header fields |
 | `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share) and `fused` (limit and source, place, lanes, tunnel) summaries; CPU temp, battery |
 | `GET /v1/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
-| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused` and `lead`; mapd's `ego` (the car's motion, while a feeder sends it) passes through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,ego` filters |
+| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `lead` and `lanes`; mapd's `ego` (the car's motion, while a feeder sends it) passes through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,ego` filters |
 
-api never touches the camera or the models; it is a fan-out and overlay layer, plus the four derived
-topics below (`speed_limit`, `rules`, `fused`, `lead`).
+api never touches the camera or the models; it is a fan-out and overlay layer, plus the five derived
+topics below (`speed_limit`, `rules`, `fused`, `lead`, `lanes`) and an optional drive recorder.
 
 ### api-derived topic: `{"type":"speed_limit", ...}`
 `api/roadsense_api/speedlimit.py` turns the documented `signs` contract (only `detections[]`
@@ -817,8 +839,10 @@ Rules:
   flag -> forest_road; built-up -> city_street or residential by class; parking aisle -> parking_lot or
   underground_parking; bridge x3) and renormalised. Without envd the map label alone is served (`map`).
 * **Lanes.** Counts from the map (`road.lanes`, source marked: tagged per direction, tagged total, assumed).
-  The ego lane comes from the model's four lane lines (a lane to the right exists when the far-right line has
-  probability >= 0.5 and the right line >= 0.3; likewise to the left): nothing to the right = the rightmost
+  The ego lane comes from the model's four lane lines: a lane to the right exists when the tracker (topic
+  `lanes`, below) reports the far-right and the right line present (`vision.tracked: true`; without a fresh
+  `lanes` message the frame's probabilities decide as before: far-right >= 0.5 and right >= 0.3); likewise
+  to the left. Nothing to the right = the rightmost
   lane; `oncoming_left` is false on one-way carriageways, true in the leftmost own lane of a two-way road.
 * **Tunnel.** In a tunnel when the matched edge is one (then `exit_in_m` is the map distance to its end) or
   when envd's label is `tunnel` with confidence >= 0.5 (no distance).
@@ -895,6 +919,73 @@ standstill hold costs nothing while moving. Constants: `DEFAULT_CFG` in `lead.py
 
 Replay and measurement on recorded `road` lines: `tools/lead_replay.py ROAD.jsonl[.gz] [--ego surrogate]
 [--every N] [--csv OUT]`.
+
+### api-derived topic: `{"type":"lanes", ...}`
+`api/roadsense_api/lanes.py` tracks the road geometry over time: one message per `road` message (10-14 per
+second on the reference phone), about 2.5 kB; `/v1/lanes`. `road.lane_lines[]` / `road.road_edges[]` are not
+modified and stay the network's frame-by-frame output; `lanes` is what a consumer should draw (added
+2026-11-16, docs/lanes/L15-stability.md).
+
+Why: a lane line's `prob` hovers around any fixed drawing threshold (at 0.3: 18-70 on/off changes of the four
+lines per minute on the replayed rides at 10 Hz, nearly all of them spans shorter than a second), and the road
+edges jump by 0.1-0.4 m from frame to frame (median; p95 0.4-1 m at 10 m), which moved everything a consumer
+stands on them.
+
+```
+"x": [33],                         // the model's distances (X_IDXS), shared by all six lines
+"lines": [ {"present": true,       // far left, left, right, far right: presence with hysteresis
+            "mode": "track|coast|none",   // coast: present, no usable frame right now, geometry held
+            "conf": 0.83,          // the filtered probability the presence is decided on
+            "prob": 0.91,          // this frame's road.lane_lines[i].prob (null without a line in the frame)
+            "age_s": 12.3,         // since the presence last changed
+            "y": [33], "y_std": [33]} x4 ],   // filtered lateral offsets (m, right positive) and the filter's sigma; null when not present
+"edges": [ {...} x2 ],             // left, right road edge, the same fields; `prob` is made from the network's y_std
+"lane_to_left": true, "lane_to_right": false,   // both lines of the neighbouring lane are present
+"lane_width_m": 3.42,              // between the inner lines over 6-30 m; null unless both are present
+"prior": null,                     // or {"total":2,"forward":1,"backward":1,"source":"tagged","outer_left":"expected","outer_right":"unlikely"}
+"source": "vision|vision+map",
+"ego": {"speed_mps": 12.1, "yaw_rate": 0.004, "source": "vehicle|vision"}
+```
+`seq`, `ts_mono_ns`, `ts_real_ns` are those of the `road` message.
+
+* **Presence.** `conf` is a 0.5 s low-pass of the frame probability; a line appears when `conf` reaches 0.45
+  and disappears when it falls under 0.2 (about 0.35 s to appear at prob 0.9, about 0.9 s to go). While a
+  present line gets no usable frame (prob under 0.2) its geometry is held (`mode: "coast"`), for 1.5 s at
+  most. A road edge has no probability in the model output; its pseudo probability is 1 when the network
+  places the edge within 0.6 m (`y_std` over 10-40 m) and 0 at 2.5 m (snow, a wide junction).
+* **Geometry.** One scalar Kalman filter per line and distance, a random walk in the car's frame, with the
+  network's own `y_std` as the measurement noise (0.3 x for a lane line, 1.0 x for a road edge, floors 0.05 /
+  0.25 m): far points are smoothed harder than near ones and a road edge much harder than a lane line. A
+  frame that does not fit the track (more than 4 sigma and 0.8 m over 5-45 m: the network relabelled its
+  lines at a lane change or a junction) is not averaged in; after 0.2 s and two such frames that agree the
+  track restarts on them, so nothing between two lanes is reported. An ego-motion compensation (slide by the
+  distance travelled, turn by the frame's yaw) is implemented and off: on the rides it made the tracked lines
+  trail the raw ones more.
+* **Map prior** (soft, optional). With a `map` message that is available, younger than 3 s, matched with
+  confidence >= 0.5 and a lane count that is tagged (not assumed), the count shifts the thresholds of the two
+  outer lines: `unlikely` (a single-lane road: both; one lane in the own direction of a two-way road: the
+  right one) needs `conf` 0.70 to appear and goes at 0.28, `expected` (the oncoming lane's far line on that
+  two-way road) appears at 0.325 and goes at 0.12. The inner lines and the edges are never touched by the map,
+  strong camera evidence always wins, and without a position source `prior` is null and every threshold is
+  the neutral one. On the car there is no live GNSS fix yet, so this path has run on tests and with a constant
+  synthetic prior only.
+
+Constants: `DEFAULT_CFG` in `lanes.py`, overridable per key in `<config dir>/lanes.json`. Replay and
+measurement on recorded `road` lines: `tools/lanes_replay.py ROAD.jsonl[.gz] [--every N] [--lanes-total N
+--lanes-forward N] [--out LANES.jsonl]`.
+
+### Drive recorder (optional)
+`api/roadsense_api/recorder.py`, off unless `<config dir>/recorder.json` names a directory
+(`{"dir": "/var/lib/roadsense/rec", "max_mb": 4000}`). Every api start opens a session
+`<dir>/<YYYYmmdd-HHMMSS>/` with `messages.jsonl.gz` (the topics as they went out: `road` reduced to lane
+lines, road edges, `leads[0]`, plan x / y / z, speed and pose; `lights`, `signs`, `env`, `speed_limit`,
+`rules`, `fused`, `map`, `ego` at 10 Hz, `calib`, one `camera` message a second) and `frames/<seq>.jpg`,
+camerad's preview JPEG once a second (copied, not re-encoded). About 30 kB/s of messages plus the JPEGs
+(0.2-0.5 GB per hour); the oldest sessions are deleted above `max_mb`; a write error stops the recording, not
+the api. `/v1/health` carries `recorder` (`dir`, counters, `failed`). The file replays through
+`tools/lanes_replay.py` and `tools/lead_replay.py`, the frames through roadsense-signs `lights_replay` /
+`signd_replay`. It exists because no drive of the car had its perception output on disk (the car backend's
+trip log holds vehicle buses only), so nothing seen on the road could be measured afterwards.
 
 Overlays project the 3D road outputs into the image with the pinhole model
 from the ring header (focal_px, cx, cy) and the calibration used by modeld,

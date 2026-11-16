@@ -47,6 +47,17 @@
 - [ ] distance is from the camera (`camera_to_front_m` unset): `gap_m` and a bumper-to-bumper time gap need the camera position; the DVR camera's focal / pitch / height are uncalibrated, which scales every distance
 - [ ] `/preview` still draws the raw `leads[0]` box
 
+## Stability of what a consumer draws (lane L15, 2026-11-16; docs/lanes/L15-stability.md)
+- [x] topic `lanes` / `/v1/lanes` (`api/roadsense_api/lanes.py`): the four lane lines and two road edges as tracks, presence with hysteresis on a filtered probability, geometry filtered per point with the network's own uncertainty, coasting through short drop-outs, re-initialisation when the network relabels its lines; `fused.lanes` takes the ego lane from it; `tools/lanes_replay.py`
+- [x] soft map prior for the two outer lines from the matched road's tagged lane count; neutral without a position source
+- [x] ego traffic light over time (`EgoLightSelector` in `lights.py`): hysteresis on the current ego track, coasting tracks of the provider, a 1.2 s hold marked `held`; `tools/lights_ego_replay.py`
+- [x] drive recorder (`recorder.py`, opt-in by `recorder.json`): messages and one camera JPEG a second per session, capped on disk; the first source of perception data from the car itself
+- [ ] not verified on the car: every number comes from replayed ride videos (other cameras, fp32 at 20 fps); the first recorded drive is the check
+- [ ] the map prior has only run on tests and with a constant synthetic lane count (no live GNSS fix on the car yet)
+- [ ] the ego-motion compensation of the line filter is implemented and off (it made the tracks trail on the rides); worth a second look with a calibrated camera and wheel speed
+- [ ] `/preview` still draws the raw lane lines
+- [ ] traffic lights are found late: the detector needs a housing of about 25-30 px in its input, which is 20-30 m with the car's camera (docs/lanes/L15-stability.md); a detector with a better small-object recall, or a higher-resolution pass, is the open item
+
 ## Later
 - [ ] car control integration (separate project; this API is the input)
 - [ ] GPU inference via ncnn/Vulkan: integrated 2026-10-21 (`modeld --backend ncnn`, ~60 ms/run, ~15 % of a core). Two blockers solved (turnip cache flush, fp16 overflow in the feature normalisation); full-replay accuracy still misses the gate on far-range outliers (lane y max 0.28 m at 192 m, lead x 1.9 m at 100 m; HARDWARE.md), so the unit stays on ORT. Open: reduce the fp16 activation error (ncnn per-layer fp32 is broken on Vulkan) or relax the gate to the ranges that matter
