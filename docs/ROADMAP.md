@@ -56,7 +56,8 @@
 - [ ] the map prior has only run on tests and with a constant synthetic lane count (no live GNSS fix on the car yet)
 - [ ] the ego-motion compensation of the line filter is implemented and off (it made the tracks trail on the rides); worth a second look with a calibrated camera and wheel speed
 - [ ] `/preview` still draws the raw lane lines
-- [ ] traffic lights are found late: the detector needs a housing of about 25-30 px in its input, which is 20-30 m with the car's camera (docs/lanes/L15-stability.md); a detector with a better small-object recall, or a higher-resolution pass, is the open item
+- [x] traffic lights (roadsense-signs `signd --lights`, in its unit): a second, full-scale view around the horizon on every other light frame, weak boxes that continue a track, coasting reports; on the replays the reported share of the light-time went from 82-85 % to 94-96 % (lights under 12 px: 39-56 % to 81-83 %) and the ego light stopped blinking
+- [ ] traffic lights on the car's own camera at night and in rain are unmeasured (no picture of one exists yet; the recorder collects them); if lights are still missed, the open item is a detector with a better recall on small lights or a full-resolution pass, which the phone at 83-89 C has no headroom for
 
 ## Later
 - [ ] car control integration (separate project; this API is the input)
