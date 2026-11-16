@@ -28,7 +28,7 @@ the stack up, all of them at night, some in rain; the MFD scene of the car compu
 * So, as in L14, every number below comes from the ride library (docs/RIDES.md), other cameras, replayed on
   the laptop: `modeld_replay` (supercombo v0.9.7, ORT fp32, 20 fps) over the first 7.5 min (9000 frames) of
   `warsaw-city`, `krakow-night-tunnel`, `a1-night`, `forest-lubelskie`, `gdansk-night-snow` (the L14 dumps
-  carry no road edges), kept outside the repo; and roadsense-signs `lights_replay` (ORT) on the frames of
+  carry no road edges), kept in `~/datasets/rides-road-l15/` on the laptop, not in the repo; and roadsense-signs `lights_replay` (ORT) on the frames of
   `krakow-lights`, `krakow-night-tunnel`, `gdansk-night-snow`. "10 Hz" is every second road message, about
   what the phone delivers (13.6/s, ncnn fp16).
 * The recorder of this lane (below) is what changes that from the next drive on.
