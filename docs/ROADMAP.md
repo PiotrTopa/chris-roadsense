@@ -59,6 +59,16 @@
 - [x] traffic lights (roadsense-signs `signd --lights`, in its unit): a second, full-scale view around the horizon on every other light frame, weak boxes that continue a track, coasting reports; on the replays the reported share of the light-time went from 82-85 % to 94-96 % (lights under 12 px: 39-56 % to 81-83 %) and the ego light stopped blinking
 - [ ] traffic lights on the car's own camera at night and in rain are unmeasured (no picture of one exists yet; the recorder collects them); if lights are still missed, the open item is a detector with a better recall on small lights or a full-resolution pass, which the phone at 83-89 C has no headroom for
 
+## The car's own traffic light, junction view, start-up (lane L16, 2026-11-17; docs/lanes/L16-my-lights-junctions.md)
+- [x] first recorded drive from the car (29 min, day, sun): lane-line flicker 82 on/off changes per minute raw -> 2.8 tracked, 2120 spans shorter than a second -> 0 (the L15 tracker, checked on the car's own data); ego light shown 18.3 % of the time, 3 short gaps
+- [x] lane assignment of the ego light (`lights.py`): stop and go groups, slot of every head in lane widths from the tracked lane lines, the group over the ego lane wins, `assign` / `amb` / `alt` in the message; on the recorded drive 5 conflict spans (21 s), the right group shown in all of them, before and after
+- [ ] the assignment has not changed an outcome yet: on this drive the lateral window alone was right too. It is the missed-ego-head case and wider junctions that need it, and no recording has one
+- [ ] arrow signals are not recognised (no arrow state in the provider); lit lights are often reported `off` against the sun or far away (95 of 107 observations of one green light): the state classifier on the car's camera is the weak part now
+- [x] `map.ahead.junction_view`: arms, control, roundabout ring and exit numbers from the pack graph; verified on a hand-made network and on synthetic positions in Opole
+- [ ] the junction view has never run with a real position (no GNSS source on the car); lane counts per arm are tagged values only, no turn lanes
+- [x] start-up delay explained: the DVR camera leaves the USB bus 23-39 s after power-up, for 4-5 s or for 122 s (2 of 5 drives, both the first after a long stand); not a GNSS wait
+- [ ] why 122 s is not known (camera firmware; power, temperature and the head unit are candidates); the USB tree also re-enumerates once per drive at the camera port ("cannot reset, err -71"), 6 s without frames
+
 ## Later
 - [ ] car control integration (separate project; this API is the input)
 - [ ] GPU inference via ncnn/Vulkan: integrated 2026-10-21 (`modeld --backend ncnn`, ~60 ms/run, ~15 % of a core). Two blockers solved (turnip cache flush, fp16 overflow in the feature normalisation); full-replay accuracy still misses the gate on far-range outliers (lane y max 0.28 m at 192 m, lead x 1.9 m at 100 m; HARDWARE.md), so the unit stays on ORT. Open: reduce the fp16 activation error (ncnn per-layer fp32 is broken on Vulkan) or relax the gate to the ranges that matter

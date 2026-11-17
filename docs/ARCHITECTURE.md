@@ -464,6 +464,35 @@ its relevance is at least 0.07 (it becomes it at 0.15: hysteresis), a coasting t
 missed frame, and when no light qualifies the last ego light is served for up to 1.2 s more with
 `"held": true` and `"age_s"` (how old that state is). A consumer that must not show a state older than a
 frame checks `held`.
+Lane assignment (lane L16, 2026-11-17; `docs/lanes/L16-my-lights-junctions.md`): at a junction with separate
+signal groups (a left-turn signal beside the one for straight on) the heads that face the car show different
+states at the same moment. The lateral window alone then picks by the offset from the path; since L16 the
+choice between the two groups is made by lane, and the message says how sure it is:
+
+```
+"lights": [ {..., "slot": -1.56} ],        // per light: offset from the centre of the ego lane in lane widths at its distance (0 = over the ego lane, -1 = one lane to the left)
+"ego": {..., "amb": false,                 // the choice is ambiguous (below); a consumer that shows one light marks it
+        "assign": {"conflict": true,       // facing heads show stop (red, red_yellow, yellow) and go (green) at once
+                   "confidence": 0.89,     // conflict: the chosen group's share of the two groups' best scores (0.5 = a coin toss); else the chosen head's lane weight x 2, capped at 1
+                   "basis": "lanes|path",  // lanes: the tracked lane lines of the `lanes` topic; path: no usable lines, the planned path with a 3.3 m lane
+                   "slot": -0.66, "n_left": 1, "n_right": 0,     // the chosen head's slot; lanes between the ego lane and the road edge on each side (null = unknown)
+                   "alt": {"track_id": 3, "state": "red", "side": "left", "slot": -1.61},   // the best head of the other group; null without a conflict
+                   "other_lane": true}}    // only when set: no conflict, and the one facing light hangs over another lane
+```
+A head's lane weight is `exp(-(slot_eff / (0.7 * (1 + d / 60)))^2)`: the tolerance grows with the distance,
+because the lateral offset of a far light is rough (the distance comes from the housing size, +-30 %). A head
+beyond the outermost lane (a post at the roadside) counts as a head of the outermost lane it stands beside
+(`slot_eff` = lanes up to it + half of the rest); with an unknown lane count this is assumed on the right only.
+Its score is that weight times its relevance without the lateral window. The group whose best head scores
+higher wins, the ego light is the best head inside it (the current ego track keeps the role at 60 % of the
+best), and only that group votes on the state. `amb` is set when the winner's share stays under 0.7 for two
+messages in a row, or when `other_lane` is set. The assignment never removes a light: when all facing heads
+agree, the choice is the one of the lateral window, as before. A tagged lane count of the matched road
+(`map.road.lanes`, source `tagged`) caps the lanes assumed to the right of the ego lane; inert without a
+position source. Arrow lenses are not told apart: the provider has no arrow state (a lens is 4-9 px wide at
+the distances that matter). `<config dir>/lights.json` `{"lane_assign": false}` switches the assignment off
+(no `slot`, `assign`, `amb`). Replay on a recorder session: `tools/lights_lane_replay.py`.
+
 Map prior (soft, optional): when the `map` message is usable (available, younger than 3 s, match confidence
 >= 0.5) and its look-ahead lists `traffic_signals` or `crossing_signals` within 150 m on the most likely path,
 the message carries `"map_signal": {"kind": "traffic_signals", "dist_m": 80.0, "confidence": 0.8}`, a light
@@ -651,9 +680,45 @@ for 150 m.
           "speed_limit_changes":[{"dist_m":655.0,"limit_kmh":90,"source":"implicit","rule":"outside","detail":"built_up:landuse","confidence":0.4}],
           "road_change":{"dist_m":1210.0,"class":"secondary","name":null,"ref":"414"},
           "shape":{"s":[0,20,..600],"x":[..],"y":[..],"curvature":[..]},   // road ahead beyond camera range; x forward, y right (modeld's frame), origin at the matched position; curvature 1/m, positive = bending right
-          "curves":[{"start_m":300.0,"apex_m":380.0,"end_m":480.0,"min_radius_m":150.0,"direction":"left","angle_deg":-88.0}]},   // radius below 500 m, at most 4
+          "curves":[{"start_m":300.0,"apex_m":380.0,"end_m":480.0,"min_radius_m":150.0,"direction":"left","angle_deg":-88.0}],   // radius below 500 m, at most 4
+          "junction_view":{...}},          // the first major junction or roundabout within 400 m on the path, or null (below)
 "proc": {"step_ms":0.9,"cpu_pct":0.8,"feeders":1,"tile_loads":14}
 ```
+
+**Junction view** (`ahead.junction_view`, lane L16; `context.junction_view`): what a consumer needs to draw
+the next junction or roundabout as a picture, computed from the pack's graph (no lane-level data, no pack
+rebuild). It is made for the first junction on the most likely path within 400 m that has at least one side
+branch that is not a service road; junction nodes within 35 m of each other along the path are one junction
+(the two carriageways of a crossing dual carriageway).
+
+```
+{"kind": "junction",
+ "dist_m": 171.0, "confidence": 0.58,            // along the path to the (first) junction node; path confidence past it
+ "control": "signals|give_way|stop" | null,      // from the point features on the path 60 m before .. 35 m behind the node
+ "approach": {"class":"secondary","name":"..","ref":null,"lanes":2,"lanes_source":"tagged","oneway":true},
+ "arms": [ {"angle_deg": -91.0,                  // direction of the arm, measured 25 m out, relative to the direction of travel into the junction: 0 = straight on, positive = right
+            "class":"secondary","name":"1 Maja","ref":null,
+            "exit": true,                        // can be driven into (false: a one-way street towards the junction)
+            "entry": true,                       // traffic comes out of it
+            "path": true,                        // the most likely path leaves here
+            "minor": false,                      // a service road or restricted access
+            "lanes": 1} ],                       // tagged lanes in the leaving direction, null when not tagged
+ "ring": null}
+{"kind": "roundabout", "dist_m": 52.0, ..., "control": "give_way",
+ "arms": [ {"angle_deg": 124.0,                  // where the arm meets the ring, seen from its centre: 180 = where the car enters, positive = to the right
+            ..., "approach": false,              // the arm the car comes from
+            "exit_no": 1} ],                     // exits in driving order from the entry (service roads and the way back are not counted)
+ "ring": {"radius_m": 8.2, "lanes": null, "exits": 3, "path_exit_no": 3,        // the exit the most likely path takes (same road number or name, else the direction of the approach)
+          "exit_dist_m": 71.0,
+          "on_ring": false, "car_angle_deg": null}}
+```
+The carriageways of one road that meet the ring within 45 degrees are one arm. While the car is on the ring
+the view announced before the entry is repeated unchanged (`dist_m` 0, `on_ring` true, `car_angle_deg` = the
+car's place on the ring in the same angles), so a picture does not turn under the driver; a position that is
+first found on a ring gets a view with the car at 180 and no path exit. The view is a property of the most
+likely path: with `confidence` near 0.5 the path, and therefore the highlighted arm, is a guess. Turn lanes
+and turn restrictions are not in the pack. Cost: `look_ahead` with the view 0.53 ms on the laptop (Poland pack,
+Opole centre, 660 positions); not yet measured on the phone.
 
 Speed limit: the `maxspeed` tag of the matched direction when present, else the Polish statutory limit
 (`mapd/roadsense_mapd/limits/pl.json`: built-up 50, living street 20, outside 90, dual carriageway with two
@@ -1045,6 +1110,11 @@ with this stack is exactly:
 * **camera power**: the host switches the USB hub that carries the DVR camera
   (powerbox relay ch4) on before the start and off after the stop;
   `camerad-dvr --auto` tolerates the camera appearing late;
+  the reference camera leaves the USB bus once, 23-39 s after it gets power,
+  for 4-5 s or (first drive after a long stand) for about 122 s, and no road
+  picture exists meanwhile (docs/lanes/L16-my-lights-junctions.md, "Start-up").
+  A host that knows earlier that the car will be driven (a door was unlocked)
+  should power the hub then;
 * **ignition**: the host starts the target when ACC comes on and stops it
   cleanly (grace, `systemctl stop`, wait for the units) when ACC goes off;
   `roadsense.target` is therefore **not enabled at boot** on that machine
@@ -1055,7 +1125,9 @@ with this stack is exactly:
 * **position** (optional): the host may feed GNSS fixes and vehicle motion to
   `<rundir>/position.sock` (position input API v1, "mapd" above); roadsense does
   all filtering and map matching. Without a feeder the map layer reports
-  `unavailable` and the stack runs on vision only. The same `motion` messages
+  `unavailable` and the stack runs on vision only: there is no waiting for a
+  fix anywhere (every vision topic is served from the first camera frame, the
+  map facts join when a fix arrives and leave when the position runs out). The same `motion` messages
   give the lead tracker (topic `lead`) the car's speed and standstill; a host
   that feeds test input sends `reset` when the test ends.
 
