@@ -32,6 +32,7 @@ that uses it (headless render with simulated data).</sub>
 | `env` | envd: zero-shot CLIP-type encoder, 1 fps | place (motorway, city, residential, forest road, tunnel, parking ...), weather and light, smoothed with confidence |
 | `map` | mapd: position filter + OpenStreetMap pack | position state, matched road (class, lanes, tunnel, bridge, limit), look-ahead along the likely path: curves, junctions and roundabouts with their arms, crossings, signals, tunnel exit |
 | `fused` | api | map and camera combined per fact with provenance: speed limit, built-up area, lane count and ego lane, tunnel with exit distance |
+| `vehicle`, `objects`, `ego` | mapd, from the host's feeder | the car as the host describes it: motion, driver controls, body signals with age, quality and source per signal, calibration estimates; range-sensor object lists in the camera's frame |
 | `camera`, `health` | all daemons | frame metadata and MJPEG preview with overlays; fps, latency and temperature per stage |
 
 Full contract, message formats and the REST / WebSocket reference: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -87,10 +88,13 @@ The processes share only two mechanisms:
   and a mounting calibration, not a different model.
 * **Compute:** plain C++17 and Python; ncnn (Vulkan) or ONNX Runtime (CPU). Any Linux box that runs
   either can host it.
-* **Position and maps:** any process may feed GNSS fixes and the car's motion (speed, yaw rate,
-  steering angle or wheel speeds) to `<rundir>/position.sock` (position input API v1, reference
-  client `tools/position_client.py`). mapd filters, dead-reckons through drop-outs and matches to
-  the map. Without a feeder or a pack the map layer reports "unavailable" and everything else runs
+* **The car's own data:** any process may feed GNSS fixes, the car's motion (speed, yaw rate, wheel
+  speeds, steering angle), driver controls (turn signal, brake, cruise), body signals and radar object
+  lists to `<rundir>/position.sock`: the car-agnostic vehicle input API
+  ([docs/VEHICLE_API.md](docs/VEHICLE_API.md), reference client `tools/vehicle_client.py`, a minimal
+  OBD-II + GPS feeder in `tools/examples/`). Every signal is optional and carries its quality; roadsense
+  reports back what it holds and what it could calibrate (topic `vehicle`). mapd filters the position,
+  dead-reckons through drop-outs and matches to the map. Without a feeder or a pack the map layer reports "unavailable" and everything else runs
   on vision alone. Packs are built from OpenStreetMap with `scripts/roadsense-maps`
   ([docs/MAPS.md](docs/MAPS.md)).
 
@@ -137,6 +141,7 @@ the `signs` / `lights` sockets and joins `roadsense.target`; roadsense runs with
 |---|---|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | frame ring, socket and API contract, every topic and endpoint |
 | [HARDWARE.md](docs/HARDWARE.md) | the reference phone, camera path, thermals |
+| [VEHICLE_API.md](docs/VEHICLE_API.md) | vehicle input API: how a car integration feeds GNSS, motion, controls, body signals and range sensors |
 | [MAPS.md](docs/MAPS.md) | map packs: fetch, build, install, licensing |
 | [SUPERCOMBO_SPEC.md](docs/SUPERCOMBO_SPEC.md) | model inputs and outputs in physical units |
 | [QUANTIZATION.md](docs/QUANTIZATION.md) | fp16 / int8 accuracy against the fp32 reference |
