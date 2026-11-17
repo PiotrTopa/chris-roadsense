@@ -79,6 +79,23 @@ The processes share nothing but two mechanisms, specified in
   OpenStreetMap with `scripts/roadsense-maps` and are never part of the repository
   ([docs/MAPS.md](docs/MAPS.md); map data © OpenStreetMap contributors, ODbL).
 
+## Used in: a Toyota Prius Gen 2 car computer
+
+[cyberpank-prius-gen2-computer](https://github.com/PiotrTopa/cyberpank-prius-gen2-computer)
+runs roadsense on the same Poco F1 (postmarketOS) as its car backend and draws the result on the
+car's factory multi-display (480×240): lane lines and road edges, the lead vehicle with distance,
+time gap and closing speed, the ego traffic light, warning signs and the speed limit, the scenery
+from the `env` labels, and from the `map` / `fused` topics the next limit, the lane count and the
+tunnel exit distance. It only informs the driver. Screen layout and the scene contract:
+[MFD_MAIN_SCREEN.md](https://github.com/PiotrTopa/cyberpank-prius-gen2-computer/blob/main/docs/MFD_MAIN_SCREEN.md).
+
+| | | |
+|---|---|---|
+| ![Night curve: lanes, lead vehicle at 26 m with a 1.8 s gap](docs/images/mfd_curve_night.png) | ![Red light 36 m ahead, lead vehicle braking at 16 m](docs/images/mfd_red_light_lead.png) | ![Tunnel from the map: exit in 640 m](docs/images/mfd_tunnel_exit.png) |
+| Lanes, road edges, lead vehicle with distance and time gap | Ego traffic light, lead vehicle closing at 10 km/h | Map layer: tunnel exit distance |
+
+Headless renders of the car UI with simulated roadsense output (scaled 4×), not camera frames.
+
 ## Reference deployment: Poco F1 on postmarketOS
 
 roadsense was developed and measured on a Xiaomi Poco F1 (Snapdragon 845,

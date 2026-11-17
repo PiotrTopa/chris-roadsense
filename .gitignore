@@ -19,6 +19,8 @@ captures/
 *.jpg
 *.png
 *.mp4
+# documentation images are committed (README screenshots)
+!docs/images/*.png
 *.log
 .venv-models/
 # map data and map packs are never committed (docs/MAPS.md): they live in ~/roadsense-maps and on the device
