@@ -181,7 +181,7 @@ def _choose(e, direction, outs, entry):
     return i, 1.0 / tot, scores[i][1]
 
 
-def most_likely_path(pack, e, direction, s, horizon_m, max_edges=120, tunnel_extra_m=15000.0):
+def most_likely_path(pack, e, direction, s, horizon_m, max_edges=120, tunnel_extra_m=15000.0, ring_exit=None):
     """[(edge, dir, start distance from the car, s_from, s_to, confidence)] along the most likely path, and the
     junctions met on the way. The path ends at horizon_m, except inside a tunnel: it is followed to the
     tunnel's end (at most tunnel_extra_m further) so that the exit distance is always known."""
@@ -206,6 +206,12 @@ def most_likely_path(pack, e, direction, s, horizon_m, max_edges=120, tunnel_ext
         if not e.flags & R.F_ROUNDABOUT:
             entry = {"ref": e.road_ref, "name": e.name, "bearing": _end_bearing(e, direction)}
         i, share, turn = _choose(e, direction, outs, entry)
+        if ring_exit is not None and e.flags & R.F_ROUNDABOUT and entry is None:
+            # on a ring without having seen the entry in this walk: the exit announced before the entry
+            k = next((k for k, o in enumerate(outs) if o[0].ref == ring_exit), None)
+            if k is not None:
+                i, share = k, 0.9
+                turn = geo.ang_diff(_start_bearing(outs[k][0], outs[k][1]), _end_bearing(e, direction))
         e2, d2 = outs[i]
         if others >= 2:
             side = [o for k, o in enumerate(outs) if k != i]
@@ -250,7 +256,9 @@ def _polyline(segs, limit_m):
 def look_ahead(pack, m, limits, horizon_m=1500.0, shape_m=600.0, shape_step=20.0, memo=None):
     """The `ahead` object of the map message for a Match."""
     e, direction = m.edge, m.dir
-    segs, junctions = most_likely_path(pack, e, direction, m.s, horizon_m)
+    ring = (memo or {}).get("ring")
+    ring_exit = ring.get("exit_ref") if ring and e.ref in ring["refs"] else None
+    segs, junctions = most_likely_path(pack, e, direction, m.s, horizon_m, ring_exit=ring_exit)
     feats, seen = [], set()
     tunnel = {"in_tunnel": bool(e.flags & R.F_TUNNEL), "exit_m": None, "entry_m": None, "length_m": None}
     changes = {"built_up": None, "speed_limit": [], "road": None}
@@ -312,6 +320,10 @@ def look_ahead(pack, m, limits, horizon_m=1500.0, shape_m=600.0, shape_step=20.0
         out["junction_view"] = junction_view(pack, segs, feats, m, memo)
     except Exception:                       # a view is an extra: odd geometry must not cost the look-ahead
         out["junction_view"] = None
+    try:
+        out["geometry"] = geometry(pack, segs, m)
+    except Exception:
+        out["geometry"] = None
     return out
 
 
@@ -556,7 +568,7 @@ def _roundabout_view(pack, segs, i, feats, memo, m):
                      "exit_dist_m": None if exit_dist is None else round(exit_dist, 1),
                      "on_ring": on_ring, "car_angle_deg": pos}}
     if memo is not None and not on_ring:
-        memo["ring"] = {"refs": ring_set, "b_ref": b_ref, "centre": (clat, clon), "view": view}
+        memo["ring"] = {"refs": ring_set, "b_ref": b_ref, "centre": (clat, clon), "view": view, "exit_ref": exit_ref}
     return view
 
 
@@ -587,3 +599,123 @@ def junction_view(pack, segs, feats, m, memo=None, max_m=VIEW_M):
         if len(view["arms"]) >= 2:                            # the way on and at least one other arm
             return view
     return None
+
+
+# ---- road geometry around the path ---------------------------------------------------------------
+GEOM_M = 600.0              # the path polyline reaches this far
+GEOM_FINE_M = 200.0         # ... in steps of GEOM_STEP up to here, GEOM_COARSE beyond
+GEOM_STEP = 4.0
+GEOM_COARSE = 20.0
+GEOM_BRANCH_M = 260.0       # side roads are listed for the junction nodes of the path within this distance
+GEOM_BRANCH_PTS = (0.0, 6.0, 12.0, 20.0, 32.0, 45.0)     # a side road is described this far from its node (m)
+GEOM_BRANCH_MAX = 20
+
+
+def _to_frame(m):
+    """(lat, lon) -> (x forward, y right) in metres: origin at the matched position, x along the matched
+    bearing (the frame of `shape`)."""
+    loc = geo.Local(m.lat, m.lon)
+    b = math.radians(m.bearing)
+    sb, cb = math.sin(b), math.cos(b)
+
+    def to(lat, lon):
+        ex, ny = (lon - loc.lon0) * loc.mlon, (lat - loc.lat0) * loc.mlat
+        return ex * sb + ny * cb, ex * cb - ny * sb
+    return to
+
+
+def _branch(e, d, dist, to, ring=False):
+    """A side road leaving the path (or a ring) at path distance `dist`: edge e in direction d away from the node."""
+    pts = []
+    for s in GEOM_BRANCH_PTS:
+        if s > e.length and pts:
+            s = e.length
+        la, lo = e.at(s if d > 0 else e.length - s)[:2]
+        x, y = to(la, lo)
+        pts.append([round(float(x), 1), round(float(y), 1)])
+        if s >= e.length:
+            break
+    ln = lanes(e, d)
+    return {"dist_m": None if dist is None else round(dist, 1), "pts": pts, "class": e.cls_name,
+            "minor": e.cls_name in MINOR or bool(e.flags & R.F_ACCESS_RESTRICTED),
+            "exit": not (d < 0 and e.oneway), "entry": not (d > 0 and e.oneway), "oneway": e.oneway,
+            "lanes": ln["total"], "lanes_source": ln["source"], "ring": ring}
+
+
+def geometry(pack, segs, m):
+    """The road around the most likely path as geometry, for a consumer that draws the road ahead: the path
+    as a polyline, the side roads at its junction nodes as short polylines, and the first roundabout as a
+    circle with its arms. Frame of `shape`: x forward along the matched bearing, y right, metres, origin at
+    the matched position. Lane-level geometry is not in the pack: a road is its centre line and a lane count."""
+    to = _to_frame(m)
+    lat, lon = _polyline(segs, GEOM_M)
+    fx, ry = to(lat, lon)
+    keep = np.concatenate([[True], np.hypot(np.diff(fx), np.diff(ry)) > 0.01])
+    fx, ry = fx[keep], ry[keep]
+    sl = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(fx), np.diff(ry)))])
+    total = min(float(sl[-1]), GEOM_M)
+    if total < GEOM_STEP:
+        return None
+    ss = np.arange(0.0, min(total, GEOM_FINE_M) + 1e-6, GEOM_STEP)
+    if total > GEOM_FINE_M + GEOM_COARSE:
+        ss = np.concatenate([ss, np.arange(GEOM_FINE_M + GEOM_COARSE, total + 1e-6, GEOM_COARSE)])
+    path = {"s": [round(v, 1) for v in ss.tolist()],
+            "x": [round(v, 1) for v in np.interp(ss, sl, fx).tolist()],
+            "y": [round(v, 1) for v in np.interp(ss, sl, ry).tolist()]}
+    lane_runs, last = [], None
+    for e, d, dist, s_from, s_to, _ in segs:
+        if dist > GEOM_M:
+            break
+        ln = lanes(e, d)
+        cur = (ln["forward"], ln["backward"], ln["source"])
+        if cur != last:
+            lane_runs.append({"dist_m": round(dist, 1), "forward": cur[0], "backward": cur[1], "source": cur[2]})
+            last = cur
+    path_refs = {sg[0].ref for sg in segs}
+    branches, ring = [], None
+    for k, (e, d, dist, s_from, s_to, conf) in enumerate(segs):
+        jd = dist + abs(s_to - s_from)
+        on_rb = bool(e.flags & R.F_ROUNDABOUT)
+        if on_rb and ring is None and dist <= GEOM_BRANCH_M:
+            ring = _ring_geometry(pack, segs, k, to, path_refs, branches)
+        if jd > GEOM_BRANCH_M or k == len(segs) - 1:
+            break
+        nxt = segs[k + 1][0]
+        if on_rb or nxt.flags & R.F_ROUNDABOUT:
+            continue                                         # the arms of a ring come with the ring
+        for e3, d3 in _node_arms(pack, e.b if d > 0 else e.a, {e.ref, nxt.ref}):
+            if e3.ref not in path_refs and len(branches) < GEOM_BRANCH_MAX:
+                branches.append(_branch(e3, d3, jd, to))
+    return {"path": path, "lanes": lane_runs, "branches": branches, "ring": ring}
+
+
+def _ring_geometry(pack, segs, k, to, path_refs, branches):
+    """The roundabout whose first edge on the path is segs[k]: centre, radius, where the path enters and leaves
+    it, and its arms (appended to `branches` with ring = true, in driving order from the path's entry)."""
+    e, d, dist = segs[k][0], segs[k][1], segs[k][2]
+    refs, lat, lon, nodes = _ring(pack, e, d)
+    x, y = to(np.array(lat), np.array(lon))
+    cx, cy = float(x.mean()), float(y.mean())
+    radius = float(np.hypot(x - cx, y - cy).mean())
+    ring_set = set(refs)
+    exit_dist = None
+    for sg in segs[k:]:
+        if not sg[0].flags & R.F_ROUNDABOUT:
+            exit_dist = sg[2]
+            break
+    s0 = segs[k][3] if k == 0 else (0.0 if d > 0 else e.length)      # where on the first ring edge the path starts
+    done = abs(s0 - (0.0 if d > 0 else e.length))
+    for node, s, nla, nlo in nodes:
+        along = dist + s - done                              # path distance of the ring node, were the path to stay on the ring
+        for e3, d3 in _node_arms(pack, node, ring_set):
+            if len(branches) >= GEOM_BRANCH_MAX:
+                break
+            b = _branch(e3, d3, None, to, ring=True)
+            b["ring_m"] = round(along, 1)
+            b["path"] = e3.ref in path_refs
+            if exit_dist is None or along <= exit_dist + 1.0:
+                b["dist_m"] = round(along, 1)                # the path passes this arm
+            branches.append(b)
+    return {"centre": [round(cx, 1), round(cy, 1)], "radius_m": round(radius, 1), "lanes": e.lanes or None,
+            "on_ring": k == 0, "entry_m": None if k == 0 else round(dist, 1),
+            "exit_m": None if exit_dist is None else round(exit_dist, 1)}

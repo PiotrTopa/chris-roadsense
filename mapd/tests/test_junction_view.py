@@ -71,7 +71,60 @@ class JunctionView(unittest.TestCase):
                     best = (sc, e, direction, s, b)
         _, e, direction, s, b = best
         m = types.SimpleNamespace(edge=e, dir=direction, s=s, lat=lat, lon=lon, bearing=b)
-        return context.look_ahead(self.pack, m, self.limits, memo=memo)["junction_view"]
+        self.ahead = context.look_ahead(self.pack, m, self.limits, memo=memo)
+        return self.ahead["junction_view"]
+
+    def test_geometry_roundabout_and_side_roads(self):
+        self.at(-200, 0, 90.0)
+        g = self.ahead["geometry"]
+        p = g["path"]
+        self.assertEqual(p["s"][:3], [0.0, 4.0, 8.0])
+        self.assertAlmostEqual(p["x"][10], 40.0, delta=0.2)             # straight towards the ring
+        self.assertAlmostEqual(p["y"][10], 0.0, delta=0.2)
+        ring = g["ring"]
+        self.assertAlmostEqual(ring["centre"][0], 200.0, delta=1.5)
+        self.assertAlmostEqual(ring["centre"][1], 0.0, delta=1.5)
+        self.assertAlmostEqual(ring["radius_m"], 20.0, delta=1.5)
+        self.assertEqual((ring["on_ring"], ring["entry_m"]), (False, 180.0))
+        self.assertAlmostEqual(ring["exit_m"], 180.0 + math.pi * 20.0, delta=2.0)     # half way round
+        arms = [b for b in g["branches"] if b["ring"]]
+        self.assertEqual([b["class"] for b in arms], ["residential", "primary", "tertiary", "primary"])   # driving order
+        south = arms[0]
+        self.assertAlmostEqual(south["pts"][0][0], 200.0, delta=1.0)    # leaves the ring at its south point,
+        self.assertAlmostEqual(south["pts"][0][1], 20.0, delta=1.0)     # y right: south is to the right of east
+        self.assertGreater(south["pts"][-1][1], 60.0)
+        self.assertEqual([b["path"] for b in arms], [False, True, False, True])
+        self.assertIsNotNone(south["dist_m"])
+        self.assertIsNone(arms[2]["dist_m"])                            # beyond the path's exit
+        # the path goes round the ring: its points lie on the circle between entry and exit
+        on = [(x, y) for s, x, y in zip(p["s"], p["x"], p["y"]) if ring["entry_m"] + 4 < s < ring["exit_m"] - 4]
+        self.assertTrue(on and all(abs(math.hypot(x - 200.0, y) - 20.0) < 1.5 and y > 0 for x, y in on))
+        # the crossroads behind it, 120 m further: beyond GEOM_BRANCH_M from here, listed from closer by
+        self.at(100, 0, 90.0)
+        g = self.ahead["geometry"]
+        self.assertIsNone(g["ring"])
+        side = sorted((b["class"], round(b["pts"][-1][0]), round(b["pts"][-1][1])) for b in g["branches"])
+        self.assertEqual(side, [("secondary", 200, -45), ("secondary", 200, 45), ("service", 232, -32)])
+        self.assertTrue(all(b["dist_m"] == 200.0 for b in g["branches"]))
+        self.assertEqual(g["lanes"][0]["forward"], 1)
+
+    def test_on_the_ring_the_path_takes_the_announced_exit(self):
+        memo = {}
+        self.at(-200, 0, 90.0, memo)
+        self.at(20 * math.cos(math.radians(225)), 20 * math.sin(math.radians(225)), 135.0, memo)
+        g = self.ahead["geometry"]
+        self.assertGreater(g["path"]["s"][-1], 300.0)                   # out of the ring and on along Main
+        self.assertAlmostEqual(g["ring"]["exit_m"], 20.0 * math.radians(135.0), delta=2.0)
+        self.assertEqual([j["kind"] for j in self.ahead["junctions"]][:2], ["roundabout_exit", "junction"])
+
+    def test_geometry_on_the_ring(self):
+        self.at(20 * math.cos(math.radians(225)), 20 * math.sin(math.radians(225)), 135.0, {})
+        g = self.ahead["geometry"]
+        self.assertTrue(g["ring"]["on_ring"])
+        self.assertIsNone(g["ring"]["entry_m"])
+        self.assertAlmostEqual(math.hypot(*g["ring"]["centre"]), 20.0, delta=1.5)
+        self.assertLess(g["ring"]["centre"][1], 0.0)                    # the island is on the left
+        self.assertEqual(len([b for b in g["branches"] if b["ring"]]), 4)
 
     def test_roundabout_ahead(self):
         memo = {}

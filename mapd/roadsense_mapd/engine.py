@@ -171,6 +171,9 @@ class Engine:
         if gear is not None and gear not in ("P", "R", "N", "D", "B"):
             raise ValueError("gear must be one of P R N D B")
         reverse = bool(m.get("reverse")) or gear == "R"
+        turn = m.get("turn_signal")
+        if turn is not None and turn not in ("off", "left", "right", "both"):
+            raise ValueError("turn_signal must be one of off left right both")
         vs = -v if reverse else v
         yaw_cw = None
         yr = _num(m, "yaw_rate_rps", -3.0, 3.0)
@@ -204,6 +207,7 @@ class Engine:
                         "standstill": v == 0.0 and (wheels is None or not any(wheels)),
                         "wheel_speeds_mps": wheels,
                         "yaw_rate_rps": None if yaw_cw is None else round(-yaw_cw, 5),
+                        "turn_signal": turn,
                         "source": "vehicle", "tag": m.get("source")}
 
     def on_vision(self, road, now_ns):
