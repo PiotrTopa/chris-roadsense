@@ -95,6 +95,12 @@ def load_lanes_config():
     return _load_config("lanes.json", DEFAULT_CFG)
 
 
+def load_lights_config():
+    """Optional `<config dir>/lights.json`: {"lane_assign": false} switches the lane assignment of the ego
+    light (lights.py) off, back to the lateral window alone."""
+    return _load_config("lights.json", {"lane_assign": True}) or {}
+
+
 class State:
     def __init__(self, rundir, datadir=None, ring_path=None, rules="pl"):
         self.rundir = rundir
@@ -126,6 +132,7 @@ class State:
         self.lead = LeadTracker(load_lead_config())        # derived topic `lead` (lead.py)
         self.lanes = RoadGeometryTracker(load_lanes_config())   # derived topic `lanes` (lanes.py)
         self.ego_light = lights_mod.EgoLightSelector()     # the ego traffic light over time (lights.py)
+        self.ego_light.lane_assign = bool(load_lights_config().get("lane_assign", True))
 
     # ---- ingestion -------------------------------------------------------
     def on_message(self, daemon, msg, line):
@@ -175,6 +182,7 @@ class State:
             try:
                 out = self.lanes.on_road(msg)
                 if out is not None:
+                    self.ego_light.on_lanes(out)      # the lane lines the ego light is assigned by
                     self._emit("lanes", out, now)
             except Exception:
                 import logging

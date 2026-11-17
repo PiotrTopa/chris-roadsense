@@ -152,3 +152,102 @@ class EgoOverTimeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+L = lights
+
+
+class LaneAssignment(unittest.TestCase):
+    """Lane L16: which of two signal groups applies to the ego lane."""
+    F = 975.0
+    INTR = (975.0, 640.0, 360.0, 1280, 720)
+
+    def light(self, tid, state, lat, d=25.0, hits=6):
+        h = self.F * L.HOUSING_M / d
+        u = 640.0 + lat * self.F / d
+        return {"track_id": tid, "state": state, "score": 0.7, "hits": hits,
+                "box": [u - h / 6, 200.0, u + h / 6, 200.0 + h]}
+
+    def lanes(self, yl=-1.7, yr=1.7, far_left=None, far_right=None, edge_l=None, edge_r=None, ts=0):
+        xs = [0.0, 10.0, 30.0, 60.0]
+
+        def ln(y):
+            return {"present": y is not None, "y": [y] * 4 if y is not None else None}
+        return {"type": "lanes", "ts_mono_ns": ts, "x": xs, "lane_width_m": (yr - yl) if None not in (yl, yr) else None,
+                "lines": [ln(far_left), ln(yl), ln(yr), ln(far_right)], "edges": [ln(edge_l), ln(edge_r)]}
+
+    def run_(self, lights, lanes=None, **kw):
+        msg = {"type": "lights", "frame": [1280, 720], "lights": lights}
+        return L.annotate(msg, None, None, self.INTR, lanes=lanes, **kw)["ego"]
+
+    def test_left_turn_red_beside_straight_green(self):
+        # ego in the right one of two lanes: green over it, red over the left (turn) lane
+        ego = self.run_([self.light(1, "red", -3.4), self.light(2, "green", 0.2)],
+                        self.lanes(far_left=-5.1, edge_l=-5.4, edge_r=2.0))
+        self.assertEqual(ego["state"], "green")
+        self.assertTrue(ego["assign"]["conflict"])
+        self.assertGreaterEqual(ego["assign"]["confidence"], L.AMB_CONFIDENCE)
+        self.assertEqual(ego["assign"]["alt"]["state"], "red")
+        self.assertEqual(ego["assign"]["alt"]["side"], "left")
+        self.assertFalse(ego["amb"])
+        self.assertEqual(ego["agree"], 1)                 # the red head does not vote
+
+    def test_ego_in_left_turn_lane(self):
+        # the same junction from the left lane: the lane lines move, the red head is now over the ego lane
+        ego = self.run_([self.light(1, "red", 0.0), self.light(2, "green", 3.6)],
+                        self.lanes(far_right=5.1, edge_l=-2.0, edge_r=5.4))
+        self.assertEqual(ego["state"], "red")
+        self.assertEqual(ego["assign"]["alt"]["side"], "right")
+
+    def test_between_two_heads_is_ambiguous(self):
+        ego = self.run_([self.light(1, "red", -1.6), self.light(2, "green", 1.6)], self.lanes())
+        self.assertTrue(ego["assign"]["conflict"])
+        self.assertLess(ego["assign"]["confidence"], L.AMB_CONFIDENCE)
+        self.assertTrue(ego["amb"])
+
+    def test_right_post_counts_for_the_rightmost_lane(self):
+        # ego in the rightmost lane: the post at the roadside (green) against a head two lanes to the left (red)
+        ego = self.run_([self.light(1, "red", -6.5), self.light(2, "green", 4.5)],
+                        self.lanes(far_left=-5.1, edge_l=-8.6, edge_r=2.0))
+        self.assertEqual(ego["state"], "green")
+        self.assertGreater(ego["assign"]["confidence"], 0.8)
+
+    def test_no_lane_lines_uses_the_path(self):
+        ego = self.run_([self.light(1, "red", -5.0), self.light(2, "green", 0.5)])
+        self.assertEqual(ego["state"], "green")
+        self.assertEqual(ego["assign"]["basis"], "path")
+
+    def test_agreeing_heads_are_no_conflict(self):
+        ego = self.run_([self.light(1, "green", -3.4), self.light(2, "green", 0.2)], self.lanes())
+        self.assertFalse(ego["assign"]["conflict"])
+        self.assertIsNone(ego["assign"]["alt"])
+        self.assertEqual(ego["agree"], 2)
+
+    def test_lone_light_over_another_lane_is_served_and_marked(self):
+        # (with the map expecting a signal the window lets a light this far to the left through)
+        ego = self.run_([self.light(1, "red", -4.5, d=20.0)],
+                        self.lanes(yl=-1.4, yr=1.4, far_left=-4.2, edge_l=-7.2),
+                        min_relevance=L.MAP_MIN_RELEVANCE)
+        self.assertEqual(ego["state"], "red")             # never removed
+        self.assertTrue(ego["assign"].get("other_lane"))
+        self.assertTrue(ego["amb"])
+
+    def test_switched_off_is_the_old_selection(self):
+        ego = self.run_([self.light(1, "red", -3.4), self.light(2, "green", 0.2)], self.lanes(), lane_assign=False)
+        self.assertNotIn("assign", ego)
+        self.assertNotIn("slot", ego)
+
+    def test_map_lane_count_caps_the_right_side(self):
+        fr = L.lane_frame(self.lanes(far_right=5.1, edge_r=8.6), None, 20.0, lanes_forward=1)
+        self.assertEqual(fr["n_right"], 0)
+        self.assertEqual(L.lane_frame(self.lanes(far_right=5.1, edge_r=8.6), None, 20.0)["n_right"], 2)
+
+    def test_selector_reports_ambiguity_once_it_lasts(self):
+        sel = L.EgoLightSelector()
+        out = []
+        for k in range(3):
+            sel.on_lanes(self.lanes(ts=int(k * 0.33e9)))
+            msg = {"type": "lights", "ts_mono_ns": int(k * 0.33e9), "frame": [1280, 720],
+                   "lights": [self.light(1, "red", -1.6), self.light(2, "green", 1.6)]}
+            out.append(sel.annotate(msg, None, None, self.INTR)["ego"]["amb"])
+        self.assertEqual(out, [False, True, True])
