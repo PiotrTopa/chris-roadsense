@@ -7,20 +7,26 @@ directory `<dir>/<YYYYmmdd-HHMMSS>/` with
     messages.jsonl.gz   the topics as they went out on /ws, one JSON object per line, in order: `road` reduced to
                         what the trackers and the replay tools read (lane lines, road edges, leads[0], plan x / y,
                         speed, pose) with the numbers shortened, at most `road_hz` per second; `lights`, `signs`,
-                        `env`, `speed_limit`, `rules`, `fused`, `map`, `ego` (at most `ego_hz`), `calib` and
-                        one `camera` message a second, as they are. `lanes` and `lead` are not written: they are
+                        `env`, `speed_limit`, `rules`, `fused`, `map`, `ego` (at most `ego_hz`), `vehicle` (what
+                        the host says about the car), `objects` (range-sensor scans, at most `objects_hz`),
+                        `roadgeom` (the fused road geometry as consumers got it, at most `roadgeom_hz`),
+                        `calib` and one `camera` message a second, as they are. `lanes` and `lead` are not written: they are
                         derived from `road` and `ego`, and `tools/lanes_replay.py` / `tools/lead_replay.py`
                         recompute them from this file.
     frames/<seq>.jpg    the camera's preview JPEG every `frame_every_s` seconds (the file camerad already
                         writes for /preview; copied, not re-encoded): the pictures a detector replay
                         (roadsense-signs `lights_replay`, `signd_replay`) needs to say what was there to see.
 
+The file is flushed and synced to the disk every 5 s (a host that loses power keeps all but the last
+seconds). A session opened while the wall clock was wrong (a boot without a clock source) is renamed to its
+true start time when the clock is stepped.
+
 Cost: about 30 kB/s of compressed messages and one 40-110 kB JPEG a second, a few milliseconds of one little
 core per second. Old sessions are deleted, oldest first, when the directory exceeds `max_mb`. Nothing leaves
 the device. The recorder never raises into the fan-out: a full disk stops the recording, not the api.
 
-Config keys (all optional but `dir`): `max_mb` (4000), `road_hz` (20), `ego_hz` (10), `frame_every_s` (1.0;
-0 = no frames), `topics` (list; default below).
+Config keys (all optional but `dir`): `max_mb` (4000), `road_hz` (20), `ego_hz` (10), `objects_hz` (10), `roadgeom_hz` (2),
+`frame_every_s` (1.0; 0 = no frames), `topics` (list; default below).
 """
 import gzip
 import json
@@ -31,8 +37,11 @@ import time
 
 log = logging.getLogger("roadsense_api.recorder")
 
-DEFAULT_TOPICS = ("road", "lights", "signs", "env", "speed_limit", "rules", "fused", "map", "ego", "calib", "camera")
-DEFAULTS = dict(dir=None, max_mb=4000, road_hz=20.0, ego_hz=10.0, frame_every_s=1.0, topics=list(DEFAULT_TOPICS))
+DEFAULT_TOPICS = ("road", "lights", "signs", "env", "speed_limit", "rules", "fused", "map", "ego", "calib", "camera",
+                  "vehicle", "objects", "roadgeom")
+DEFAULTS = dict(dir=None, max_mb=4000, road_hz=20.0, ego_hz=10.0, objects_hz=10.0, roadgeom_hz=2.0, frame_every_s=1.0,
+                topics=list(DEFAULT_TOPICS))
+CLOCK_STEP_S = 120.0            # the wall clock moved this much against the monotonic one: re-date the session
 
 
 def load_config(config_dir=None):
@@ -97,6 +106,7 @@ class Recorder:
         self.dir = os.path.join(base, name)
         os.makedirs(os.path.join(self.dir, "frames"), exist_ok=True)
         self.fh = gzip.open(os.path.join(self.dir, "messages.jsonl.gz"), "at", compresslevel=3)
+        self._opened = (self.clock(), self.wall())
         self.prune()
         log.info("recording to %s (cap %s MB)", self.dir, self.cfg["max_mb"])
 
@@ -120,7 +130,8 @@ class Recorder:
         if self.failed or mtype not in self.topics:
             return
         now = self.clock()
-        cap = {"road": self.cfg["road_hz"], "ego": self.cfg["ego_hz"], "camera": 1.0}.get(mtype)
+        cap = {"road": self.cfg["road_hz"], "ego": self.cfg["ego_hz"], "objects": self.cfg["objects_hz"],
+               "roadgeom": self.cfg["roadgeom_hz"], "camera": 1.0}.get(mtype)
         if cap and now - self._last.get(mtype, -1e9) < 1.0 / cap - 0.005:
             return
         self._last[mtype] = now
@@ -135,12 +146,41 @@ class Recorder:
             if now - self._flush_t > 5.0:
                 self._flush_t = now
                 self.fh.flush()
+                try:
+                    os.fsync(self.fh.fileno())
+                except (OSError, ValueError, AttributeError):
+                    pass
+                self._redate(now)
             if mtype == "camera":
                 self._frame(now, line)
             if now - self._prune_t > 300.0:
                 self.prune()
         except (OSError, ValueError) as e:
             self._fail("write", e)
+
+    def _redate(self, now):
+        """The wall clock was stepped since the session was opened (it started on a stale clock): name the
+        directory after the true start time. The open file follows the rename."""
+        c0, w0 = self._opened
+        start = self.wall() - (now - c0)
+        if abs(start - w0) < CLOCK_STEP_S:
+            return
+        base = self.cfg["dir"]
+        name = time.strftime("%Y%m%d-%H%M%S", time.localtime(start))
+        new = os.path.join(base, name)
+        n = 1
+        while os.path.exists(new):
+            new = os.path.join(base, "%s-%d" % (name, n))
+            n += 1
+        try:
+            os.rename(self.dir, new)
+        except OSError as e:
+            log.warning("recorder: session not re-dated: %s", e)
+            self._opened = (c0, start)
+            return
+        log.info("recorder: clock stepped by %.0f s, session %s is now %s", start - w0, os.path.basename(self.dir), new)
+        self.dir = new
+        self._opened = (c0, start)
 
     def _frame(self, now, camera_line):
         every = self.cfg["frame_every_s"]
