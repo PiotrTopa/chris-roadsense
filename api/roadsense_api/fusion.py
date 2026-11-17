@@ -28,7 +28,9 @@ DEFAULT_CFG = dict(
     min_match_conf=0.5,          # below this the matched road is not used
     hold_cap_m=5000.0,           # a held sign limit ends after this distance at the latest
     hold_min_m=20.0,             # junctions end a sign limit only from this far past the sign
-    map_change_min_m=100.0,      # a tagged limit change this far after the sign overrides the sign
+    map_change_min_m=100.0,      # a tagged limit change this far after the sign overrides the sign ...
+    map_change_min_conf=0.6,     # ... only from a match this confident and not ambiguous (a match flipping between
+    map_change_hold_m=40.0,      #     two roads is not a change of the limit), once the new limit has held this far
     junction_pass_m=10.0,
     lane_prob=0.5, lane_prob_inner=0.3,
     lanes_max_age_s=1.0,         # a `lanes` (tracker) message older than this is not used for the ego lane
@@ -199,8 +201,17 @@ class Fusion:
             elif m is not None and h["had_map"]:
                 limited_access = road.get("class") in ("motorway", "motorway_link") or road.get("motorroad") \
                     or road.get("expressway")
-                if map_tagged is not None and map_tagged != h["map_tagged"] and map_tagged != h["value"] \
-                        and (travelled or 0.0) >= c["map_change_min_m"]:
+                differs = map_tagged is not None and map_tagged != h["map_tagged"] and map_tagged != h["value"]
+                # the new limit has to come from a sure match and to last: on the first recorded drive with a
+                # position the match flipped between two roads and ended the sign 24 times in six minutes
+                sure = mc >= c["map_change_min_conf"] and not (m.get("match") or {}).get("ambiguous")
+                chg = h.get("chg")
+                if not differs:
+                    h["chg"] = chg = None
+                elif sure and (chg is None or chg[0] != map_tagged):
+                    h["chg"] = chg = (map_tagged, modo)
+                if differs and sure and chg is not None and (travelled or 0.0) >= c["map_change_min_m"] and (
+                        modo is None or chg[1] is None or modo - chg[1] >= c["map_change_hold_m"]):
                     h["ended"] = "map limit changed to %d after the sign" % map_tagged
                 elif not limited_access and h["armed"] and self.junctions_passed > h["junctions"]:
                     h["ended"] = "junction passed (map)"

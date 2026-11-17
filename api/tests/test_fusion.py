@@ -168,6 +168,34 @@ class FusionTest(unittest.TestCase):
         self.assertEqual((sl["limit_kmh"], sl["source"]), (50, "map"))
         self.assertIn("map limit changed", sl["note"])
 
+    def test_a_flipping_match_does_not_end_the_sign(self):
+        """A map limit that differs for a moment (the match jumps to a side road and back), comes from a doubtful
+        or ambiguous match, or has only just appeared, is not a change of the limit."""
+        f = Fusion()
+        self.fuse(f, t=0, map=map_msg(1, 0, odo=0, limit=50), speed_limit=vis_msg(30, "sign", past_sign_m=30))
+        seq = 1
+        for i in range(12):                                   # 50 <-> 20 every 15 m, far past the sign
+            seq += 1
+            odo = 200 + 15 * i
+            out = self.fuse(f, t=20 + i, map=map_msg(seq, 20 + i, odo=odo, limit=20 if i % 2 else 50),
+                            speed_limit=vis_msg(30, "sign", past_sign_m=odo + 30))
+            self.assertEqual((out["speed_limit"]["limit_kmh"], out["speed_limit"]["source"]), (30, "sign"), i)
+        for conf, amb in ((0.55, False), (0.9, True)):        # a steady other limit from a match that is not sure
+            for i in range(6):
+                seq += 1
+                odo = 400 + 20 * i
+                m = map_msg(seq, 40 + i, odo=odo, limit=20, conf=conf)
+                m["match"]["ambiguous"] = amb
+                out = self.fuse(f, t=40 + i, map=m, speed_limit=vis_msg(30, "sign", past_sign_m=odo + 30))
+                self.assertEqual(out["speed_limit"]["limit_kmh"], 30)
+        out = None
+        for i in range(4):                                    # sure and lasting: now it is a change
+            seq += 1
+            odo = 600 + 20 * i
+            out = self.fuse(f, t=60 + i, map=map_msg(seq, 60 + i, odo=odo, limit=20),
+                            speed_limit=vis_msg(30, "sign", past_sign_m=odo + 30))
+        self.assertEqual((out["speed_limit"]["limit_kmh"], out["speed_limit"]["source"]), (20, "map"))
+
     def test_sign_agreeing_with_the_map_gains_confidence(self):
         a = self.fuse(Fusion(), map=map_msg(limit=40), speed_limit=vis_msg(40, "sign", conf=0.6))["speed_limit"]
         b = self.fuse(Fusion(), map=map_msg(limit=70), speed_limit=vis_msg(40, "sign", conf=0.6))["speed_limit"]
