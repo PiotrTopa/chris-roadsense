@@ -83,6 +83,14 @@ supercombo v0.9.7 is used first: single model, 54 ms fp32 on the phone, outputs 
 - Exposure metadata from the soft ISP is unreliable (no sensor helper for IMX363); image quality itself is fine.
 - Calibration is a static config file; auto pitch/yaw from the model's pose is phase 2.
 - api and daemons run as root (phase 1); a system user with RemoveIPC=no comes later.
+
+## One road geometry for a consumer that draws the road (lane L17, 2026-11-17; docs/lanes/L17-road-geometry.md)
+- [x] mapd `ahead.geometry`: the most likely path, the side roads at its junctions and the first roundabout as polylines in the frame of the matched position; on a ring the path takes the announced exit
+- [x] topic `roadgeom` / `/v1/roadgeom` (`api/roadsense_api/roadgeom.py`): the camera's lane centre near the car, the map's road beyond, side roads and a roundabout in the car's frame, the map part fitted to the camera every frame and withheld when the two disagree; provenance and confidence per part; `tools/roadgeom_replay.py`, `tools/roadgeom_drive.py`
+- [x] optional driver intent: `turn_signal` in the position input, relayed in `ego`, selects the side road or roundabout exit
+- [ ] first drives with a real position: agreement rate of camera and map, the fit on wide roads
+- [ ] the turn-signal convention at roundabouts against real use
+
 - int8 quantisation tried and rejected (2026-10-21, docs/QUANTIZATION.md): the FastViT backbone's heavy-tailed activations make every int8 variant fail the lane-accuracy gate, and on ARM the QDQ overhead eats the gain anyway. fp32 stays. (The 2.09 GHz big-core cap that came out of it was removed on 2026-10-26 under the speed-first ruling: modeld runs on the GPU and the fan holds the die near 60 C; docs/lanes/L3-speed.md.)
 
 ## GPU backend decision (2026-10-21)

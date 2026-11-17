@@ -557,6 +557,7 @@ file without dependencies that a feeder may copy; nothing is imported from roads
 | `yaw_rate_rps` | rad/s, positive = turning left (counter-clockwise seen from above, ISO 8855) | no | from a gyroscope / yaw-rate sensor |
 | `wheel_speeds_mps` | m/s, `[front left, front right, rear left, rear right]`, >= 0 | no | yaw rate is derived from the rear pair and `track_m` |
 | `steering_wheel_deg` | degrees of the steering wheel, positive = left | no | yaw rate is derived with `steering_ratio` and `wheelbase_m` (kinematic bicycle) |
+| `turn_signal` | `"off"`, `"left"`, `"right"`, `"both"` | no | the turn-signal lamps as the driver set them (since 2026-11-17). Relayed in `ego`; the api's road geometry uses it as the driver's intent at the next junction. A host that cannot read the signal leaves the field out |
 | `source` | string | no | tag, e.g. `"prius-can"` (reported back) |
 
 Yaw rate is taken from the first of `yaw_rate_rps`, `wheel_speeds_mps`, `steering_wheel_deg` that is
@@ -594,6 +595,7 @@ as before.
  "gear":"D","reverse":false,       // gear: null when the feeder sends none
  "wheel_speeds_mps":[3.2,3.2,3.2,3.2],   // as fed, or null
  "yaw_rate_rps":0.004,             // as fed or derived (wheels, steering angle); positive = turning left; null = unknown
+ "turn_signal":null,               // as fed: "off" | "left" | "right" | "both"; null when the feeder sends none
  "source":"vehicle","tag":"prius-can"}
 ```
 `standstill` is as good as the car's sensors: wheel-speed sensors read zero below some creep speed (the feeder
@@ -681,7 +683,8 @@ for 150 m.
           "road_change":{"dist_m":1210.0,"class":"secondary","name":null,"ref":"414"},
           "shape":{"s":[0,20,..600],"x":[..],"y":[..],"curvature":[..]},   // road ahead beyond camera range; x forward, y right (modeld's frame), origin at the matched position; curvature 1/m, positive = bending right
           "curves":[{"start_m":300.0,"apex_m":380.0,"end_m":480.0,"min_radius_m":150.0,"direction":"left","angle_deg":-88.0}],   // radius below 500 m, at most 4
-          "junction_view":{...}},          // the first major junction or roundabout within 400 m on the path, or null (below)
+          "junction_view":{...},           // the first major junction or roundabout within 400 m on the path, or null (below)
+          "geometry":{...}},               // the path, its side roads and the first roundabout as geometry (below)
 "proc": {"step_ms":0.9,"cpu_pct":0.8,"feeders":1,"tile_loads":14}
 ```
 
@@ -719,6 +722,31 @@ first found on a ring gets a view with the car at 180 and no path exit. The view
 likely path: with `confidence` near 0.5 the path, and therefore the highlighted arm, is a guess. Turn lanes
 and turn restrictions are not in the pack. Cost: `look_ahead` with the view 0.53 ms on the laptop (Poland pack,
 Opole centre, 660 positions); not yet measured on the phone.
+
+**Road geometry** (`ahead.geometry`, lane L17; `context.geometry`): the road around the most likely path as
+polylines, for a consumer that draws it. Frame of `shape`: x forward along the matched bearing, y right, metres,
+origin at the matched position. The pack has no lane-level geometry: a road is its centre line and a lane
+count. The api turns this into the car's frame and joins it with the camera (topic `roadgeom`, below); a
+consumer should read that topic, not this object.
+
+```
+{"path": {"s":[0,4,..200,220,..600], "x":[..], "y":[..]},     // the most likely path: every 4 m up to 200 m, every 20 m up to 600 m
+ "lanes": [{"dist_m":0.0,"forward":1,"backward":1,"source":"tagged"}],   // lane counts along the path, one entry per change
+ "branches": [ {"dist_m": 171.0,            // path distance of the node it leaves from (null: an arm of the ring beyond the path's exit)
+                "pts": [[171.0,0.4],[171.3,6.4],..],   // from the node outwards, at 0, 6, 12, 20, 32, 45 m of the side road (or to its end)
+                "class":"tertiary","minor":false,      // minor: a service road or restricted access
+                "exit":true,"entry":true,"oneway":false,   // exit: can be driven into; entry: traffic comes out of it
+                "lanes":2,"lanes_source":"assumed",
+                "ring":false,               // an arm of the roundabout: then also
+                "ring_m": 203.0,            //   its place along the ring as a path distance (driving order)
+                "path": false} ],           //   the path itself uses this road (entry or exit)
+ "ring": {"centre":[214.0,0.3],"radius_m":14.1,"lanes":null,"on_ring":false,
+          "entry_m":200.0,"exit_m":244.0}}  // where the path enters and leaves it; entry_m null on the ring
+```
+Side roads are listed for the junction nodes of the path within 260 m (at most 20), the ring is the first
+roundabout within that distance. On a ring the path takes the exit that was announced before the entry (the
+most likely path of a position first found on a ring has no reason to leave it); the junction view keeps its
+picture the same way.
 
 Speed limit: the `maxspeed` tag of the matched direction when present, else the Polish statutory limit
 (`mapd/roadsense_mapd/limits/pl.json`: built-up 50, living street 20, outside 90, dual carriageway with two
@@ -1038,6 +1066,76 @@ stands on them.
 Constants: `DEFAULT_CFG` in `lanes.py`, overridable per key in `<config dir>/lanes.json`. Replay and
 measurement on recorded `road` lines: `tools/lanes_replay.py ROAD.jsonl[.gz] [--every N] [--lanes-total N
 --lanes-forward N] [--out LANES.jsonl]`.
+
+### api-derived topic: `{"type":"roadgeom", ...}`
+`api/roadsense_api/roadgeom.py` joins everything that is known about the shape of the road ahead into one
+geometry in the car's frame (x forward from the camera, y right, metres): the camera's lane as far as the
+camera knows it, the map's road beyond, the side roads of the junctions ahead and a roundabout as a ring. One
+message per `lanes` message (10-14 per second), 1-4 kB; `/v1/roadgeom`. Added 2026-11-17
+(docs/lanes/L17-road-geometry.md). It is for a consumer that draws the road; `lanes` stays the camera's own
+result and `map` the map's.
+
+```
+"source": "vision" | "vision+map",
+"lane_width_m": 3.4,
+"vision": {"from": "lanes|line|plan|none", "reach_m": 99.2},     // what the camera's centre line is made of and how far it is used
+"motion": {"source": "vehicle|vision", "speed_mps": 13.1, "yaw_rate_rps": 0.004},
+"map": {"used": true, "why": null,           // why not: no_map, no_position, off_road, low_match_confidence, position_accuracy, no_geometry, stale, advance, no_fit, disagree, off_path
+        "match_confidence": 0.93, "age_s": 0.31, "advance_m": 4.1, "hacc_m": 2.9, "state": "good",
+        "synthetic": false,                  // the position is made up (map.input.synthetic): a consumer in a car must not draw the map part
+        "fit": {"dy_m": 0.21, "dyaw_deg": -0.8, "rms_m": 0.12, "ok": true, "to_m": 50.0},   // this frame's fit, or {"held_s": 2.1}
+        "align": {"dy_m": 0.18, "dyaw_deg": -0.7},     // the low-passed fit that is applied
+        "way_offset_m": 1.7, "off_path_deg": 0.4, "ring_slide_m": 0.0},
+"centre": {"s": [..], "x": [..], "y": [..],  // the ego lane's centre line as a polyline, s = distance along it
+           "conf": [..],                     // camera part: from the tracker's sigma; map part: confidence of the path up to the point
+           "src": "vvvvvvbbbbmmmm",          // per point: v camera, b camera blended into the map, m map
+           "vision_to_m": 99.2,              // the camera's part ends here
+           "end": "horizon|path_end|dead_end|no_way_on|intent"},
+"branches": [ {"dist_m": 71.0, "pts": [[71.2,-1.7],..], "class": "tertiary", "minor": false, "exit": true, "entry": true,
+               "lanes": 2, "ring": false, "side": "left|right", "way": false} ],     // way: chosen by the driver's turn signal
+"ring": {"centre": [44.1,-1.6], "radius_m": 14.1, "lanes": null, "on_ring": false, "entry_m": 30.2, "exit_m": 74.3},
+"junction": {"kind": "roundabout", "dist_m": 30.2, "control": "give_way", "confidence": 1.0},   // head of map.ahead.junction_view, distance advanced
+"way": {"source": "map", "confidence": 0.58} | {"source": "intent", "turn": "right", "branch": 1},
+"intent": null | {"turn": "right", "source": "turn_signal", "at_m": 33.4}
+```
+`seq`, `ts_mono_ns`, `ts_real_ns` are those of the `road` message. Without a usable map the message carries
+the camera's part alone (`source: "vision"`, `map.used: false` and the reason, no branches, no ring).
+
+* **Camera part.** The centre of the ego lane: the middle of the two tracked inner lines (`lanes`), one line
+  and the lane width, or the model's planned path (`road.plan`) when no line is present. It is used as far as
+  the tracker's own sigma stays under 0.9 m, 100 m at most.
+* **Map part.** `map.ahead.geometry` arrives twice a second in the frame of the matched position. Between two
+  messages it is carried by the distance driven (vehicle speed when a host feeds it): the car is taken to be
+  on the most likely path, that far along it, with the heading of the position filter carried on by the yaw
+  rate (`ego.yaw_rate_rps`, else the model's). On a ring the car is slid along the path, by at most 14 m, to
+  where the ring runs in the car's direction: 5 m of position error along a ring of 14 m radius are 20
+  degrees, and the heading is known to 2.
+* **Joining.** What the map cannot know (where in the carriageway the car is; a few metres and degrees of
+  error) is taken from the camera: the offset and the angle between the camera's centre line and the map's path
+  over 4-50 m are fitted every frame, low-passed (0.8 s) and applied to all map geometry. The fit must stay
+  within 7 m, 9 degrees and a residual of 0.5 m + 1.2 % of its length; the map part appears after 1 s of
+  agreement and goes after 0.5 s without (`why: "disagree"`), or when the car's heading leaves the path's
+  direction by more than 35 degrees (`off_path`). Without a camera centre to compare with (lines gone in a
+  junction, on a ring) the last fit is held for 150 m. Side roads and the ring are moved from the way's centre
+  line to where they are for a car in its lane (`way_offset_m`, from the lane count and the lane seen to the
+  right). The centre line follows the camera up to `vision_to_m` (blended into the map over the last 15 m)
+  and the map's path beyond; before a ring the camera's part ends 3 m before the entry.
+* **Honesty.** `centre.conf` of a map point is the confidence of the most likely path up to it: it steps down
+  at every junction where the way on is a guess, and a consumer should stop drawing where it gets low (the
+  reference consumer stops at 0.5). `way.source` says whether the way through the next junction is the map's
+  guess or the driver's signal.
+* **Driver intent** (optional). With `ego.turn_signal` `left` / `right` (a host that reads the turn-signal
+  lamps feeds it with `motion`), the nearest side road on that side within 150 m that can be driven into is
+  the way on (service roads last): `branches[].way`, `way.source: "intent"`, and the centre line ends at that
+  junction. On and before a roundabout `right` is the next exit; `left` is the first exit beyond the one the
+  map's path takes, reached on round the ring (a convention of how drivers signal, not a rule). Without the
+  signal nothing changes.
+
+Cost on the laptop: 0.09 ms per message without a map, 0.36 ms with one, plus 0.17 ms per `map` message; on the phone: see
+docs/lanes/L17-road-geometry.md. Constants: `DEFAULT_CFG` in `roadgeom.py`, overridable per key in
+`<config dir>/roadgeom.json`. Tools: `tools/roadgeom_replay.py SESSION.jsonl.gz` (a recorded drive through the
+tracker and the fusion), `tools/roadgeom_drive.py --network tour [--turn T0:T1:left|right] [--out REC]` (a
+synthetic drive over a made-up network or a pack with a synthetic camera, compared with the truth).
 
 ### Drive recorder (optional)
 `api/roadsense_api/recorder.py`, off unless `<config dir>/recorder.json` names a directory

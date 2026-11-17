@@ -86,6 +86,30 @@ the regmap debugfs is read-only, so the fix is a reboot with the camera already 
 healthy state is 0x1109 = 0x0a. Check with
 `sudo grep -E "^(1109|1110|1140):" /sys/kernel/debug/regmap/0-02/registers`.
 
+## USB drop-outs after power-up
+
+The DVR camera leaves the USB bus once after every power-up: it enumerates 2-4 s after its hub
+gets power, disconnects 24-39 s later and is back after 4-5 s. On some cold starts (first power-up
+after hours unpowered) it stayed away about 120 s, came back for 2 s, left again for 4 s. While it
+is away no block device exists; `camerad-dvr --auto` retries every second and resumes on its own.
+A host controller can move this sequence ahead of the drive by powering the camera earlier
+(see docs/ARCHITECTURE.md "Running under a host controller").
+
+Port power cycle tested and rejected (hub VIA `2109:2817`, advertises per-port power switching,
+`wHubCharacteristic 0x00e9`; `uhubctl` 2.5.0; kernel 7.1):
+
+| test | result |
+|---|---|
+| `uhubctl -l <hub> -p <port> -a off` | status `0000 off`, but the kernel re-powered the port within about 1 s |
+| sysfs `<hub>:1.0/<hub>-port<N>/disable` = 1 for 4 s | port held `0000 off`; the camera was back 1 s after `disable` = 0 and did not leave the bus again in the next 54 s |
+
+A real power-up takes 2-4 s to enumerate and is always followed by the drop-out, so the camera
+kept running through the port switch (the hub does not cut VBUS, or the camera bridges a short
+cut). A port cycle cannot restart the camera and so cannot end its long absence; no watchdog is
+shipped. Restarting the camera means cutting the hub's own supply, which drops every other
+device on the hub and restarts the camera's power-up sequence; that is a decision for the host
+controller.
+
 ## Open items for the phone
 
 - Measure latency on the phone with `tools/ledlat` (the firmware is for the RP2040-Zero; the
