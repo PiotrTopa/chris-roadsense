@@ -207,9 +207,19 @@ async def h_roadgeom(req):
     return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
 
 
+async def h_vehicle(req):
+    """The car as the host describes it: mapd's `vehicle` message plus the last scan of every range sensor."""
+    st = req.app["state"]
+    msg = st.latest.get("vehicle")
+    if not msg:
+        return _json({"error": "no vehicle message yet (mapd not running)"}, 503)
+    return _json(dict(msg, objects=list(st.objects.values())))
+
+
 async def h_position(req):
-    """Position input over HTTP: the body is one message, a JSON array of messages, or JSON lines
-    (`gnss` / `motion` / `reset`, position input API v1). Forwarded to mapd's position.sock; mapd validates."""
+    """Vehicle input over HTTP (`POST /v1/vehicle`, and under its first name `POST /v1/position`): the body is
+    one message, a JSON array of messages, or JSON lines (docs/VEHICLE_API.md). Forwarded to mapd's
+    position.sock; mapd validates."""
     try:
         text = (await req.text()).strip()
     except Exception:
@@ -404,6 +414,8 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
     app.router.add_get("/v1/lanes", h_lanes)
     app.router.add_get("/v1/roadgeom", h_roadgeom)
     app.router.add_post("/v1/position", h_position)
+    app.router.add_get("/v1/vehicle", h_vehicle)
+    app.router.add_post("/v1/vehicle", h_position)
     app.router.add_get("/v1/camera", h_camera)
     app.router.add_get("/v1/health", h_health)
     app.router.add_get("/v1/frame.jpg", h_frame)
@@ -434,7 +446,8 @@ pre{margin:0;white-space:pre-wrap}
 <h2>speed limit</h2><pre id="speed">...</pre>
 <h2>traffic lights</h2><pre id="lights">...</pre>
 <h2>map</h2><pre id="map">...</pre>
-<h2>fused (map + camera)</h2><pre id="fused">...</pre></section>
+<h2>fused (map + camera)</h2><pre id="fused">...</pre>
+<h2>vehicle (from the host)</h2><pre id="vehicle">...</pre></section>
 </main><script>
 const $ = id => document.getElementById(id);
 const f = (v, d=1) => v == null ? "-" : Number(v).toFixed(d);
@@ -533,6 +546,22 @@ async function tick(){
         `lanes ${fu.lanes.count == null ? "-" : fu.lanes.count}  ego ${fu.lanes.ego_index == null ? "-" : fu.lanes.ego_index}  oncoming left ${fu.lanes.oncoming_left == null ? "-" : fu.lanes.oncoming_left}  (${fu.lanes.source})`,
         `tunnel ${fu.tunnel.in_tunnel}` + (fu.tunnel.exit_in_m != null ? `  exit in ${f(fu.tunnel.exit_in_m, 0)} m` : "") + `  (${fu.tunnel.source})`
       ].join("\\n") : "no data";
+    const vh = await get("/v1/vehicle");
+    if (vh && vh.present) {
+      const sg = k => vh.signals[k] ? ` [${vh.signals[k].quality}, ${vh.signals[k].source || "-"}]` : "";
+      const row = (g, k) => vh[g][k] == null ? null : `${k} ${JSON.stringify(vh[g][k])}${sg(k)}`;
+      $("vehicle").textContent = [
+        `feeders: ${vh.feeders.map(x => x.name || "?").join(", ") || "-"}`,
+        `speed ${f(vh.motion.speed_mps * 3.6, 0)} km/h${vh.motion.standstill ? " (standstill)" : ""}  gear ${vh.motion.gear || "-"}  ` +
+          `yaw ${f(vh.motion.yaw_rate_rps, 3)} rad/s (${vh.motion.yaw_source || "-"})`,
+        ...["steering_wheel_deg", "accel_long_mps2", "accel_lat_mps2"].map(k => row("motion", k)),
+        ...Object.keys(vh.controls).map(k => row("controls", k)),
+        ...Object.keys(vh.body).map(k => row("body", k)),
+        ...vh.sensors.map(x => `sensor ${x.id} (${x.kind}): ${x.objects} objects, ${f(x.hz)} Hz, age ${f(x.age_s, 2)} s`),
+        `calibration: yaw scale ${f(vh.calibration.yaw_rate.scale.value, 3)} (n ${vh.calibration.yaw_rate.scale.n})  ` +
+          `speed scale ${f(vh.calibration.speed.scale.value, 3)} (n ${vh.calibration.speed.scale.n})`
+      ].filter(Boolean).join("\\n");
+    } else $("vehicle").textContent = vh ? "no host feeds vehicle data (vision only)" : "mapd not running";
   } catch (e) { $("health").textContent = "api unreachable"; }
 }
 tick(); setInterval(tick, 1000);

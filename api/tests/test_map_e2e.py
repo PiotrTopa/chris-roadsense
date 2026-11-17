@@ -186,6 +186,51 @@ class MapE2E(unittest.TestCase):
         self.wait(lambda: self.get("/v1/fused")["map"]["available"] is False, 5)
         self.assertIsNone(self.get("/v1/fused")["position"])
 
+    def test_6_vehicle_topic_and_input_over_http(self):
+        """`vehicle`: what a host tells roadsense about the car, over the socket or `POST /v1/vehicle`, served
+        on `GET /v1/vehicle` and the WebSocket; the brake reaches the lead message; range-sensor scans come
+        through as `objects`."""
+        v = self.get("/v1/vehicle")
+        self.assertEqual((v["type"], v["api"]), ("vehicle", 1))
+        code, rep = self.post("/v1/vehicle", json.dumps([
+            {"type": "vehicle", "name": "E2E car", "camera": {"x_m": 1.9, "y_m": 0.0, "z_m": 1.2},
+             "sensors": [{"id": "radar0", "kind": "radar", "x_m": 3.7, "y_m": 0.0}]},
+            {"type": "controls", "brake": True, "turn_signal": "right", "source": "e2e"},
+            {"type": "body", "low_beam": True, "wipers": "low", "source": "e2e"},
+            {"type": "objects", "sensor": "radar0", "objects": [{"id": 3, "range_m": 20.0, "azimuth_deg": 0.0}]},
+            {"type": "controls", "brake": "yes"}]))
+        self.assertEqual((code, rep["accepted"], [r["index"] for r in rep["rejected"]]), (200, 4, [4]))
+        self.assertIn("brake must be true or false", rep["rejected"][0]["reason"])
+        self.wait(lambda: self.get("/v1/vehicle")["controls"]["brake"] is True and self.get("/v1/vehicle")["objects"], 5)
+        v = self.get("/v1/vehicle")
+        self.assertEqual((v["present"], v["controls"]["turn_signal"], v["body"]["wipers"], v["description"]["name"]),
+                         (True, "right", "low", "E2E car"))
+        self.assertEqual(v["signals"]["brake"]["source"], "e2e")
+        self.assertEqual((v["objects"][0]["sensor"], v["objects"][0]["frame"], v["objects"][0]["objects"][0]["x_m"]),
+                         ("radar0", "camera", 21.8))
+        self.wait(lambda: self.get("/v1/lead")["ego"]["brake"] is True, 5)
+        h = self.get("/v1/health")["vehicle"]
+        self.assertEqual((h["present"], "brake" in h["signals"], h["sensors"]), (True, True, ["radar0"]))
+
+        import aiohttp
+
+        async def go():
+            seen = {}
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(self.base + "/ws?topics=vehicle,objects") as ws:
+                    await asyncio.sleep(0.3)
+                    await s.post(self.base + "/v1/vehicle", data=json.dumps(
+                        {"type": "objects", "sensor": "radar0", "objects": []}))
+                    for _ in range(20):
+                        m = json.loads((await asyncio.wait_for(ws.receive(), 5)).data)
+                        seen[m["type"]] = m
+                        if len(seen) == 2:
+                            break
+            return seen
+        seen = asyncio.run(go())
+        self.assertEqual(set(seen), {"vehicle", "objects"})
+        self.assertEqual(seen["objects"]["objects"], [])
+
     def test_4_lead_topic_uses_vehicle_motion_from_the_feeder(self):
         """`lead`: vision only without a feeder; with `motion` on position.sock mapd relays it (ego.sock) and
         the tracker takes the car's speed from it. The vision topics stay as they are."""

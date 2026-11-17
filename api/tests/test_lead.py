@@ -405,7 +405,7 @@ class Inputs(unittest.TestCase):
         for k in ("type", "seq", "ts_mono_ns", "ts_real_ns", "present", "mode", "track_id", "source", "age_s", "dist_m",
                   "dist_std_m", "dist_filter_std_m", "lateral_m", "v_rel_mps", "v_rel_std_mps", "v_lead_mps",
                   "a_lead_mps2", "time_gap_s", "ttc_s", "standing", "pending_change", "prob", "departed", "departure",
-                  "event", "ego", "vision", "gap_m"):
+                  "event", "ego", "vision", "gap_m", "radar", "vision_scale"):
             self.assertIn(k, o)
         self.assertAlmostEqual(o["gap_m"], o["dist_m"] - 1.5, places=2)
         self.assertAlmostEqual(o["time_gap_s"], o["gap_m"] / o["ego"]["speed_mps"], delta=0.02)
@@ -414,6 +414,125 @@ class Inputs(unittest.TestCase):
         self.assertEqual(o["ts_mono_ns"], int(s.t * NS))
         none = LeadTracker().on_road({"type": "road", "seq": 1, "ts_mono_ns": NS, "leads": [{"prob": 0.01, "x": [80.0]}]})
         self.assertEqual(set(none) - {"gap_m"}, set(o) - {"gap_m"})
+
+
+class Radar(unittest.TestCase):
+    """Range-sensor fusion (`radar_fusion`): synthetic radar scans next to the synthetic camera output. The
+    camera's distance is scaled by 1.15 (an uncalibrated focal length), the radar is right to 0.15 m."""
+
+    CAM_SCALE = 1.15
+
+    def scene(self, gap=30.0, v=20.0, fusion=True, seed=5, **kw):
+        s = Scene(gap, v, v, seed=seed, **kw)
+        s.attach(LeadTracker({"radar_fusion": fusion}))
+        s.radar_on = True
+        s.clutter = []                 # other objects: (x offset from the lead, y)
+        rnd = random.Random(seed + 100)
+        road0 = s.road
+
+        def road():
+            if s.radar_on:
+                objs = [{"id": 1, "x_m": round(s.gap + rnd.gauss(0, 0.15), 2), "y_m": 0.2,
+                         "range_rate_mps": round(s.vl - s.ve + rnd.gauss(0, 0.1), 2)}]
+                objs += [{"id": 10 + i, "x_m": s.gap + dx, "y_m": y, "range_rate_mps": -s.ve} for i, (dx, y) in enumerate(s.clutter)]
+                s.tr.on_objects({"type": "objects", "ts_mono_ns": int((s.t - 0.03) * NS), "sensor": "radar0",
+                                 "kind": "radar", "frame": "camera", "objects": objs})
+            m = road0()
+            ld = m["leads"][0]
+            ld["x"] = [x * self.CAM_SCALE for x in ld["x"]]
+            return m
+        s.road = road
+        return s
+
+    def test_radar_range_and_closing_speed_replace_the_cameras(self):
+        s = self.scene()
+        rows = s.run(8.0)[40:]
+        o = rows[-1][3]
+        self.assertEqual((o["source"], o["radar"]["sensor"], o["radar"]["id"]), ("radar+vision+ego", "radar0", 1))
+        err = [abs(o["dist_m"] - g) for _, g, _, o in rows]
+        self.assertLess(max(err), 0.5)                              # the camera alone is 4.5 m off at 30 m
+        self.assertAlmostEqual(o["vision"]["dist_m"], 30.0 * self.CAM_SCALE, delta=2.0)      # the raw camera value stays visible
+        self.assertAlmostEqual(o["vision_scale"], 1.0 / self.CAM_SCALE, delta=0.02)
+        self.assertLess(o["dist_std_m"], 0.6)
+        vis = self.scene(fusion=False).run(8.0)[-1][3]              # the flag is off: scans are ignored
+        self.assertEqual((vis["source"], vis["radar"], vis["vision_scale"]), ("vision+ego", None, None))
+        self.assertGreater(abs(vis["dist_m"] - 30.0), 3.0)
+
+    def test_closing_is_seen_sooner_and_without_lag(self):
+        s = self.scene(gap=40.0)
+        s.run(4.0)
+        s.al = -3.0                                                 # the lead brakes
+        rows = s.run(1.5)
+        o = rows[-1][3]
+        self.assertAlmostEqual(o["v_rel_mps"], s.vl - s.ve, delta=0.5)
+        self.assertAlmostEqual(o["dist_m"], s.gap, delta=0.5)
+        self.assertIsNotNone(o["ttc_s"])
+
+    def test_fallback_to_vision_is_clean(self):
+        s = self.scene()
+        s.run(6.0)
+        tid = s.rows[-1][3]["track_id"]
+        s.radar_on = False                                          # the radar goes away (sensor fault, feeder stopped)
+        rows = s.run(6.0)
+        srcs = [o["source"] for _, _, _, o in rows]
+        self.assertEqual(srcs[-1], "vision+ego")
+        self.assertTrue(all(o["present"] and o["track_id"] == tid for _, _, _, o in rows))       # the same track, no restart
+        self.assertTrue(all(o["radar"] is None for _, _, _, o in rows[6:]))
+        # the learned scale keeps the camera's distance where the radar had it: no 4.5 m step
+        self.assertLess(max(abs(o["dist_m"] - g) for _, g, _, o in rows), 1.5)
+        events = {o["event"]["kind"] for _, _, _, o in rows if o["event"]}
+        self.assertEqual(events, {"acquired"})
+
+    def test_no_feeder_no_change(self):
+        """With the flag on and no scans the tracker is the vision tracker, message for message."""
+        a, b = Scene(25.0, 15.0, 15.0, seed=7), Scene(25.0, 15.0, 15.0, seed=7)
+        a.attach(LeadTracker({"radar_fusion": True}))
+        b.attach(LeadTracker())
+        self.assertEqual([o for _, _, _, o in a.run(10.0)], [o for _, _, _, o in b.run(10.0)])
+
+    def test_other_objects_are_not_taken_for_the_lead(self):
+        s = self.scene()
+        s.clutter = [(-12.0, 3.4), (2.0, -3.5), (25.0, 0.0), (-20.0, 0.3)]     # next lanes, a far car, a near one out of the gate
+        rows = s.run(8.0)[40:]
+        self.assertTrue(all(o["radar"]["id"] == 1 for _, _, _, o in rows))
+        self.assertLess(max(abs(o["dist_m"] - g) for _, g, _, o in rows), 0.5)
+
+    def test_camera_loses_the_lead_radar_keeps_it_for_a_while(self):
+        s = self.scene()
+        s.run(5.0)
+        s.prob = 0.05                                               # glare: the camera sees no lead
+        rows = s.run(4.0)
+        self.assertTrue(all(o["present"] for _, _, _, o in rows))
+        self.assertEqual(rows[-1][3]["source"], "radar+ego")
+        self.assertAlmostEqual(rows[-1][3]["dist_m"], s.gap, delta=0.5)
+        rows = s.run(3.0)                                           # ... but not for ever: the camera says which vehicle is the lead
+        self.assertFalse(rows[-1][3]["present"])
+        # and a radar alone never starts a track
+        s2 = self.scene()
+        s2.prob = 0.05
+        self.assertFalse(any(o["present"] for _, _, _, o in s2.run(5.0)))
+
+    def test_stale_or_unplaced_scans_are_ignored(self):
+        tr = LeadTracker({"radar_fusion": True})
+        tr.on_objects({"type": "objects", "ts_mono_ns": NS, "sensor": "r", "kind": "radar", "frame": "sensor", "objects": []})
+        tr.on_objects({"type": "objects", "ts_mono_ns": NS, "sensor": "u", "kind": "ultrasonic", "frame": "camera", "objects": []})
+        tr.on_objects({"type": "objects", "sensor": "r", "kind": "radar", "frame": "camera", "objects": None})
+        tr.on_objects(None)
+        self.assertEqual(tr.scans, {})
+        s = self.scene()
+        s.run(3.0)
+        s.radar_on = False
+        s.tr.scans["radar0"] = (int((s.t - 5.0) * NS), [{"x_m": 30.0, "y_m": 0.0}])       # an old scan stays around
+        self.assertIsNone(s.run(1.0)[-1][3]["radar"])
+
+    def test_brake_is_passed_on(self):
+        s = Scene(20.0, 0.0, 0.0).attach(LeadTracker())
+        self.assertIsNone(s.run(1.0)[-1][3]["ego"]["brake"])
+        s.tr.on_vehicle({"type": "vehicle", "ts_mono_ns": int(s.t * NS), "controls": {"brake": True}})
+        self.assertIs(s.run(1.0)[-1][3]["ego"]["brake"], True)
+        self.assertIsNone(s.run(4.0)[-1][3]["ego"]["brake"])        # stale: unknown, not "released"
+        s.tr.on_vehicle({"type": "vehicle", "ts_mono_ns": int(s.t * NS), "controls": {"brake": None}})
+        self.assertIsNone(s.run(0.5)[-1][3]["ego"]["brake"])
 
 
 class RealSpans(unittest.TestCase):

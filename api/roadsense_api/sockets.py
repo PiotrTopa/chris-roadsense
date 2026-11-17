@@ -53,4 +53,7 @@ def start_clients(state, rundir, daemons):
     if "mapd" in daemons:       # the car's own motion as mapd accepted it (`ego` messages), for the lead tracker
         tasks.append(asyncio.create_task(daemon_client(state, "mapd", os.path.join(rundir, "ego.sock"), track=False,
                                                        backoff_max=2.0), name="sock-ego"))
+        # the car as the host describes it (`vehicle`) and the scans of its range sensors (`objects`)
+        tasks.append(asyncio.create_task(daemon_client(state, "mapd", os.path.join(rundir, "vehicle.sock"), track=False,
+                                                       backoff_max=2.0), name="sock-vehicle"))
     return tasks

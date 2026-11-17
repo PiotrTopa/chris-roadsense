@@ -16,7 +16,8 @@ from .rules import RulesInEffect
 from .speedlimit import load_rules
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd", "mapd")
-TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead", "lanes", "roadgeom")
+TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead", "lanes", "roadgeom",
+          "vehicle", "objects")
 FUSED_PERIOD_S = 0.45
 SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
@@ -113,6 +114,7 @@ class State:
         self.rundir = rundir
         self.ring_path = ring_path
         self.latest = {}                                   # type -> message dict
+        self.objects = {}                                  # range sensor id -> its last `objects` message
         self.arrivals = collections.defaultdict(lambda: collections.deque(maxlen=200))
         self.connected = {d: False for d in DAEMONS}
         self.last_msg = {d: None for d in DAEMONS}         # monotonic time of last message
@@ -170,6 +172,11 @@ class State:
             self.lead.on_ego(msg)
             self.lanes.on_ego(msg)
             self.roadgeom.on_ego(msg)
+        if mtype == "vehicle":     # what the host says about the car: the brake for the lead message
+            self.lead.on_vehicle(msg)
+        if mtype == "objects":     # a scan of a range sensor: the lead tracker's radar input (lead.json radar_fusion)
+            self.objects[msg.get("sensor")] = msg
+            self.lead.on_objects(msg)
         if mtype == "map":         # lane count of the matched road: a soft prior for the outer lane lines
             self.lanes.on_map(msg)
             self.roadgeom.on_map(msg)
@@ -330,6 +337,17 @@ class State:
         cy = ring.get("cy") or h / 2.0
         return float(f), float(cx), float(cy), int(w), int(h)
 
+    def vehicle_summary(self):
+        """Short dict for /v1/health: is a host feeding vehicle data, and what."""
+        v = self.latest.get("vehicle")
+        if not v:
+            return None
+        return {"present": v.get("present"), "feeders": [f.get("name") for f in v.get("feeders") or []],
+                "signals": sorted(k for k, s in (v.get("signals") or {}).items()
+                                  if s.get("age_s") is not None and s["age_s"] < 15.0),
+                "yaw_source": (v.get("motion") or {}).get("yaw_source"),
+                "sensors": [s.get("id") for s in v.get("sensors") or []]}
+
     def _map_summary(self, now):
         m = self.latest.get("map")
         if not m:
@@ -375,6 +393,7 @@ class State:
             "lead": self.lead.summary(self.latest["lead"]) if "lead" in self.latest else None,
             "lanes": self.lanes.summary(self.latest["lanes"]) if "lanes" in self.latest else None,
             "roadgeom": self.roadgeom.summary(self.latest.get("roadgeom")),
+            "vehicle": self.vehicle_summary(),
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
             "battery": battery(),

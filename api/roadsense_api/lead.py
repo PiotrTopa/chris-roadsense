@@ -5,8 +5,9 @@ track: one estimate per `road` message with distance, relative speed, the lead's
 an uncertainty, and the raw vision value next to it (the fusion layer's convention).
 
     road (leads[0], v_ego) ──┐
-                             ├─> LeadTracker ─> {"type":"lead", ...}   one per road message
-    ego (vehicle motion) ────┘   (ego is optional: without it the model's own speed estimate is used)
+    ego (vehicle motion) ────┼─> LeadTracker ─> {"type":"lead", ...}   one per road message
+    objects (radar, opt.) ───┤   (everything but `road` is optional: without `ego` the model's own speed
+    vehicle (brake, opt.) ───┘    estimate is used, without a radar the camera's distance)
 
 Model: state [d, v_lead, a_lead] (distance camera -> lead rear along x, the lead's speed and acceleration
 over the ground along the ego heading); the ego speed is a known input, so
@@ -26,6 +27,17 @@ Modes (`mode` in the message):
             detector (two-sided CUSUM on the lead speed, plus a slow check of the distance) watches for
             consistent evidence that it moved. Lead moving away while ego still stands = the `departed` cue.
     coast   no usable measurement for a short time (probability dropped): prediction only.
+
+Range sensors (`radar_fusion`, off by default). A host with a radar or lidar sends its object lists over the
+vehicle input API; mapd relays them as `objects` with positions in the camera's frame. The tracker associates
+one object with the lead (near the track, or near the camera's lead when there is no track yet; the camera
+decides WHICH vehicle is the lead, a radar cannot see lanes). While an object is associated, its range and
+closing speed are the measurement (decimetres and tenths of a m/s at any distance, where the camera's distance
+scales with an uncalibrated focal length and pitch), `source` names `radar`, and the camera's raw value stays in
+`vision`. The ratio of the two distances is learned (`vision_scale`) and applied to the camera's distance for a
+minute after the radar lost the object, so that the hand-over back to vision is not a jump. When the camera
+loses the lead but the radar still has the object, the track lives on the radar alone for `radar_only_s`.
+Without fresh scans nothing of this runs and the tracker is the vision tracker.
 
 No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC ns).
 """
@@ -81,6 +93,16 @@ DEFAULT_CFG = dict(
     time_gap_min_speed=1.0,      # m/s; below it time_gap_s is null
     ttc_min_closing=0.5,         # m/s closing speed needed for ttc_s
     camera_to_front_m=None,      # camera -> front bumper; when set, `gap_m` = dist_m - this is added
+    # range sensors (`objects` messages of kind radar / lidar, positions in the camera frame)
+    radar_fusion=False,          # off: `objects` messages are ignored
+    radar_max_age_s=0.3,         # a scan older than this (against the frame time) is not used
+    radar_gate_m=3.0, radar_gate_rel=0.25,     # association: |x - lead| within max(m, rel * distance) ...
+    radar_gate_lat_m=1.8,        # ... and |y - lead| within this
+    radar_sigma_m=0.3, radar_sigma_rel=0.01,   # range noise: hypot(m, rel * distance)
+    radar_rate_sigma=0.2,        # closing-speed noise, m/s
+    radar_only_s=5.0,            # the track lives on the radar alone this long after the camera lost the lead
+    radar_scale_tau_s=5.0, radar_scale_min_n=10, radar_scale_keep_s=60.0,   # camera distance scale learned from the radar
+    brake_max_age_s=3.0,         # a brake state older than this is unknown
 )
 
 
@@ -139,6 +161,9 @@ class LeadTracker:
     def __init__(self, cfg=None):
         self.cfg = dict(DEFAULT_CFG, **(cfg or {}))
         self.ego = collections.deque(maxlen=64)      # (ts_ns, signed speed m/s, standstill, tag, standing since ts)
+        self.scans = {}                              # range sensor id -> (ts_ns, objects) of its last scan
+        self.brake = None                            # (ts_ns, pressed) from the `vehicle` topic
+        self.vis_scale = None                        # [radar / camera distance ratio, samples, ts_ns of the last one]
         self.track_id = 0
         self.version = 0                             # bumps on every track start / change / loss
         self._reset()
@@ -159,10 +184,103 @@ class LeadTracker:
         self.departed = None          # {"ts", "dist_at_stop_m"}
         self.event = None             # last life-cycle event {"kind","ts_mono_ns",...}
         self.sx_bias = 0.0            # the model's own distance std, smoothed (absolute accuracy)
+        self.rad = None               # the radar object associated in this frame
+        self.radar_only = 0.0         # s the track has lived without the camera
 
     def reset(self):
         self._reset()
         self.ego.clear()
+        self.scans.clear()
+        self.vis_scale = None
+
+    def on_objects(self, msg):
+        """An `objects` message (a scan of a range sensor, relayed by mapd). Used only with `radar_fusion`, from
+        a radar or lidar whose positions mapd could put into the camera's frame (sensor and camera mounts known)."""
+        if not self.cfg["radar_fusion"] or not isinstance(msg, dict):
+            return
+        ts, objs = msg.get("ts_mono_ns"), msg.get("objects")
+        if msg.get("kind") not in ("radar", "lidar") or msg.get("frame") != "camera" \
+                or not isinstance(ts, int) or not isinstance(objs, list):
+            return
+        self.scans[msg.get("sensor")] = (ts, objs)
+
+    def on_vehicle(self, msg):
+        """A `vehicle` message: the brake pedal, passed on in `ego.brake` (a consumer's "the lead moved off and
+        you still hold the brake")."""
+        b = ((msg or {}).get("controls") or {}).get("brake")
+        ts = (msg or {}).get("ts_mono_ns")
+        self.brake = (ts, b) if isinstance(b, bool) and isinstance(ts, int) else None
+
+    def _radar(self, ts, ref_x, ref_y, wide):
+        """The object of a fresh scan that is the lead at (ref_x, ref_y), or None."""
+        c = self.cfg
+        gx = max(c["radar_gate_m"], c["radar_gate_rel"] * ref_x) * (2.0 if wide else 1.0)
+        best = None
+        for sid, (sts, objs) in self.scans.items():
+            if abs(ts - sts) > c["radar_max_age_s"] * NS:
+                continue
+            for o in objs:
+                if not isinstance(o, dict):
+                    continue
+                x, y = o.get("x_m"), o.get("y_m")
+                if not _fin(x) or x < 0.5:
+                    continue
+                y = float(y) if _fin(y) else 0.0
+                dx, dy = abs(x - ref_x), abs(y - ref_y)
+                if dx > gx or dy > c["radar_gate_lat_m"]:
+                    continue
+                cost = dx / gx + dy / c["radar_gate_lat_m"]
+                if best is None or cost < best["cost"]:
+                    v = o.get("vx_mps")
+                    if not _fin(v):
+                        rr = o.get("range_rate_mps")
+                        v = rr / max(x / math.hypot(x, y), 0.5) if _fin(rr) else None
+                    best = {"cost": cost, "sensor": sid, "id": o.get("id"), "x": float(x), "y": y,
+                            "v_rel": None if v is None else float(v), "age_s": round((ts - sts) / NS, 3)}
+        return best
+
+    def _fuse_radar(self, ts, z):
+        """Associate a radar object and make it the frame's measurement; returns the measurement to use (the
+        camera's `z`, the camera's with the learned scale, the radar's, or None)."""
+        c = self.cfg
+        self.rad = None
+        vs = self.vis_scale
+        if vs is not None and (ts - vs[2] > c["radar_scale_keep_s"] * NS or vs[1] < c["radar_scale_min_n"]):
+            scale = None
+        else:
+            scale = vs[0] if vs is not None else None
+        seen = z is not None and z["p"] >= c["drop_prob"]
+        if self.kf is not None:
+            ref = (self.kf.x[0], self.y)
+        elif z is not None and z["p"] >= c["acquire_prob"]:
+            ref = (z["x"] * (scale or 1.0), z["y"])
+        else:
+            ref = None
+        r = self._radar(ts, ref[0], ref[1], self.kf is None and scale is None) if ref is not None and self.scans else None
+        if r is None:
+            if seen:
+                self.radar_only = 0.0
+            if z is not None and scale is not None:      # the camera alone, on the scale the radar taught
+                z = dict(z, x=z["x"] * scale, v_rel=None if z["v_rel"] is None else z["v_rel"] * scale)
+            return z
+        if seen:
+            self.radar_only = 0.0
+            if z["p"] >= c["acquire_prob"] and z["x"] > 2.0:
+                ratio = min(2.0, max(0.5, r["x"] / z["x"]))
+                if vs is None or ts - vs[2] > c["radar_scale_keep_s"] * NS:
+                    self.vis_scale = [ratio, 1, ts]
+                else:
+                    dt = max((ts - vs[2]) / NS, 0.0)
+                    k = max(1.0 / (vs[1] + 1), min(1.0, dt / c["radar_scale_tau_s"]))
+                    self.vis_scale = [vs[0] + k * (ratio - vs[0]), vs[1] + 1, ts]
+        elif self.kf is None or self.radar_only > c["radar_only_s"]:
+            return z                                     # a radar alone neither starts a track nor keeps one for ever
+        self.rad = r
+        base = z if seen else {"p": c["acquire_prob"], "y": r["y"], "v": None, "a": None, "sa": 1.0, "v_model": None}
+        sig = math.hypot(c["radar_sigma_m"], c["radar_sigma_rel"] * r["x"])
+        return dict(base, x=r["x"], sx=sig, sv=c["radar_rate_sigma"],
+                    v_rel=r["v_rel"] if r["v_rel"] is not None else (z["v_rel"] if seen else None),
+                    r_abs=(sig * sig, c["radar_rate_sigma"] ** 2), radar_only=not seen)
 
     def on_ego(self, msg):
         """A mapd `ego` message (the vehicle motion a position feeder sent). Ignored when malformed."""
@@ -223,6 +341,8 @@ class LeadTracker:
 
     def _noise(self, z):
         c = self.cfg
+        if "r_abs" in z:                                 # a radar measurement: its own noise
+            return z["r_abs"]
         f = c["low_prob_inflate"] if z["p"] < c["acquire_prob"] else 1.0
         rx = f * max(math.hypot(c["rx_floor"], c["rx_rel"] * z["x"]), c["rx_scale"] * z["sx"])
         rv = f * (max(c["rv_floor"], c["rv_scale"] * z["sv"]) + c["rv_rel"] * z["x"])
@@ -287,8 +407,12 @@ class LeadTracker:
             self._reset_keep_ego()
             dt = None
         self.ts = ts
-        z = self._measure(road)
-        vm = z["v_model"] if z else road.get("v_ego")
+        z = zvis = self._measure(road)
+        if c["radar_fusion"]:
+            if z is None or z["p"] < c["drop_prob"]:
+                self.radar_only += dt or 0.0
+            z = self._fuse_radar(ts, z)
+        vm = zvis["v_model"] if zvis else road.get("v_ego")
         # vision-only standstill: the model's speed under the threshold for the confirmation time. Leaky, so a
         # single-frame blip of the model's speed (a wiper pass) does not end it; a real start does within 0.3 s.
         if not _fin(vm) or vm >= c["vision_go_speed"]:
@@ -312,7 +436,7 @@ class LeadTracker:
                 self._step_hold(z if usable else None, v_ego, stands, src, ts, dt)
             else:
                 self._step_track(z if usable else None, v_ego, stands, src, ts, dt)
-        return self._message(road, z, v_ego, stands, src, ego_age, ego_tag)
+        return self._message(road, zvis, v_ego, stands, src, ego_age, ego_tag)
 
     def _reset_keep_ego(self):
         ego, tid, ver = self.ego, self.track_id, self.version
@@ -448,6 +572,16 @@ class LeadTracker:
         out = {"type": "lead", "seq": road.get("seq"), "ts_mono_ns": ts, "ts_real_ns": road.get("ts_real_ns"),
                "present": self.kf is not None, "mode": self.mode, "track_id": self.track_id if self.kf else None,
                "source": "vision+ego" if src == "vehicle" else "vision"}
+        rad = self.rad
+        if rad is not None and self.kf is not None:
+            seen = z is not None and z["p"] >= c["drop_prob"]
+            out["source"] = "+".join(["radar"] + (["vision"] if seen else []) + (["ego"] if src == "vehicle" else []))
+        out["radar"] = None if rad is None else {
+            "sensor": rad["sensor"], "id": rad["id"], "dist_m": round(rad["x"], 2), "lateral_m": round(rad["y"], 2),
+            "v_rel_mps": None if rad["v_rel"] is None else round(rad["v_rel"], 2), "age_s": rad["age_s"]}
+        vs = self.vis_scale
+        out["vision_scale"] = round(vs[0], 3) if vs is not None and vs[1] >= c["radar_scale_min_n"] \
+            and ts - vs[2] <= c["radar_scale_keep_s"] * NS else None
         vis = None
         if z is not None:
             vis = {"dist_m": round(z["x"], 2), "dist_std_m": round(z["sx"], 2), "lateral_m": round(z["y"], 2),
@@ -491,8 +625,10 @@ class LeadTracker:
             "moved_m": None if self.kf is None else round(self.kf.x[0] - dep["dist_at_stop_m"], 2)}
         ev = self.event
         out["event"] = None if ev is None else dict(ev, age_s=round((ts - ev["ts_mono_ns"]) / NS, 2))
+        br = self.brake
         out["ego"] = {"speed_mps": round(v_ego, 3), "standstill": bool(stands), "source": src,
-                      "age_s": ego_age, "tag": ego_tag}
+                      "age_s": ego_age, "tag": ego_tag,
+                      "brake": br[1] if br is not None and abs(ts - br[0]) <= c["brake_max_age_s"] * NS else None}
         out["vision"] = vis
         return out
 
