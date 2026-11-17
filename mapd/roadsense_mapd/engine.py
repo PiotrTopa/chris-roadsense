@@ -56,6 +56,7 @@ class Engine:
         self.filter = PositionFilter(self.cfg.get("filter"))
         self.pack = None
         self.matcher = None
+        self.view_memo = {}             # orientation of the last roundabout view (context.junction_view)
         self.set_pack(pack)
         self.t_filter = None            # time the filter state refers to
         self.last_fix = None            # ts of the last fix used
@@ -425,7 +426,8 @@ class Engine:
             out["match"] = m.as_dict()
             out["road"] = context.road_info(e, m.dir)
             out["speed_limit"] = context.speed_limit(e, m.dir, self.limits)
-            out["ahead"] = context.look_ahead(self.pack, m, self.limits, c["horizon_m"], c["shape_m"])
+            out["ahead"] = context.look_ahead(self.pack, m, self.limits, c["horizon_m"], c["shape_m"],
+                                               memo=self.view_memo)
         else:
             out["match"] = {"matched": False} if located and self.pack is not None else None
             out["road"] = out["speed_limit"] = out["ahead"] = None
