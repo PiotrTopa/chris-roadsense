@@ -61,8 +61,27 @@ part alone in every message. While driving the centre line came from both inner 
 20 %, the planned path in 5 % and nothing in 0.5 % of the frames; its reach was the full 100 m in the median
 and 91 m at the 10th percentile.
 
-Cost: laptop 0.09 ms per message without a map, 0.36 ms with one, 0.17 ms per `map` message; mapd's
-`look_ahead` with the geometry: see the phone numbers below.
+Cost. Laptop: 0.09 ms per message without a map, 0.36 ms with one, 0.17 ms per `map` message. On the phone
+(the installed code, the synthetic drive above run offline on the little cores 0-3 where the api and mapd
+run; the car parked, the stack stopped, 24 C):
+
+| | median | p95 | rate | share of one little core |
+|---|---|---|---|---|
+| `roadgeom` per frame (with a map, side roads, ring) | 2.9 ms | 3.8 ms | 10-14 /s | about 4 % |
+| the fusion's part of a `map` message | 1.4 ms | 1.7 ms | 2 /s | 0.3 % |
+| mapd `geometry` (inside a step of 7.2 ms) | 2.0 ms | 4.7 ms | 2 /s | 0.4 % |
+| for comparison: the `lanes` tracker per frame | 3.4 ms | 3.7 ms | 10-14 /s | about 4.5 % |
+
+A `roadgeom` message is 2.1 kB in the median (2.8 kB p95), sent only to clients that ask for the topic. No
+GPU work is added. Not measured: the live stack with a camera and a position source (temperature, the api's
+total share); without a position source the fusion's cost is the camera part alone (0.09 ms on the laptop).
+
+## Deployed
+
+roadsense on the phone 2026-11-17 (mapd with `ahead.geometry` and `turn_signal`, api with `roadgeom`),
+rollback `/home/user/roadsense-installed-20261117-pre-L17.tgz`. The camera unit's masked state and
+`/etc/roadsense/recorder.json` are as they were. The stack was not started (it runs under the car's host
+controller).
 
 ## Not done / open
 
