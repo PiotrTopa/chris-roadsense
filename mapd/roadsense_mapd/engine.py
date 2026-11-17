@@ -1,4 +1,5 @@
-"""mapd core: position input (GNSS + motion) -> filter -> map matching -> the `map` message.
+"""mapd core: vehicle input (GNSS, motion, controls, body, range sensors) -> filter -> map matching -> the
+`map` message, plus the car as the host described it (`ego`, `vehicle`, `objects`; vehicle.py).
 
 No I/O and no wall clock in here: the daemon (and the tests, and the replay tools) feed messages and call
 step(now_ns). All times are CLOCK_MONOTONIC nanoseconds of this host.
@@ -14,6 +15,8 @@ import math
 from . import API_VERSION, context, geo
 from .matcher import MapMatcher
 from .posfilter import PositionFilter
+from .vehicle import (HOLD_S, TURN_SIGNALS, Calibration, VehicleStore, parse_description, parse_quality,
+                      parse_signals)
 
 NS = 1e9
 DEFAULTS = dict(
@@ -28,7 +31,13 @@ DEFAULTS = dict(
     max_input_age_s=5.0, max_input_future_s=0.5,
     match_period_s=0.45,
     horizon_m=1500.0, shape_m=600.0,
-    wheelbase_m=2.70, steering_ratio=19.1, track_m=1.48,      # Toyota Prius (XW20) nominal values
+    # Vehicle description: the feeder's `vehicle` message > the "vehicle" object here > these older top-level
+    # keys > nominal defaults (vehicle.py DESCRIPTION_DEFAULTS).
+    wheelbase_m=None, steering_ratio=None, track_m=None, vehicle=None,
+    pair_s=0.3,                 # a yaw signal of another motion message is used with a speed this close in time
+    use_calibration=True,       # apply roadsense's own scale estimates to signals declared "uncalibrated"
+    gnss_lag_s=0.0,             # a receiver that reports late: its fixes are this much older than their timestamp
+    calibration=None,           # overrides of vehicle.Calibration.CFG
     vision_speed_sigma=(0.5, 0.1), vision_yaw_sigma_deg=2.0,
     feedback_min_conf=0.5, feedback_cross_m=4.0, feedback_heading_deg=6.0,
     feedback_max_dist_m=10.0, feedback_max_heading_deg=10.0,
@@ -65,6 +74,10 @@ class Engine:
         self.motion = None              # {"ts", "source", "v", "yaw_cw", "reverse", "tag"}
         self.ego = None                 # the last vehicle `motion` as an `ego` message (relayed by the daemon)
         self.ego_seq = 0
+        self.vehicle = VehicleStore(self.cfg.get("vehicle"),
+                                    {k: self.cfg.get(k) for k in ("wheelbase_m", "steering_ratio", "track_m")})
+        self.cal = Calibration(self.cfg.get("calibration"))
+        self.objects_out = []           # `objects` messages accepted since the daemon last took them (relay)
         self.odo = 0.0
         self.odo_fix = 0.0
         self.odo_match = 0.0
@@ -72,7 +85,8 @@ class Engine:
         self.t_match = None
         self.state = "no_source"
         self.seq = 0
-        self.counts = {"gnss": 0, "gnss_used": 0, "gnss_ignored": 0, "motion": 0, "vision": 0, "errors": 0}
+        self.counts = {"gnss": 0, "gnss_used": 0, "gnss_ignored": 0, "motion": 0, "vision": 0, "errors": 0,
+                       "controls": 0, "body": 0, "vehicle": 0, "objects": 0}
         self.last_error = None
         self._anchor = None
         self.synthetic = False          # the position state was fed by a source tagged synthetic since the last reset
@@ -111,18 +125,29 @@ class Engine:
         self.last_reset = {"ts": ts, "reason": reason}
 
     # ---- input -------------------------------------------------------------------------------
+    TYPES = ("gnss", "motion", "reset", "controls", "body", "vehicle", "objects")
+
     def on_input(self, msg, now_ns):
-        """One message of the position input API. Returns None, or the reason it was rejected."""
+        """One message of the vehicle input API. Returns None, or the reason it was rejected."""
         try:
             if not isinstance(msg, dict):
                 raise ValueError("not a JSON object")
             t = msg.get("type")
             if t == "hello":
                 return None
-            if t not in ("gnss", "motion", "reset"):
+            if t not in self.TYPES:
                 raise ValueError("unknown type %r" % (t,))
             ts = msg.get("ts_mono_ns")
-            if ts is None:
+            age = msg.get("age_ms")
+            if ts is None and age is not None:
+                # the sample's age at the moment of sending: for a feeder that relays from another device
+                # and knows the age but shares no clock with this host
+                if isinstance(age, bool) or not isinstance(age, (int, float)) or not math.isfinite(age) or age < 0:
+                    raise ValueError("age_ms must be a number >= 0")
+                if age > self.cfg["max_input_age_s"] * 1e3:
+                    raise ValueError("age_ms: the sample is %.1f s old" % (age / 1e3))
+                ts = now_ns - int(age * 1e6)
+            elif ts is None:
                 ts = now_ns
             elif isinstance(ts, bool) or not isinstance(ts, int):
                 raise ValueError("ts_mono_ns must be an integer")
@@ -138,13 +163,31 @@ class Engine:
                 self.reset(ts, (reason or "requested")[:80])
             elif t == "gnss":
                 self._on_gnss(msg, ts)
-            else:
+            elif t == "motion":
                 self._on_motion(msg, ts)
+            elif t == "vehicle":
+                self.vehicle.describe(parse_description(msg))
+                self.counts["vehicle"] += 1
+            elif t == "objects":
+                self.objects_out.append(self.vehicle.objects(msg, ts, msg.get("source")))
+                del self.objects_out[:-8]
+                self.counts["objects"] += 1
+            else:
+                self._on_signals(t, msg, ts)
             return None
         except ValueError as e:
             self.counts["errors"] += 1
             self.last_error = str(e)
             return str(e)
+
+    def _on_signals(self, group, m, ts):
+        """A `controls` or `body` message: stored for the `vehicle` topic (and the `ego` relay's turn signal)."""
+        sig = parse_signals(group, m)
+        if not sig:
+            raise ValueError("no known signal in the %s message" % group)
+        q, dq = parse_quality(m)
+        self.vehicle.update(group, sig, ts, q, dq, m.get("source"))
+        self.counts[group] += 1
 
     def _advance(self, ts, yaw_cw, yaw_sigma, measured):
         """Predict the filter to ts with the given yaw rate; integrates the odometer."""
@@ -165,27 +208,70 @@ class Engine:
         self.odo += abs(f.speed) * min(dt, 5.0)
         self.t_filter = ts
 
+    def _recent(self, name, ts, max_age_s, any_quality=False):
+        """A usable vehicle signal for the motion message of time ts: (value, quality). The message's own, or
+        one that a message without a speed delivered within max_age_s (a gyroscope on another bus, say). What an
+        earlier complete message carried is never reused: a complete message stands for itself, as in v1."""
+        s = self.vehicle.sig.get(name)
+        if s is None or s[2] == "invalid" or (not any_quality and s[2] not in ("good", "uncalibrated")):
+            return None, None
+        if s[1] != ts and not (s[4] and abs(ts - s[1]) <= max_age_s * NS):
+            return None, None
+        return s[0], s[2]
+
     def _on_motion(self, m, ts, source="vehicle"):
-        v = _num(m, "speed_mps", 0.0, 120.0, required=True)
-        gear = m.get("gear")
-        if gear is not None and gear not in ("P", "R", "N", "D", "B"):
-            raise ValueError("gear must be one of P R N D B")
-        reverse = bool(m.get("reverse")) or gear == "R"
-        turn = m.get("turn_signal")
-        if turn is not None and turn not in ("off", "left", "right", "both"):
-            raise ValueError("turn_signal must be one of off left right both")
+        c = self.cfg
+        tag = m.get("source")
+        turn = None
+        if source == "vehicle":
+            sig = parse_signals("motion", m)
+            turn = m.get("turn_signal")                  # its place is `controls`; accepted here since v1
+            if turn is not None and turn not in TURN_SIGNALS:
+                raise ValueError("turn_signal must be one of off left right both")
+            if not sig and turn is None:
+                raise ValueError("missing field speed_mps")
+            q, dq = parse_quality(m)
+            self.vehicle.update("motion", sig, ts, q, dq, tag, partial="speed_mps" not in sig)
+            if turn is not None:
+                self.vehicle.update("controls", {"turn_signal": turn}, ts, q, dq, tag)
+            v, vq = self._recent("speed_mps", ts, 0.0) if "speed_mps" in sig else (None, None)
+            if v is None:
+                self.counts["motion"] += 1
+                return                                   # stored; the filter moves with messages that carry a speed
+            gear, _ = self._recent("gear", ts, HOLD_S["motion"])
+            rev, _ = self._recent("reverse", ts, HOLD_S["motion"])
+            yr, yq = self._recent("yaw_rate_rps", ts, c["pair_s"])
+            ws, _ = self._recent("wheel_speeds_mps", ts, c["pair_s"])
+            sw, _ = self._recent("steering_wheel_deg", ts, c["pair_s"])
+        else:
+            v, vq = _num(m, "speed_mps", 0.0, 120.0, required=True), "good"
+            gear = rev = yr = yq = ws = sw = None
+        reverse = bool(rev) or gear == "R"
+        d = self.vehicle.desc
+        standstill = v == 0.0 and (ws is None or not any(ws))
+        yaw_wheels = None if ws is None else (ws[3] - ws[2]) / d["track_m"] * (-1.0 if reverse else 1.0)
+        if source == "vehicle":
+            # the estimators also get a yaw rate that is not used ("unverified"): its scale against GNSS is
+            # what tells the host whether to trust it
+            yr_any, _ = self._recent("yaw_rate_rps", ts, c["pair_s"], any_quality=True)
+            self.cal.set_tag(tag)
+            self.cal.on_motion(ts, v, standstill, yr_any, yaw_wheels)
+            if vq == "uncalibrated" and c["use_calibration"] and self.cal.speed_scale() is not None:
+                v *= self.cal.speed_scale()
         vs = -v if reverse else v
-        yaw_cw = None
-        yr = _num(m, "yaw_rate_rps", -3.0, 3.0)
-        ws = m.get("wheel_speeds_mps")
-        sw = _num(m, "steering_wheel_deg", -1000.0, 1000.0)
+        yaw_cw, yaw_src = None, None
         if yr is not None:
-            yaw_cw = -yr
-        elif isinstance(ws, list) and len(ws) == 4 and all(isinstance(x, (int, float)) for x in ws):
-            yaw_cw = -(ws[3] - ws[2]) / self.cfg["track_m"] * (-1.0 if reverse else 1.0)
+            yaw = yr - self.cal.bias
+            if yq == "uncalibrated" and c["use_calibration"] and self.cal.yaw_scale() is not None:
+                yaw *= self.cal.yaw_scale()
+            yaw_cw, yaw_src = -yaw, "yaw_rate"
+        elif yaw_wheels is not None:
+            yaw_cw, yaw_src = -yaw_wheels, "wheel_speeds"
         elif sw is not None:
-            delta = math.radians(sw / self.cfg["steering_ratio"])
-            yaw_cw = -vs * math.tan(delta) / self.cfg["wheelbase_m"]
+            delta = math.radians(sw / d["steering_ratio"])
+            yaw_cw, yaw_src = -vs * math.tan(delta) / d["wheelbase_m"], "steering"
+        if standstill and yaw_cw is not None:
+            yaw_cw = 0.0                                 # a standing car does not turn, whatever the sensor says
         self.counts["motion" if source == "vehicle" else "vision"] += 1
         if source == "vision":
             a, b = self.cfg["vision_speed_sigma"]
@@ -195,20 +281,33 @@ class Engine:
         self._advance(ts, yaw_cw, sig_y, True)
         self.filter.update_speed(vs, sig_v)
         self.motion = {"ts": ts, "source": source, "v": vs, "yaw_cw": yaw_cw, "reverse": reverse,
-                       "tag": m.get("source")}
-        if self.filter.initialised and self.is_synthetic(m.get("source")):
+                       "tag": tag}
+        if self.filter.initialised and self.is_synthetic(tag):
             self.synthetic = True                     # a real fix carried on by made-up motion is made up too
         if source == "vehicle":
-            wheels = [float(x) for x in ws] if isinstance(ws, list) and len(ws) == 4 \
-                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in ws) else None
+            if turn is None:
+                turn = self.vehicle.get("turn_signal", ts)
             self.ego_seq += 1
             self.ego = {"type": "ego", "seq": self.ego_seq, "ts_mono_ns": ts, "api": API_VERSION,
                         "speed_mps": vs, "gear": gear, "reverse": reverse,
-                        "standstill": v == 0.0 and (wheels is None or not any(wheels)),
-                        "wheel_speeds_mps": wheels,
+                        "standstill": standstill,
+                        "wheel_speeds_mps": ws,
                         "yaw_rate_rps": None if yaw_cw is None else round(-yaw_cw, 5),
+                        "yaw_source": yaw_src,
                         "turn_signal": turn,
-                        "source": "vehicle", "tag": m.get("source")}
+                        "source": "vehicle", "tag": tag}
+            for k in ("steering_wheel_deg", "accel_long_mps2", "accel_lat_mps2"):
+                val, _ = self._recent(k, ts, c["pair_s"])
+                if val is not None:
+                    self.ego[k] = val
+
+    def vehicle_message(self, now_ns, real_ns=None, feeders=None):
+        """The `vehicle` message: every signal the host sent, as roadsense holds it now."""
+        ego = self.ego
+        motion = None
+        if ego is not None and now_ns - ego["ts_mono_ns"] <= self.cfg["motion_timeout_s"] * NS:
+            motion = {k: ego[k] for k in ("speed_mps", "standstill", "gear", "reverse", "yaw_rate_rps", "yaw_source")}
+        return self.vehicle.message(now_ns, real_ns, motion, self.cal.report(), feeders)
 
     def on_vision(self, road, now_ns):
         """A modeld `road` message as a motion source of last resort (used only while no vehicle motion arrives)."""
@@ -243,6 +342,8 @@ class Engine:
             # a synthetic session ended and the real receiver speaks (or the other way round): the position of
             # the one must not live on as the position of the other
             self.reset(ts, "gnss source changed from %s to %s" % (("real", "synthetic") if synth else ("synthetic", "real")))
+        if self.cfg["gnss_lag_s"] and fix != "none":
+            ts -= int(self.cfg["gnss_lag_s"] * NS)
         meta = {"ts": ts, "fix": fix, "source": g.get("source"), "sats": g.get("sats"), "hdop": g.get("hdop"),
                 "hacc_m": None, "utc_ms": g.get("utc_ms")}
         if fix == "none":
@@ -258,6 +359,7 @@ class Engine:
         course_acc = _num(g, "course_acc_deg", 0.0, 360.0)
         meta["hacc_m"] = hacc
         self.last_gnss = meta
+        raw = (lat, lon)
         if hacc > self.cfg["max_fix_hacc_m"]:
             self.counts["gnss_ignored"] += 1
             return
@@ -295,6 +397,7 @@ class Engine:
                     if d > max(12.0, 2.5 * hacc):
                         f.update_course(geo.bearing_deg(self._anchor[0], self._anchor[1], lat, lon), 20.0)
         if used:
+            self.cal.on_fix(ts, raw[0], raw[1], hacc, speed, course if moving and not reverse else None, geo.dist_m)
             self.counts["gnss_used"] += 1
             self.last_fix = ts
             self.fix_lost = False

@@ -19,6 +19,7 @@ rm -rf /usr/local/lib/roadsense/api && cp -r api /usr/local/lib/roadsense/api
 rm -rf /usr/local/lib/roadsense/mapd && mkdir -p /usr/local/lib/roadsense/mapd /var/lib/roadsense/maps
 cp -r mapd/roadsense_mapd /usr/local/lib/roadsense/mapd/
 install -m 755 tools/position_client.py /usr/local/bin/roadsense-position
+install -m 755 tools/vehicle_client.py /usr/local/bin/roadsense-vehicle
 for m in models/*.onnx models/*.param models/*.bin models/*.txt models/*.json; do [ -f "$m" ] && install -m 644 "$m" /var/lib/roadsense/models/; done
 for c in camera.json calib.json modeld.json envd.json mapd.json; do
     [ -f "/etc/roadsense/$c" ] || { [ -f "config/$c" ] && install -m 644 "config/$c" /etc/roadsense/; }

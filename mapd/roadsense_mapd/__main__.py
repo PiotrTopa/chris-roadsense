@@ -6,7 +6,12 @@ Sockets in the run directory (newline-delimited JSON, docs/ARCHITECTURE.md):
     mapd.sock       output: one `map` message per step; the last one is sent to a client when it connects
     ego.sock        output: one `ego` message per vehicle `motion` message accepted (at most --ego-hz): the
                     car's own motion at the feeder's rate, for consumers such as the api's lead tracker
-    position.sock   input:  `gnss`, `motion` and `reset` messages from a feeder (position input API v1)
+    vehicle.sock    output: the car as the host describes it. A `vehicle` message (every signal with its age,
+                    quality and source, the vehicle description, calibration estimates) with every `map`
+                    message and at once when a switch-like signal changes; the `objects` scans of range
+                    sensors as they come
+    position.sock   input:  the vehicle input API (docs/VEHICLE_API.md): `gnss`, `motion`, `reset`, `controls`,
+                    `body`, `vehicle`, `objects` messages from a feeder
     modeld.sock     read (only with --vision-odometry / "vision_odometry": true; off by default until the
                     camera is calibrated): `road` messages as vision odometry while no vehicle motion arrives
 """
@@ -19,9 +24,10 @@ import re
 import signal
 import time
 
-from . import API_VERSION
+from . import API_MINOR, API_VERSION
 from .engine import DEFAULTS, Engine
 from .rsmap import Pack
+from .vehicle import BODY, CONTROLS, MOTION, load_calibration, save_calibration
 
 log = logging.getLogger("mapd")
 RE_TS = re.compile(r'"ts_mono_ns":(\d+)')
@@ -38,8 +44,15 @@ class Mapd:
         self.pack_id = None
         self.clients = set()
         self.ego_clients = set()
+        self.veh_clients = set()
+        self.last_vehicle = None
         self.last_line = None
         self.feeders = 0
+        self.feeder_info = {}           # connection -> {"name", "provides", "since", "messages"} (hello)
+        self._vehicle_next = 0
+        self.cal_path = a.calibration_file or None
+        if self.cal_path:
+            load_calibration(self.cal_path, self.engine.cal)
         self.step_ms = 0.0
         self._vision_next = 0
         self._ego_next = 0
@@ -125,10 +138,47 @@ class Mapd:
         msg = dict(ego, ts_real_ns=time.time_ns() - (now_ns - ego["ts_mono_ns"]))
         self._send(self.ego_clients, (json.dumps(msg, separators=(",", ":")) + "\n").encode())
 
+    async def veh_client(self, reader, writer):
+        self.veh_clients.add(writer)
+        if self.last_vehicle:
+            writer.write(self.last_vehicle)
+        try:
+            await reader.read()
+        except (OSError, asyncio.CancelledError):
+            pass
+        finally:
+            self.veh_clients.discard(writer)
+            writer.close()
+
+    def relay_vehicle(self, now_ns, force=False):
+        """The `vehicle` message on vehicle.sock: with every `map` step, and at once (at most 20 a second) when a
+        switch-like signal, the description or the set of sensors changed. The scans of range sensors
+        (`objects`) are passed on as they were accepted."""
+        eng = self.engine
+        objs, eng.objects_out = eng.objects_out, []
+        for o in objs:
+            o["ts_real_ns"] = time.time_ns() - (now_ns - o["ts_mono_ns"])
+            self._send(self.veh_clients, (json.dumps(o, separators=(",", ":")) + "\n").encode())
+        if not force and not (eng.vehicle.changed and now_ns >= self._vehicle_next):
+            return
+        self._vehicle_next = now_ns + 50_000_000
+        now = time.monotonic()
+        feeders = [{"name": f["name"], "provides": f["provides"], "connected_s": round(now - f["since"], 1),
+                    "messages": f["messages"]} for f in self.feeder_info.values()]
+        msg = eng.vehicle_message(now_ns, time.time_ns(), feeders)
+        self.last_vehicle = (json.dumps(msg, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+        self._send(self.veh_clients, self.last_vehicle)
+
     # ---- input socket ----------------------------------------------------------------------------
+    HELLO = {"type": "hello", "api": API_VERSION, "minor": API_MINOR, "server": "roadsense-mapd",
+             "accepts": list(Engine.TYPES),
+             "signals": {"motion": sorted(MOTION) + ["turn_signal"], "controls": sorted(CONTROLS), "body": sorted(BODY)},
+             "clock": "CLOCK_MONOTONIC"}
+
     async def in_client(self, reader, writer):
         self.feeders += 1
         n = 0
+        info = self.feeder_info[writer] = {"name": None, "provides": None, "since": time.monotonic(), "messages": 0}
 
         def reply(obj):
             writer.write((json.dumps(obj, separators=(",", ":")) + "\n").encode())
@@ -150,20 +200,29 @@ class Mapd:
                     reply({"type": "error", "line": n, "reason": "bad JSON"})
                     continue
                 if isinstance(msg, dict) and msg.get("type") == "hello":
-                    reply({"type": "hello", "api": API_VERSION, "server": "roadsense-mapd",
-                           "accepts": ["gnss", "motion", "reset"], "clock": "CLOCK_MONOTONIC",
-                           "now_mono_ns": time.monotonic_ns()})
+                    if isinstance(msg.get("name"), str):
+                        info["name"] = msg["name"][:60]
+                    prov = msg.get("provides")           # what the feeder will send: {"motion": ["speed_mps", ..], ..}
+                    if isinstance(prov, dict) and len(json.dumps(prov)) <= 4096:
+                        info["provides"] = prov
+                        self.engine.vehicle.changed = True
+                    reply(dict(self.HELLO, now_mono_ns=time.monotonic_ns()))
                     continue
                 now_ns = time.monotonic_ns()
                 err = self.engine.on_input(msg, now_ns)
                 if err:
                     reply({"type": "error", "line": n, "reason": err})
-                elif self.a.ego_hz > 0:
-                    self.relay_ego(now_ns)
+                else:
+                    info["messages"] += 1
+                    if self.a.ego_hz > 0:
+                        self.relay_ego(now_ns)
+                    self.relay_vehicle(now_ns)
         except (OSError, ValueError, asyncio.LimitOverrunError) as e:
             log.warning("feeder: %s", e)
         finally:
             self.feeders -= 1
+            self.feeder_info.pop(writer, None)
+            self.engine.vehicle.changed = True
             writer.close()
 
     # ---- vision odometry -------------------------------------------------------------------------
@@ -208,13 +267,14 @@ class Mapd:
         a = self.a
         os.makedirs(a.rundir, exist_ok=True)
         out_path, in_path = os.path.join(a.rundir, "mapd.sock"), os.path.join(a.rundir, "position.sock")
-        ego_path = os.path.join(a.rundir, "ego.sock")
-        for p in (out_path, in_path, ego_path):
+        ego_path, veh_path = os.path.join(a.rundir, "ego.sock"), os.path.join(a.rundir, "vehicle.sock")
+        for p in (out_path, in_path, ego_path, veh_path):
             try:
                 os.unlink(p)
             except FileNotFoundError:
                 pass
         out_srv = await asyncio.start_unix_server(self.out_client, path=out_path)
+        veh_srv = await asyncio.start_unix_server(self.veh_client, path=veh_path)
         ego_srv = await asyncio.start_unix_server(self.ego_client, path=ego_path) if a.ego_hz > 0 else None
         in_srv = await asyncio.start_unix_server(self.in_client, path=in_path, limit=1 << 20)
         os.chmod(in_path, a.input_mode)
@@ -241,9 +301,13 @@ class Mapd:
             msg["proc"] = {"step_ms": round(self.step_ms, 2), "cpu_pct": round(cpu_pct, 2), "feeders": self.feeders,
                            "tile_loads": self.engine.pack.tile_loads if self.engine.pack else 0}
             self.publish(msg)
+            self.relay_vehicle(time.monotonic_ns(), force=True)
             steps += 1
             now = time.monotonic()
             if now >= next_pack:
+                if self.cal_path and self.engine.cal.dirty:
+                    self.engine.cal.dirty = False
+                    save_calibration(self.cal_path, self.engine.cal)
                 next_pack = now + a.pack_poll
                 self.check_pack()
                 cpu, cpu0_, wall = time.process_time(), cpu0, now - wall0
@@ -265,13 +329,16 @@ class Mapd:
                 pass
         for t in tasks:
             t.cancel()
+        if self.cal_path and self.engine.cal.dirty:
+            save_calibration(self.cal_path, self.engine.cal)
         out_srv.close()
         in_srv.close()
+        veh_srv.close()
         if ego_srv:
             ego_srv.close()
-        for w in list(self.clients) + list(self.ego_clients):
+        for w in list(self.clients) + list(self.ego_clients) + list(self.veh_clients):
             w.close()
-        for p in (out_path, in_path, ego_path):
+        for p in (out_path, in_path, ego_path, veh_path):
             try:
                 os.unlink(p)
             except OSError:
@@ -308,6 +375,9 @@ def main():
     ap.add_argument("--ego-hz", type=float, default=cfg.pop("ego_hz", 20.0),
                     help="relay accepted vehicle `motion` messages as `ego` messages on ego.sock at most this often (0 = no ego.sock)")
     ap.add_argument("--vision-hz", type=float, default=cfg.pop("vision_hz", 10.0))
+    ap.add_argument("--calibration-file", default=cfg.pop("calibration_file", "/var/lib/roadsense/vehicle-calibration.json"),
+                    help="where the calibration estimates (yaw-rate and speed scale) are kept between runs; "
+                         "'' = not kept. A directory that does not exist or cannot be written is not an error")
     ap.add_argument("--input-mode", type=lambda s: int(s, 8), default=int(str(cfg.pop("input_mode", "666")), 8),
                     help="permissions of position.sock (octal, default 666)")
     ap.add_argument("--stats", type=float, default=cfg.pop("stats_s", 60.0), help="log a status line every N seconds (0 = off)")
