@@ -201,6 +201,12 @@ async def h_lanes(req):
     return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
 
 
+async def h_roadgeom(req):
+    st = req.app["state"]
+    msg = st.latest.get("roadgeom")
+    return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
+
+
 async def h_position(req):
     """Position input over HTTP: the body is one message, a JSON array of messages, or JSON lines
     (`gnss` / `motion` / `reset`, position input API v1). Forwarded to mapd's position.sock; mapd validates."""
@@ -396,6 +402,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
     app.router.add_get("/v1/fused", h_fused)
     app.router.add_get("/v1/lead", h_lead)
     app.router.add_get("/v1/lanes", h_lanes)
+    app.router.add_get("/v1/roadgeom", h_roadgeom)
     app.router.add_post("/v1/position", h_position)
     app.router.add_get("/v1/camera", h_camera)
     app.router.add_get("/v1/health", h_health)

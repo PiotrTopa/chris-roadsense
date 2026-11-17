@@ -11,11 +11,12 @@ from . import signctx
 from .fusion import Fusion
 from .lanes import RoadGeometryTracker
 from .lead import LeadTracker
+from .roadgeom import RoadGeometryFusion
 from .rules import RulesInEffect
 from .speedlimit import load_rules
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd", "mapd")
-TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead", "lanes")
+TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead", "lanes", "roadgeom")
 FUSED_PERIOD_S = 0.45
 SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
@@ -95,6 +96,12 @@ def load_lanes_config():
     return _load_config("lanes.json", DEFAULT_CFG)
 
 
+def load_roadgeom_config():
+    """Fused road geometry (roadgeom.py): DEFAULT_CFG overridden per key by <config dir>/roadgeom.json."""
+    from .roadgeom import DEFAULT_CFG
+    return _load_config("roadgeom.json", DEFAULT_CFG)
+
+
 def load_lights_config():
     """Optional `<config dir>/lights.json`: {"lane_assign": false} switches the lane assignment of the ego
     light (lights.py) off, back to the lateral window alone."""
@@ -131,6 +138,7 @@ class State:
         self._fused_emit = 0.0
         self.lead = LeadTracker(load_lead_config())        # derived topic `lead` (lead.py)
         self.lanes = RoadGeometryTracker(load_lanes_config())   # derived topic `lanes` (lanes.py)
+        self.roadgeom = RoadGeometryFusion(load_roadgeom_config())   # derived topic `roadgeom` (roadgeom.py)
         self.ego_light = lights_mod.EgoLightSelector()     # the ego traffic light over time (lights.py)
         self.ego_light.lane_assign = bool(load_lights_config().get("lane_assign", True))
 
@@ -161,8 +169,10 @@ class State:
         if mtype == "ego":         # the vehicle's own motion, relayed by mapd: input of the lead tracker
             self.lead.on_ego(msg)
             self.lanes.on_ego(msg)
+            self.roadgeom.on_ego(msg)
         if mtype == "map":         # lane count of the matched road: a soft prior for the outer lane lines
             self.lanes.on_map(msg)
+            self.roadgeom.on_map(msg)
             self.ego_light.on_map(msg)
         self.latest[mtype] = msg
         self.arrivals[mtype].append(now)
@@ -184,6 +194,9 @@ class State:
                 if out is not None:
                     self.ego_light.on_lanes(out)      # the lane lines the ego light is assigned by
                     self._emit("lanes", out, now)
+                    geom = self.roadgeom.on_lanes(out, msg)
+                    if geom is not None:
+                        self._emit("roadgeom", geom, now)
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("road-geometry tracker failed")
@@ -220,6 +233,7 @@ class State:
         self.fusion = Fusion(load_rules(self._rules).get("defaults_kmh"))
         self.lead.reset()
         self.lanes.reset()
+        self.roadgeom.reset()
         self.ego_light.reset()
 
     def _on_speed(self, msg, now):
@@ -360,6 +374,7 @@ class State:
             "fused": self.fusion.summary(self.latest["fused"]) if "fused" in self.latest else None,
             "lead": self.lead.summary(self.latest["lead"]) if "lead" in self.latest else None,
             "lanes": self.lanes.summary(self.latest["lanes"]) if "lanes" in self.latest else None,
+            "roadgeom": self.roadgeom.summary(self.latest.get("roadgeom")),
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
             "battery": battery(),
