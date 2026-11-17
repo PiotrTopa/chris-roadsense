@@ -6,8 +6,10 @@
 // The camera is a USB mass-storage disk whose firmware serves the live MJPEG
 // stream from fixed sectors inside the file VSFILE of its FAT volume: an info
 // sector (frame size, frame sequence, check word) and the frame itself
-// (1280x720 baseline JPEG, 4:2:0, ~20 fps). camerad-dvr is strictly read-only:
-// it opens the raw block device O_RDONLY|O_DIRECT|O_EXCL and never writes.
+// (1280x720 baseline JPEG, 4:2:0, ~20 fps). camerad-dvr reads through
+// O_RDONLY|O_DIRECT|O_EXCL and writes exactly one sector per connection: the
+// vendor app's time sync (see Device::set_time), which stops the camera from
+// leaving the USB bus ~28 s after power-up. --no-set-time makes it read-only.
 //
 // Single thread: poll the info sector every poll_us (O_DIRECT, uncached), on a
 // new sequence take CLOCK_MONOTONIC as the frame timestamp, read the frame in
@@ -54,9 +56,10 @@ constexpr uint32_t kMaxFrame = 0x4B000;   // getDataThread's limit
 constexpr uint32_t kAudioLen = 0x2000;
 constexpr uint32_t kKickExtra = 0x1400;   // stall "kick" read length beyond the frame
 
-struct Layout { uint32_t info, video; };
-constexpr Layout kLayoutA{0x380, 0x391};  // MBR partition 1 at LBA 8
-constexpr Layout kLayoutB{0x300, 0x311};  // anything else
+struct Layout { uint32_t info, video, cmd_w; };
+constexpr Layout kLayoutA{0x380, 0x391, 0x340};  // MBR partition 1 at LBA 8
+constexpr Layout kLayoutB{0x300, 0x311, 0x2C0};  // anything else
+constexpr uint8_t kOpSetTime = 11;        // CAM_SET_TIME, the vendor app's first command after init
 
 volatile sig_atomic_t g_run = 1;
 void on_signal(int) { g_run = 0; }
@@ -233,6 +236,40 @@ public:
     }
     int io_errno() const { return io_errno_; }
     Layout layout() const { return lay_; }
+    bool cmd_ok() const { return cmd_ok_; }
+
+    // The one write this daemon does: the vendor app's time sync (opcode 11), one 512-byte
+    // sector to the command sector of the HWC file. Without it the camera leaves the USB bus
+    // once, 23-28 s after power-up, and is back 4-5 s later (2026-11-17: 4 of 4 power-ups
+    // without the command dropped at 28 s, 6 of 6 with it stayed for the 75-110 s watched).
+    // Only when validate() found HWC in the FAT and the command sector inside it.
+    // board_v1: info[0x34] == 0xE9 selects the 16-bit header.
+    bool set_time(bool board_v1, std::string *err) {
+        if (!cmd_ok_) return fail(err, "command sector not verified (HWC file); not writing");
+        uint8_t *pkt = nullptr;
+        if (posix_memalign(reinterpret_cast<void **>(&pkt), 4096, kSector) != 0) return fail(err, "posix_memalign");
+        memset(pkt, 0, kSector);
+        time_t now = time(nullptr);
+        struct tm tm;
+        localtime_r(&now, &tm);
+        size_t o = 0;
+        if (board_v1) {
+            pkt[o++] = kOpSetTime, pkt[o++] = 0, pkt[o++] = 7, pkt[o++] = 0;
+        } else {
+            pkt[o++] = kOpSetTime, pkt[o++] = 7;
+        }
+        const uint16_t year = uint16_t(tm.tm_year + 1900);
+        pkt[o++] = uint8_t(year & 0xFF), pkt[o++] = uint8_t(year >> 8);
+        pkt[o++] = uint8_t(tm.tm_mon + 1), pkt[o++] = uint8_t(tm.tm_mday);
+        pkt[o++] = uint8_t(tm.tm_hour), pkt[o++] = uint8_t(tm.tm_min), pkt[o++] = uint8_t(tm.tm_sec);
+        // Second descriptor: our read fd holds O_EXCL, a plain open next to it is allowed.
+        int wfd = ::open(path_.c_str(), O_WRONLY | O_DIRECT | O_SYNC | O_CLOEXEC);
+        bool ok = wfd >= 0 && pwrite(wfd, pkt, kSector, off_t(lay_.cmd_w) * kSector) == ssize_t(kSector);
+        const int e = errno;
+        if (wfd >= 0) ::close(wfd);
+        free(pkt);
+        return ok ? true : fail(err, std::string("time sync write: ") + strerror(e));
+    }
 
 private:
     static constexpr uint32_t kBufSize = 1u << 20;
@@ -269,8 +306,70 @@ private:
         return out;
     }
 
+    // All 32-byte entries of a directory (root of FAT12/16 by LBA, otherwise by cluster chain).
+    bool read_dir(const Fat &f, int64_t clus, std::vector<uint8_t> *dir) {
+        dir->clear();
+        if (clus < 2) return f.kind != 32 && sec(f.root_lba, f.root_secs * kSector, dir);
+        for (uint32_t c : chain(f, clus, 64)) {
+            std::vector<uint8_t> s;
+            if (!sec(f.data_lba + (c - 2) * f.spc, f.spc * kSector, &s)) return false;
+            dir->insert(dir->end(), s.begin(), s.end());
+        }
+        return !dir->empty();
+    }
+    // Looks `name` up (long name or 8.3, ASCII, case-insensitive). Returns the first cluster, -1 if absent.
+    int64_t lookup(const Fat &f, const std::vector<uint8_t> &dir, const std::string &name, bool *is_dir) {
+        auto lower = [](std::string v) { for (char &c : v) c = char(tolower(uint8_t(c))); return v; };
+        const std::string want = lower(name);
+        std::string lfn;
+        for (size_t i = 0; i + 32 <= dir.size() && dir[i]; i += 32) {
+            const uint8_t *e = &dir[i];
+            if (e[0] == 0xE5) { lfn.clear(); continue; }
+            if (e[11] == 0x0F) {  // long-name part, stored last part first
+                static const int pos[13] = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
+                std::string part;
+                for (int k : pos) {
+                    const uint16_t ch = rd16(e + k);
+                    if (ch == 0 || ch == 0xFFFF) break;
+                    part += ch < 0x80 ? char(ch) : '?';
+                }
+                lfn = part + lfn;
+                continue;
+            }
+            if (e[11] & 0x08) { lfn.clear(); continue; }  // volume label
+            std::string base(reinterpret_cast<const char *>(e), 8), ext(reinterpret_cast<const char *>(e + 8), 3);
+            while (!base.empty() && base.back() == ' ') base.pop_back();
+            while (!ext.empty() && ext.back() == ' ') ext.pop_back();
+            const std::string shortn = ext.empty() ? base : base + "." + ext;
+            const bool hit = (!lfn.empty() && lower(lfn) == want) || lower(shortn) == want;
+            lfn.clear();
+            if (!hit) continue;
+            *is_dir = e[11] & 0x10;
+            return (f.kind == 32 ? uint32_t(rd16(e + 20)) << 16 : 0) | rd16(e + 26);
+        }
+        return -1;
+    }
+    // True when Android/data/com.fvision.camera/HWC exists and its clusters contain `lba`.
+    bool hwc_covers(const Fat &f, uint32_t lba) {
+        int64_t clus = f.kind == 32 ? int64_t(f.root_clus) : 0;
+        std::vector<uint8_t> dir;
+        bool is_dir = true;
+        for (const char *comp : {"Android", "data", "com.fvision.camera", "HWC"}) {
+            if (!is_dir || !read_dir(f, clus, &dir)) return false;
+            clus = lookup(f, dir, comp, &is_dir);
+            if (clus < 2) return false;
+        }
+        if (is_dir) return false;
+        for (uint32_t c : chain(f, clus, 4096)) {
+            const uint32_t l0 = f.data_lba + (c - 2) * f.spc;
+            if (lba >= l0 && lba < l0 + f.spc) return true;
+        }
+        return false;
+    }
+
     bool validate(std::string *err) {
         vs_begin_ = vs_end_ = 0;
+        cmd_ok_ = false;
         std::vector<uint8_t> b;
         if (!sec(0, kSector, &b)) return fail(err, "read LBA 0 failed");
         if (b[510] != 0x55 || b[511] != 0xAA) return fail(err, "LBA 0 has no MBR signature");
@@ -328,6 +427,7 @@ private:
         desc_ = d;
         if (lay_.info < r0 || lay_.info + 1 + 16 + 1 > r0 + rn)
             return fail(err, std::string("VSFILE does not cover the info sector: ") + d);
+        cmd_ok_ = hwc_covers(f, lay_.cmd_w);  // before the read window closes on VSFILE
         // As in the app and dvr_probe.py, only info + audio + the first video sector must lie in
         // VSFILE: on the tested unit VSFILE is 192 KiB, and frames run past its end (the firmware
         // serves those LBAs live). Reads stay within [VSFILE start, video + max frame + kick].
@@ -341,6 +441,7 @@ private:
     std::string path_, desc_;
     Layout lay_ = kLayoutB;
     uint32_t vs_begin_ = 0, vs_end_ = 0;
+    bool cmd_ok_ = false;
     int io_errno_ = 0;
 };
 
@@ -495,16 +596,19 @@ bool write_preview(const std::string &path, const uint8_t *jpg, size_t n) {
 
 struct Options {
     std::string dev;
-    bool autodetect = false, verbose = false, no_preview = false;
+    bool autodetect = false, verbose = false, no_preview = false, set_time = true;
     uint64_t frames = 0;
 };
 
 void usage() {
     fprintf(stderr,
-            "usage: camerad-dvr (--auto | --dev /dev/sdX) [--verbose] [--frames N] [--no-preview]\n"
+            "usage: camerad-dvr (--auto | --dev /dev/sdX) [--verbose] [--frames N] [--no-preview] [--no-set-time]\n"
             "  --auto        first whole-disk block device whose USB parent is 1902:3241\n"
             "  --dev PATH    that block device (refused unless it is 1902:3241)\n"
-            "Read-only: never writes to the device. Needs read access to the raw disk (root or group disk).\n"
+            "  --no-set-time do not send the time sync (then the camera leaves the bus once ~28 s after power-up)\n"
+            "Writes one sector per connection: the vendor app's time sync, to the command sector of the HWC\n"
+            "file, and only when the FAT confirms that sector belongs to HWC. Everything else is read-only.\n"
+            "Needs access to the raw disk (root or group disk).\n"
             "env: ROADSENSE_RUNDIR (default /run/roadsense), ROADSENSE_CONFIG_DIR (default /etc/roadsense,\n"
             "     file camera-dvr.json), ROADSENSE_RING (default /dev/shm/roadsense-frames)\n");
 }
@@ -524,7 +628,7 @@ int run(const Options &opt, const Config &cfg) {
 
     uint64_t seq = 0, gaps = 0, rejected = 0, decode_fail = 0, warnings_total = 0, reconnects = 0, polls = 0;
     uint32_t last_vseq = 0;
-    bool have_vseq = false;
+    bool have_vseq = false, time_sent = false;
     int retry_same = 0;
     int64_t last_new_ns = 0, rt_off = 0, next_rt = 0, next_stat = 0;
     std::deque<int64_t> ts_hist;
@@ -542,6 +646,7 @@ int run(const Options &opt, const Config &cfg) {
             else if (dev.open(path, &err)) {
                 fprintf(stderr, "camerad-dvr: %s: %s\n", path.c_str(), dev.describe().c_str());
                 have_vseq = false;
+                time_sent = false;
                 last_err.clear();
                 ++reconnects;
             }
@@ -605,6 +710,16 @@ int run(const Options &opt, const Config &cfg) {
         if (!h.valid) {
             sleep_us(10000);
             continue;
+        }
+        if (opt.set_time && !time_sent) {  // once per connection, on the first valid info sector
+            time_sent = true;
+            std::string terr;
+            const bool board_v1 = b[0x34] == 0xE9;
+            if (dev.set_time(board_v1, &terr))
+                fprintf(stderr, "camerad-dvr: time sync sent (board %s)\n", board_v1 ? "v1" : "v0");
+            else
+                fprintf(stderr, "camerad-dvr: time sync not sent: %s\n", terr.c_str());
+            continue;  // b points into the device buffer; poll again
         }
         if (have_vseq && h.vseq == last_vseq) {
             if (!h.playback && t_seen - last_new_ns > 400000000) {  // stalled: the app's dummy "kick" read
@@ -693,6 +808,7 @@ int main(int argc, char **argv) {
         else if (a == "--dev" && i + 1 < argc) opt.dev = argv[++i];
         else if (a == "--verbose" || a == "-v") opt.verbose = true;
         else if (a == "--no-preview") opt.no_preview = true;
+        else if (a == "--no-set-time") opt.set_time = false;
         else if (a == "--frames" && i + 1 < argc) opt.frames = strtoull(argv[++i], nullptr, 10);
         else {
             usage();

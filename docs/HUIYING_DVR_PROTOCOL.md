@@ -99,7 +99,7 @@ If the CBW transfer fails, the app calls `libusb_reset_device` and then re-initi
    - The data starts directly with the JPEG: there is no header inside the video area.
 6. If the sequence did not change, sleep 20 ms. After 20 such polls, unless in playback mode, the app does a dummy "kick" read of `(size & ~0x1FF) + 0x1400` bytes from the video region and discards the data.
 
-**No start or stop command exists.** `startPreview()` only creates threads. The first command the app sends after init is a time sync (opcode 11), 2 s later in endpoint mode. Its purpose appears to be the clock, not streaming. (Conf: M that no command is needed for video.)
+**No start or stop command exists.** `startPreview()` only creates threads. The first command the app sends after init is a time sync (opcode 11), 2 s later in endpoint mode. Its purpose appears to be the clock, not streaming. (Conf: M that no command is needed for video.) **Update 2026-11-17 (H, measured):** no command is needed for video, but without the time sync the camera leaves the USB bus once, 28 s after power-up, for about 5 s; with it, it stays. See PHONE_DVR_DEPLOY.md "USB drop-outs after power-up".
 
 Frame rate is not set by the host. It is whatever rate the firmware advances the sequence at. The app derives a frame-cache depth from an observed rate of more than 1000 bytes/ms.
 

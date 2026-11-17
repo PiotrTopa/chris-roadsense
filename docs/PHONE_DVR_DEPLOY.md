@@ -88,6 +88,27 @@ healthy state is 0x1109 = 0x0a. Check with
 
 ## USB drop-outs after power-up
 
+**Fixed in camerad-dvr (2026-11-17): the drop-out is the camera waiting for the vendor app's first
+command.** The app sends a time sync (opcode 11, `CAM_SET_TIME`) about 2 s after it connects; a
+host that only reads never does, and the camera then re-enumerates once. Measured on the car, hub
+power switched by relay, 20-30 s off between runs:
+
+| | runs | camera left the bus |
+|---|---|---|
+| nothing sent (with or without reads of the info sector) | 4 | 4, at 28.0-28.7 s after power, back after 4.7-4.9 s (once not within 47 s) |
+| time sync once, 3-4 s after the camera appeared | 5 | 0 in the 75-110 s watched |
+| time sync every 5 s | 1 | 0 in 75 s |
+| camerad-dvr with the fix, started 13 s after power | 3 | 0 in 110 s, frames flowing |
+
+camerad-dvr now sends that one sector on the first valid info sector of every connection
+(`time sync sent` in its log). It writes only when the FAT shows `Android/data/com.fvision.camera/HWC`
+and the command sector (LBA 0x340 layout A, 0x2C0 layout B) lies inside that file; otherwise it logs
+`time sync not sent` and stays read-only, as with `--no-set-time`. The camera's clock is set to the
+host's local time as a side effect. The command must arrive before the ~28 s mark: a camera powered
+long before the daemon starts (early camera power) still does its one drop-out, before the stream is
+needed. The text below describes the behaviour without the command.
+
+
 The DVR camera leaves the USB bus once after every power-up: it enumerates 2-4 s after its hub
 gets power, disconnects 24-39 s later and is back after 4-5 s. On some cold starts (first power-up
 after hours unpowered) it stayed away about 120 s, came back for 2 s, left again for 4 s. While it
