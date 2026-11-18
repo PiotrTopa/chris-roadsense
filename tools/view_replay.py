@@ -6,8 +6,8 @@ the display channel (docs/lanes/L19-view-channel.md).
     tools/view_replay.py SESSION/messages.jsonl.gz [--ws OUT.jsonl.gz] [--api DIR]
 
 The session holds `road` (reduced), `lights` (annotated as they went out), `signs`, `ego`, `map`, `calib`;
-`lead`, `lanes` and `view` are recomputed here exactly as the api does (api/roadsense_api/state.py order:
-road -> lead -> lanes -> view).
+`lead`, `lanes`, the ego lane, the road geometry, `view` (with `view.road`) and `fused` are recomputed in the
+api's order (tools/replay_lib.py, which mirrors api/roadsense_api/state.py).
 
 Printed (per drawn frame = per road frame, what a consumer that draws at the model's rate sees):
 
@@ -38,40 +38,10 @@ if "--api" in sys.argv:
     _API = sys.argv[sys.argv.index("--api") + 1]
 sys.path.insert(0, _API)
 
-from roadsense_api.lanes import RoadGeometryTracker      # noqa: E402
-from roadsense_api.lead import LeadTracker               # noqa: E402
-from roadsense_api.view import ViewBuilder               # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from replay_lib import Pipeline, read_session            # noqa: E402
 
 NS = 1e9
-
-
-def lines(path):
-    """JSON objects of a plain or gzip file; a truncated gzip stream yields what is complete."""
-    with open(path, "rb") as f:
-        if path.endswith(".gz"):
-            d, buf = zlib.decompressobj(31), b""
-            while True:
-                chunk = f.read(1 << 20)
-                if not chunk:
-                    break
-                try:
-                    buf += d.decompress(chunk)
-                except zlib.error:
-                    break
-                *full, buf = buf.split(b"\n")
-                for ln in full:
-                    if ln.startswith(b"{"):
-                        try:
-                            yield json.loads(ln)
-                        except ValueError:
-                            pass
-        else:
-            for ln in f:
-                if ln.startswith(b"{"):
-                    try:
-                        yield json.loads(ln)
-                    except ValueError:
-                        pass
 
 
 def interp(xs, ys, x):
@@ -106,64 +76,93 @@ def main():
     ap.add_argument("session")
     ap.add_argument("--ws")
     ap.add_argument("--api")
+    ap.add_argument("--map", help="`map` messages of a mapd replay (tools/map_replay.py --out) instead of the recorded ones")
+    ap.add_argument("--set", action="append", default=[], help="view option KEY=VALUE (JSON), e.g. line_motion=false")
     a = ap.parse_args()
-    lead_tr, lanes_tr, view = LeadTracker(), RoadGeometryTracker(), ViewBuilder()
-    intr = (975.0, 640.0, 360.0, 1280, 720)
+    vcfg = {}
+    for kv in a.set:
+        k, _, v = kv.partition("=")
+        vcfg[k] = json.loads(v)
+    pipe = Pipeline(vcfg)
     out = gzip.open(a.ws, "wt") if a.ws else None
     frames = []
     last_light = None            # last lights.ego (measured, as a consumer holds it)
-    cost, nview = 0.0, 0
+    nview = 0
     t_first = t_last = None
+    road_stats = {"frames": 0, "moving": 0, "map_used": 0, "trusted": 0, "approx": 0, "junction": 0,
+                  "junction_approx": 0, "lanes": 0, "ego": 0, "likely": 0, "turn": 0, "bytes": 0}
 
     def emit(m, rx):
         if out is not None:
             out.write(json.dumps(dict(m, _rx_s=round(rx, 4)), separators=(",", ":")) + "\n")
 
-    for m in lines(a.session):
+    cost = 0.0
+    for m in read_session(a.session, a.map):
         t = m.get("type")
         ts = m.get("ts_mono_ns")
-        if t == "calib" and m.get("focal_px"):
-            intr = (float(m["focal_px"]), float(m.get("cx") or 640), float(m.get("cy") or 360),
-                    int(m.get("width") or 1280), int(m.get("height") or 720))
-        if t == "ego":
-            lead_tr.on_ego(m)
-            lanes_tr.on_ego(m)
-            view.on_ego(m)
-            continue
-        if t == "map":
-            lanes_tr.on_map(m)
         if t == "lights":
-            view.on_lights(m)
             last_light = (ts, m.get("ego"))
-        if t == "signs":
-            view.on_signs(m, intr)
-        if t in ("lights", "signs", "env", "speed_limit", "rules", "fused", "map") and isinstance(ts, int):
-            emit(m, ts / NS + 0.11)
-        if t != "road" or not isinstance(ts, int):
+        if t in ("ego", "vehicle", "camera", "calib"):
+            pipe.feed(m)
             continue
-        rx = ts / NS + (m.get("model_ms") or 60.0) / 1e3 + 0.01
-        emit(m, rx)
-        ld = lead_tr.on_road(m)
-        ln = lanes_tr.on_road(m)
         t0 = time.perf_counter()
-        vw = view.on_frame(m, ld, ln)
+        outs = pipe.feed(m)
+        if t != "road" or not isinstance(ts, int):
+            for x in outs:
+                if isinstance(x.get("ts_mono_ns"), int):
+                    emit(x, x["ts_mono_ns"] / NS + 0.11)
+            continue
         cost += time.perf_counter() - t0
+        rx = ts / NS + (m.get("model_ms") or 60.0) / 1e3 + 0.01
+        by = {x.get("type"): x for x in outs}
+        for x in outs:
+            emit(x, rx if x is m else rx + 0.001)
+        ld, ln, vw = by.get("lead"), by.get("lanes"), by.get("view")
+        if vw is None:
+            continue
         nview += 1
-        for x in (ld, ln, vw):
-            if x is not None:
-                emit(x, rx + 0.001)
         t_first = t_first or ts
         t_last = ts
-        frames.append({"t": ts / NS, "lead": ld, "lanes": ln, "view": vw, "light": last_light,
-                       "v": (vw or {}).get("ego", {}).get("speed_mps", 0.0)})
+        rd = vw["road"]
+        v = vw["ego"]["speed_mps"]
+        road_stats["frames"] += 1
+        if v >= 3.0:
+            road_stats["moving"] += 1
+            road_stats["map_used"] += bool(rd["map"].get("used"))
+            road_stats["trusted"] += bool(rd["position"] and rd["position"]["trusted"])
+            road_stats["approx"] += bool(rd["position"] and rd["position"]["trusted"] and rd["position"]["approximate"])
+            road_stats["junction"] += rd["junction"] is not None
+            road_stats["junction_approx"] += bool(rd["junction"] and rd["junction"]["approximate"])
+            road_stats["lanes"] += rd["lanes"]["forward"] is not None
+            road_stats["ego"] += rd["lanes"]["ego_index"] is not None
+            road_stats["likely"] += rd["lanes"]["likely_index"] is not None
+            road_stats["turn"] += rd["lanes"]["turn"] is not None
+        if nview % 50 == 0:
+            road_stats["bytes"] += len(json.dumps(rd, separators=(",", ":")))
+        raw30 = []
+        for l in (m.get("lane_lines") or [])[:4]:
+            y = interp(l.get("x") or [], l.get("y") or [], 30.0) if (l.get("prob") or 0.0) >= 0.5 else None
+            raw30.append(y)
+        frames.append({"t": ts / NS, "lead": ld, "lanes": ln, "view": vw, "light": last_light, "raw30": raw30,
+                       "v": v, "r": -(vw["ego"].get("yaw_rate_rps") or 0.0)})
     if out is not None:
         out.close()
     if not frames:
         raise SystemExit("no road messages")
     dur = (t_last - t_first) / NS
-    print("%s: %d frames, %.0f s, view %.3f ms per frame (this machine), %.1f kB per view message" % (
-        os.path.basename(os.path.dirname(os.path.abspath(a.session))), len(frames), dur, 1e3 * cost / max(1, nview),
-        sum(len(json.dumps(f["view"], separators=(",", ":"))) for f in frames[::50]) / max(1, len(frames[::50])) / 1e3))
+    print("%s: %d frames, %.0f s, the api's derived topics (lead, lanes, ego lane, geometry, view, fused) %.3f ms per "
+          "frame (this machine), %.1f kB per view message" % (
+              os.path.basename(os.path.dirname(os.path.abspath(a.session))), len(frames), dur, 1e3 * cost / max(1, nview),
+              sum(len(json.dumps(f["view"], separators=(",", ":"))) for f in frames[::50]) / max(1, len(frames[::50])) / 1e3))
+    mv = max(1, road_stats["moving"])
+    print("view.road while moving (%d frames): map layer trusted %.1f %%, of it marked approximate %.1f %%; map geometry "
+          "joined %.1f %%; junction given %.1f %% (approximate %.1f %%); lane count %.1f %%, ego lane lit %.1f %%, likely "
+          "lane only %.1f %%, turn arrows %.1f %%; %.1f kB per message" % (
+              road_stats["moving"], 100.0 * road_stats["trusted"] / mv, 100.0 * road_stats["approx"] / max(1, road_stats["trusted"]),
+              100.0 * road_stats["map_used"] / mv, 100.0 * road_stats["junction"] / mv,
+              100.0 * road_stats["junction_approx"] / mv, 100.0 * road_stats["lanes"] / mv, 100.0 * road_stats["ego"] / mv,
+              100.0 * road_stats["likely"] / mv, 100.0 * road_stats["turn"] / mv,
+              road_stats["bytes"] / max(1, nview // 50) / 1e3))
 
     # ---- ego traffic light
     meas_dx, meas_dy, view_dx, view_dy = [], [], [], []
@@ -228,6 +227,31 @@ def main():
                         best = (k, r)
             print("  %-15s %3.0f m  lanes: %s | view: %s | lag %s frames" % (
                 name, x, stats(dm, 0.3), stats(dv, 0.3), "-" if best is None else best[0]))
+            if x == 30.0:
+                # what the eye sees as a jump: the step that the car's own turning does not explain (a line
+                # that stands still in the world moves by -x * yaw * dt per frame); and how far the line is
+                # from where the camera saw it: the reference is the raw model line at 30 m averaged over
+                # +-3 frames around the frame (zero phase: no lag, less noise), in turns (|yaw rate| > 0.05
+                # rad/s) and elsewhere. A filter that lags shows up in the turning number.
+                ref = [None] * len(frames)
+                if kind == "lane":
+                    for i in range(3, len(frames) - 3):
+                        w = [frames[k]["raw30"][idx] if len(frames[k]["raw30"]) > idx else None for k in range(i - 3, i + 4)]
+                        if all(v is not None for v in w) and max(w) - min(w) < 1.5 \
+                                and frames[i + 3]["t"] - frames[i - 3]["t"] < 0.7:
+                            ref[i] = sum(w) / 7.0
+                for label, ys in (("lanes", ym), ("view", yv)):
+                    res, turn_err, str_err = [], [], []
+                    for i in range(1, len(ys)):
+                        f0, f1 = frames[i - 1], frames[i]
+                        dt = f1["t"] - f0["t"]
+                        if ys[i] is None or ys[i - 1] is None or not 0 < dt < 0.3:
+                            continue
+                        res.append(ys[i] - ys[i - 1] + x * f1["r"] * dt)
+                        if ref[i] is not None:
+                            (turn_err if abs(f1["r"]) > 0.05 else str_err).append(ys[i] - ref[i])
+                    print("  %-15s %3.0f m  %-5s step after the car's turning: %s | off the camera's line: turning rms %.3f (n %d), else rms %.3f" % (
+                        name, x, label, stats(res, 0.3), rms(turn_err), len(turn_err), rms(str_err)))
         print("  %-15s        on/off without a fade: lanes %d, view %d" % (name, pm, pv))
 
     # ---- lead

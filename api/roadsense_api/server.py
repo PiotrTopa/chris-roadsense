@@ -208,9 +208,16 @@ async def h_view(req):
 
 
 async def h_roadgeom(req):
-    st = req.app["state"]
-    msg = st.latest.get("roadgeom")
-    return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
+    """The topic `roadgeom` of api 1 is the `road` object of `view` since 2.0."""
+    return _json({"error": "gone in api 2: the fused road geometry is view.road (GET /v2/view, /ws?topics=view)",
+                  "see": "/v2/view"}, 410)
+
+
+async def h_version(req):
+    from . import API_MAJOR, __version__
+    from .state import TOPICS
+    return _json({"name": "roadsense-api", "version": __version__, "api": API_MAJOR, "topics": list(TOPICS),
+                  "paths": "/v2/...; the /v1/... paths are aliases of the same handlers and will go"})
 
 
 async def h_vehicle(req):
@@ -407,25 +414,32 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
     app.on_shutdown.append(shutdown)
     app.on_cleanup.append(cleanup)
     app.router.add_get("/", h_index)
-    app.router.add_get("/v1/road", h_road)
-    app.router.add_get("/v1/signs", h_signs)
-    app.router.add_get("/v1/signs/history", h_signs_history)
-    app.router.add_get("/v1/env", h_env)
-    app.router.add_get("/v1/speed_limit", h_speed_limit)
-    app.router.add_get("/v1/rules", h_rules)
-    app.router.add_get("/v1/lights", h_lights)
-    app.router.add_get("/v1/map", h_map)
-    app.router.add_get("/v1/fused", h_fused)
-    app.router.add_get("/v1/lead", h_lead)
-    app.router.add_get("/v1/lanes", h_lanes)
-    app.router.add_get("/v1/view", h_view)
-    app.router.add_get("/v1/roadgeom", h_roadgeom)
-    app.router.add_post("/v1/position", h_position)
-    app.router.add_get("/v1/vehicle", h_vehicle)
-    app.router.add_post("/v1/vehicle", h_position)
-    app.router.add_get("/v1/camera", h_camera)
-    app.router.add_get("/v1/health", h_health)
-    app.router.add_get("/v1/frame.jpg", h_frame)
+    # api 2: every resource under /v2; /v1 is an alias of the same handlers (the content is that of api 2 on
+    # both: docs/ARCHITECTURE.md "roadsense 2.0: what changed") and will go
+    for method, name, handler in (
+            ("GET", "road", h_road),
+            ("GET", "signs", h_signs),
+            ("GET", "signs/history", h_signs_history),
+            ("GET", "env", h_env),
+            ("GET", "speed_limit", h_speed_limit),
+            ("GET", "rules", h_rules),
+            ("GET", "lights", h_lights),
+            ("GET", "map", h_map),
+            ("GET", "fused", h_fused),
+            ("GET", "lead", h_lead),
+            ("GET", "lanes", h_lanes),
+            ("GET", "view", h_view),
+            ("GET", "roadgeom", h_roadgeom),
+            ("POST", "position", h_position),
+            ("GET", "vehicle", h_vehicle),
+            ("POST", "vehicle", h_position),
+            ("GET", "camera", h_camera),
+            ("GET", "health", h_health),
+            ("GET", "frame.jpg", h_frame),
+            ("GET", "version", h_version),
+    ):
+        for prefix in ("/v2/", "/v1/"):
+            app.router.add_route(method, prefix + name, handler)
     app.router.add_get("/preview", h_preview)
     app.router.add_get("/ws", h_ws)
     app.router.add_route("OPTIONS", "/{tail:.*}", h_options)
@@ -461,7 +475,7 @@ const f = (v, d=1) => v == null ? "-" : Number(v).toFixed(d);
 async function get(u){ const r = await fetch(u, {cache:"no-store"}); return r.ok ? r.json() : null; }
 async function tick(){
   try {
-    const h = await get("/v1/health");
+    const h = await get("/v2/health");
     if (h) {
       let s = "";
       for (const [d, v] of Object.entries(h.daemons))
@@ -471,36 +485,36 @@ async function tick(){
       s += `cpu ${f(h.cpu_temp_c)} C  ` + h.battery.map(b => `${b.name} ${b.capacity}% ${b.status || ""}`).join("  ");
       $("health").innerHTML = s;
     }
-    const cam = await get("/v1/camera");
+    const cam = await get("/v2/camera");
     $("ride").textContent = cam && cam.ride ? `Ride: ${cam.ride} \u2014 ${cam.author || "unknown author"}, ` +
       `${cam.licence || "licence unknown"}` + (cam.playlist ? `  (${cam.ride_index + 1}/${cam.ride_count}, ` +
       `${f(cam.ride_t_s / 60, 0)}/${f(cam.ride_duration_s / 60, 0)} min)` : "") : "";
-    const r = await get("/v1/road");
+    const r = await get("/v2/road");
     if (r) {
       const names = ["far left", "left", "right", "far right"];
       let s = (r.lane_lines || []).map((l, i) => `${names[i] || i}: p ${f(l.prob, 2)}`).join("\\n");
-      const tl = await get("/v1/lanes");
+      const tl = await get("/v2/lanes");
       if (tl) s += "\\ntracked: lines " + tl.lines.map(l => l.present ? (l.mode === "coast" ? "c" : "|") : ".").join("") +
         "  edges " + tl.edges.map(l => l.present ? "|" : ".").join("") + `  width ${f(tl.lane_width_m)} m  (${tl.source})`;
       const lead = (r.leads || [])[0];
       s += "\\nlead (raw): " + (lead ? `${f(lead.x[0])} m  p ${f(lead.prob, 2)}  v ${f(lead.v[0])} m/s` : "-");
-      const ld = await get("/v1/lead");
+      const ld = await get("/v2/lead");
       s += "\\nlead (tracked): " + (ld && ld.present ? `${f(ld.dist_m)} +- ${f(ld.dist_std_m)} m  v_rel ${f(ld.v_rel_mps)} m/s  ` +
         `gap ${f(ld.time_gap_s)} s  ${ld.mode}${ld.departed ? " DEPARTED" : ""}  ego ${f(ld.ego.speed_mps)} m/s (${ld.ego.source})` : "-");
       s += `\\nseq ${r.seq}  model ${f(r.model_ms, 0)} ms`;
       $("road").textContent = s;
     } else $("road").textContent = "no data";
-    const sg = await get("/v1/signs");
+    const sg = await get("/v2/signs");
     $("signs").textContent = sg && sg.live_tracks.length
       ? sg.live_tracks.map(t => `#${t.track_id} ${t.cls} ${f(t.score, 2)} hits ${t.hits}`).join("\\n") : "none";
-    const ev = await get("/v1/env");
+    const ev = await get("/v2/env");
     $("env").textContent = ev ? ["place", "weather", "light"].map(g => {
         const r = ev[g] || {};
         const top = Object.entries(r.scores || {}).sort((a, b) => b[1] - a[1]).slice(0, 3)
           .map(([k, v]) => `${k} ${f(v, 2)}`).join(", ");
         return `${g.padEnd(8)} ${(r.label || "-").padEnd(20)} conf ${f(r.confidence, 2)}  stable ${f(r.stable_s, 0)} s  [${top}]`;
       }).join("\\n") + `\\nluma ${f(ev.stats && ev.stats.luma, 0)}  ${ev.model || ""}  ${f(ev.env_ms, 0)} ms` : "no data";
-    const sl = await get("/v1/speed_limit");
+    const sl = await get("/v2/speed_limit");
     $("speed").textContent = sl ? [
         `limit ${sl.limit_kmh == null ? "unknown" : sl.limit_kmh + " km/h"}  conf ${f(sl.confidence, 2)}  ` +
           (sl.source.kind === "sign" ? `${sl.source.sign} #${sl.source.track_id}` : `${sl.source.kind} ${sl.source.rule || ""}`),
@@ -510,7 +524,7 @@ async function tick(){
         ...sl.pending.map(p => `pending #${p.track_id} ${p.sign} ${p.value_kmh || ""} hits ${p.hits} q ${f(p.quality, 2)}`),
         ...(sl.recent_changes || []).slice(0, 3).map(c => `  ${f(c.odo_m, 0)} m: ${c.event}`)
       ].filter(Boolean).join("\\n") : "no data";
-    const ru = await get("/v1/rules");
+    const ru = await get("/v2/rules");
     $("rules").textContent = ru ? [
         ...(ru.in_effect.length ? ru.in_effect.map(e => `${e.sign.padEnd(6)} ${(e.name + (e.value != null ? " " + e.value + " " + (e.unit || "") : "")).padEnd(34)} ` +
           `${e.side ? "(" + e.side + ") " : ""}since ${f(e.since.distance_m, 0)} m / ${f(e.since.age_s, 0)} s  conf ${f(e.confidence, 2)}  ` +
@@ -524,7 +538,7 @@ async function tick(){
         ...(ru.pending || []).map(p => `pending #${p.track_id} ${p.sign} ${p.id} hits ${p.hits} q ${f(p.quality, 2)}`),
         ...(ru.recent_changes || []).slice(0, 4).map(c => `  ${f(c.odo_m, 0)} m: ${c.event}`)
       ].join("\\n") : "no data";
-    const lt = await get("/v1/lights");
+    const lt = await get("/v2/lights");
     $("lights").textContent = lt ? [
         lt.ego ? `ego ${lt.ego.state}${lt.ego.flashing ? " (flashing)" : ""}  #${lt.ego.track_id}  ${f(lt.ego.dist_m, 0)} m  ` +
           `lat ${f(lt.ego.lateral_m, 1)} m  rel ${f(lt.ego.relevance, 2)}  agree ${lt.ego.agree}/${lt.ego.n_relevant}  (${lt.ego.source})` : "ego: none",
@@ -532,7 +546,7 @@ async function tick(){
           `lat ${f(l.lateral_m, 1)}  rel ${f(l.relevance, 2)}  hits ${l.hits}${l.ego ? "  EGO" : ""}`),
         `${f(lt.lights_ms, 0)} ms`
       ].join("\\n") : "no data";
-    const mp = await get("/v1/map");
+    const mp = await get("/v2/map");
     $("map").textContent = mp ? [
         `position ${mp.state}` + (mp.position ? `  ${f(mp.position.lat, 5)} ${f(mp.position.lon, 5)}  +-${f(mp.position.hacc_m, 0)} m  ` +
           `hdg ${f(mp.position.heading_deg, 0)}  ${f(mp.position.speed_mps * 3.6, 0)} km/h  motion ${mp.position.motion_source}` : ""),
@@ -545,7 +559,7 @@ async function tick(){
           (mp.ahead.curves.length ? `  curve ${mp.ahead.curves[0].direction} R ${f(mp.ahead.curves[0].min_radius_m, 0)} m in ${f(mp.ahead.curves[0].start_m, 0)} m` : "") : "",
         mp.pack ? `pack ${mp.pack.region} OSM ${mp.pack.osm_timestamp}  (c) OpenStreetMap contributors` : "no pack"
       ].filter(Boolean).join("\\n") : "mapd not running";
-    const fu = await get("/v1/fused");
+    const fu = await get("/v2/fused");
     $("fused").textContent = fu ? [
         `limit ${fu.speed_limit.limit_kmh == null ? "unknown" : fu.speed_limit.limit_kmh + " km/h"}  ${fu.speed_limit.source}  conf ${f(fu.speed_limit.confidence, 2)}  (${fu.speed_limit.agreement})` +
           (fu.speed_limit.note ? `  ${fu.speed_limit.note}` : ""),
@@ -553,7 +567,7 @@ async function tick(){
         `lanes ${fu.lanes.count == null ? "-" : fu.lanes.count}  ego ${fu.lanes.ego_index == null ? "-" : fu.lanes.ego_index}  oncoming left ${fu.lanes.oncoming_left == null ? "-" : fu.lanes.oncoming_left}  (${fu.lanes.source})`,
         `tunnel ${fu.tunnel.in_tunnel}` + (fu.tunnel.exit_in_m != null ? `  exit in ${f(fu.tunnel.exit_in_m, 0)} m` : "") + `  (${fu.tunnel.source})`
       ].join("\\n") : "no data";
-    const vh = await get("/v1/vehicle");
+    const vh = await get("/v2/vehicle");
     if (vh && vh.present) {
       const sg = k => vh.signals[k] ? ` [${vh.signals[k].quality}, ${vh.signals[k].source || "-"}]` : "";
       const row = (g, k) => vh[g][k] == null ? null : `${k} ${JSON.stringify(vh[g][k])}${sg(k)}`;

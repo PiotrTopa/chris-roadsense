@@ -26,7 +26,10 @@ Object model (all in the car's frame of the `road` topic: x forward from the cam
   point, for extrapolation), "reach_m" (the line is drawn up to here: the tracker's sigma under 1 m), "conf",
   "age_s", "phase", "alpha"}.
 * `path`: {"y"} the model's planned path at `x` (null beyond its end), as measured (not smoothed).
-* `road`: null. Reserved for the fused road geometry (topic `roadgeom`, lane L20) when it is merged here.
+* `road`: the road as one picture (roadview.py): the ego lane's centre line from the camera near the car and
+  from the map beyond, side roads, a roundabout, the junction ahead with its arms, the lane count with the
+  probability per lane and the ego lane, painted turn arrows; each part with its provenance, a confidence and
+  an `approximate` mark when the position under it is weak or dead-reckoned.
 
 Display filtering, and what it costs (the measurement topics are untouched):
 
@@ -36,9 +39,12 @@ Display filtering, and what it costs (the measurement topics are untouched):
   approaches smoothly at the car's speed instead of stepping by its distance error three times a second.
 * Lead: the `lead` topic's tracked values as they are (no added lag), with a fade on appear / disappear and the
   relative speed as `vx`.
-* Lines: the `lanes` topic's geometry with a short critically damped smoothing (`line_tau_s`, 0.1 s) and a
-  blend over `shift_s` when the tracker restarts a line on another lane marking (a lane change, a junction),
-  and a fade when a line comes or goes. The display may trail the measurement by about `line_tau_s`.
+* Lines: the `lanes` topic's geometry through two first-order stages whose time constant grows with the
+  distance (`line_tau_s` + `line_tau_rel` x: 0.1 s at the car, 0.28 s at 30 m), a blend over `shift_s` when the
+  tracker restarts a line on another lane marking (a lane change, a junction), and a fade when a line comes or
+  goes. The display trails the measurement by about twice that time constant: smoothness is chosen over
+  latency here (owner's ruling 2026-11-18: the display is informational; latency matters on the measurement
+  topics). `dy` is the rate at which each point moves, for a consumer that draws between two messages.
 * Everything that is predicted, not measured, says so (`meas_age_s`, `phase: "coast"`), and leaves after a
   bounded time (`static_keep_s`, `obj_fade_s`).
 
@@ -46,11 +52,20 @@ No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC 
 """
 import math
 
+from .roadview import RoadView
+
 NS = 1e9
 
 DEFAULT_CFG = dict(
     xs=(0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 100.0, 120.0),
-    line_tau_s=0.1,              # display smoothing of the line points (critically damped, two first-order stages)
+    line_tau_s=0.1, line_tau_rel=0.006,   # display smoothing of the line points (critically damped, two first-order
+                                 # stages), per stage line_tau_s + line_tau_rel * distance: 0.1 s at the car,
+                                 # 0.28 s at 30 m. The far part is where a line steps on the display (its noise
+                                 # and its sweep in a turn grow with the distance); the near part stays tight
+    line_motion=False,           # carry the drawn lines by the car's motion between frames (slide by the distance
+                                 # driven, turn by the yaw) and smooth only the rest. Implemented and off: on the
+                                 # recorded drives it predicts the next frame no better than "the line stays
+                                 # where it is in the car's frame" (docs/lanes/L22-v2-integration.md)
     line_reach_std_m=1.0,        # a line point whose tracker sigma exceeds this is past the line's reach
     shift_m=0.8, shift_s=0.4,    # a line that moves this much in one frame (a track restart) blends over shift_s
     fade_s=0.3,                  # fade in / out of lines and objects
@@ -163,6 +178,7 @@ class _Line:
 class ViewBuilder:
     def __init__(self, cfg=None):
         self.cfg = dict(DEFAULT_CFG, **(cfg or {}))
+        self.road_cfg = self.cfg.pop("road", None)
         self.reset()
 
     def reset(self):
@@ -174,6 +190,7 @@ class ViewBuilder:
         self.lead = None                       # {"id", "x", "y", "vx", "t0", "ts", "alpha", "msg"}
         self.plan = None                       # (x, y) of the last road plan (light positions: offset + path)
         self.seen = {}                         # id -> first-seen ts (age across fade-out / back in)
+        self.road = RoadView(self.road_cfg)    # the road part (roadview.py)
 
     # ---- inputs ------------------------------------------------------------------------------------------
     def on_ego(self, msg):
@@ -281,16 +298,20 @@ class ViewBuilder:
                 ob.box = box
 
     # ---- one frame ---------------------------------------------------------------------------------------
-    def on_frame(self, road, lead, lanes, roadgeom=None):
-        """After the api's `lead` / `lanes` for a road frame: returns the `view` message for that frame."""
+    def on_map(self, msg):
+        self.road.on_map(msg)
+
+    def on_frame(self, road, lead, lanes, geom=None, egolane=None):
+        """After the api's `lead` / `lanes` for a road frame: returns the `view` message for that frame. `geom`:
+        RoadGeometryFusion's result for the frame; `egolane`: the ego-lane filter's."""
         c = self.cfg
         ts = road.get("ts_mono_ns")
         if not isinstance(ts, int):
             return None
         if self.ts is not None and (ts <= self.ts or ts - self.ts > c["max_gap_s"] * NS):
-            keep_ego = self.ego
+            keep_ego, keep_road = self.ego, self.road
             self.reset()
-            self.ego = keep_ego
+            self.ego, self.road = keep_ego, keep_road
         self.on_road(road)
         dt = 0.0 if self.ts is None else (ts - self.ts) / NS
         self.ts = ts
@@ -327,7 +348,8 @@ class ViewBuilder:
         return {"type": "view", "seq": road.get("seq"), "ts_mono_ns": ts, "ts_real_ns": road.get("ts_real_ns"),
                 "x": list(c["xs"]),
                 "ego": {"speed_mps": round(v, 2), "yaw_rate_rps": round(-r, 4), "source": src},   # positive left
-                "objects": objects, "lines": lines, "path": path, "road": None}
+                "objects": objects, "lines": lines, "path": path,
+                "road": self.road.on_frame(ts, v, geom, egolane)}
 
     def _lead(self, lead, ts, dt, fade):
         c = self.cfg
@@ -382,7 +404,9 @@ class ViewBuilder:
             for kind, key, names in (("lane_line", "lines", 4), ("road_edge", "edges", 2)):
                 for i, ln in enumerate((lanes.get(key) or [])[:names]):
                     src.append(("%s:%d" % ("lane" if kind == "lane_line" else "edge", i), kind, ln))
-        a = 1.0 - math.exp(-dt / c["line_tau_s"]) if dt > 0 and c["line_tau_s"] > 0 else 1.0
+        gains = [1.0 - math.exp(-dt / (c["line_tau_s"] + c["line_tau_rel"] * x)) if dt > 0 and c["line_tau_s"] > 0 else 1.0
+                 for x in xs]
+        mv, mr, _ = self._motion(ts)
         seen = set()
         for lid, kind, ln in src:
             seen.add(lid)
@@ -412,18 +436,27 @@ class ViewBuilder:
                     jump = abs(sum(near) / len(near))
                     if jump > c["shift_m"] and st.shift_t is None:
                         st.shift_t = ts
-                    k = a
+                    k = None
                     if st.shift_t is not None:
                         since = (ts - st.shift_t) / NS
                         if since < c["shift_s"]:
                             k = min(1.0, dt / max(1e-3, c["shift_s"] - since + dt))   # linear over shift_s
                         else:
                             st.shift_t = None
+                    ks = gains if k is None else [k] * len(xs)
                     prev = st.b
-                    st.a = [p + (y - p) * k for p, y in zip(st.a, ys)]
-                    st.b = [p + (y - p) * k for p, y in zip(st.b, st.a)] if st.shift_t is None else list(st.a)
-                    if dt > 0:
-                        st.dy = [0.7 * d0 + 0.3 * (b - p) / dt for d0, b, p in zip(st.dy, st.b, prev)]
+                    if c["line_motion"]:
+                        # where the drawn line is now if it stands still in the world, then a correction
+                        # towards the tracked line: the smoothing acts on the difference only
+                        pred, rate = self._carry(prev, xs, mv, mr, dt)
+                        st.b = [p + (y - p) * k for p, y, k in zip(pred, ys, ks)]
+                        st.a = list(st.b)
+                        st.dy = rate
+                    else:
+                        st.a = [p + (y - p) * k for p, y, k in zip(st.a, ys, ks)]
+                        st.b = [p + (y - p) * k for p, y, k in zip(st.b, st.a, ks)] if st.shift_t is None else list(st.a)
+                        if dt > 0:
+                            st.dy = [0.7 * d0 + 0.3 * (b - p) / dt for d0, b, p in zip(st.dy, st.b, prev)]
                 st.present, st.reach, st.conf = True, reach, ln.get("conf")
                 st.alpha = min(1.0, st.alpha + fade)
             elif st is not None:
@@ -447,9 +480,38 @@ class ViewBuilder:
             del self.lines[lid]
         return out
 
+    @staticmethod
+    def _carry(ys, xs, v, r, dt):
+        """A line that stands still in the world, one frame later in the car's frame: the car drove v dt along
+        it (the line's values slide towards the car) and turned by r dt (positive right: every point moves left
+        by its distance times the angle). Returns (ys, lateral rate per point in m/s)."""
+        shift, dpsi = max(0.0, v) * dt, r * dt
+        out, rate = [], []
+        n = len(xs)
+        j = 0
+        for i, x in enumerate(xs):
+            q = x + shift
+            while j < n - 2 and xs[j + 1] < q:
+                j += 1
+            x0, x1 = xs[j], xs[j + 1]
+            slope = (ys[j + 1] - ys[j]) / ((x1 - x0) or 1.0)
+            y = ys[j] + slope * (min(q, x1) - x0)            # beyond the last point: its value (never drawn)
+            out.append(y - x * dpsi)
+            rate.append(max(0.0, v) * slope - x * r)
+        return out, rate
+
     def summary(self, msg):
         if not msg:
             return None
-        return {"objects": len(msg["objects"]), "lines": len(msg["lines"]),
+        rd = msg.get("road") or {}
+        jn, ln = rd.get("junction") or {}, rd.get("lanes") or {}
+        return {"road": {"source": rd.get("source"), "map_used": (rd.get("map") or {}).get("used"),
+                         "map_why": (rd.get("map") or {}).get("why"),
+                         "trusted": (rd.get("position") or {}).get("trusted"),
+                         "approximate": (rd.get("position") or {}).get("approximate"),
+                         "junction": jn.get("kind"), "junction_m": jn.get("dist_m"),
+                         "lanes": ln.get("forward"), "ego_index": ln.get("ego_index"),
+                         "branches": len(rd.get("branches") or ()), "ring": bool(rd.get("ring"))},
+                "objects": len(msg["objects"]), "lines": len(msg["lines"]),
                 "lead": next((o["x"] for o in msg["objects"] if o["role"] == "lead"), None),
                 "ego_light": next((o["attrs"].get("state") for o in msg["objects"] if o["role"] == "ego"), None)}

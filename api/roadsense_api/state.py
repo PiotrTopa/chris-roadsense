@@ -18,7 +18,7 @@ from .rules import RulesInEffect
 from .speedlimit import load_rules
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd", "mapd")
-TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead", "lanes", "roadgeom",
+TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead", "lanes",
           "vehicle", "objects", "view")
 FUSED_PERIOD_S = 0.45
 SPEED_LIMIT_HEARTBEAT_S = 1.0
@@ -105,6 +105,13 @@ def load_egolane_config():
     return _load_config("egolane.json", DEFAULT_CFG)
 
 
+def load_view_config():
+    """Display channel (view.py; its `road` object: roadview.py): view.DEFAULT_CFG overridden per key by
+    <config dir>/view.json; the key `road` holds overrides of roadview.DEFAULT_CFG."""
+    from .view import DEFAULT_CFG
+    return _load_config("view.json", dict(DEFAULT_CFG, road={}))
+
+
 def load_roadgeom_config():
     """Fused road geometry (roadgeom.py): DEFAULT_CFG overridden per key by <config dir>/roadgeom.json."""
     from .roadgeom import DEFAULT_CFG
@@ -148,8 +155,8 @@ class State:
         self._fused_emit = 0.0
         self.lead = LeadTracker(load_lead_config())        # derived topic `lead` (lead.py)
         self.lanes = RoadGeometryTracker(load_lanes_config())   # derived topic `lanes` (lanes.py)
-        self.roadgeom = RoadGeometryFusion(load_roadgeom_config())   # derived topic `roadgeom` (roadgeom.py)
-        self.view = ViewBuilder()                          # derived display channel `view` (view.py)
+        self.roadgeom = RoadGeometryFusion(load_roadgeom_config())   # the road geometry inside `view.road` (roadgeom.py)
+        self.view = ViewBuilder(load_view_config())        # derived display channel `view` (view.py, roadview.py)
         self.egolane = EgoLaneEstimator(load_egolane_config())  # ego lane over time, into `fused.lanes` (egolane.py)
         self.ego_light = lights_mod.EgoLightSelector()     # the ego traffic light over time (lights.py)
         self.ego_light.lane_assign = bool(load_lights_config().get("lane_assign", True))
@@ -192,6 +199,7 @@ class State:
         if mtype == "map":         # lane count of the matched road: a soft prior for the outer lane lines
             self.lanes.on_map(msg)
             self.roadgeom.on_map(msg)
+            self.view.on_map(msg)
             self.egolane.on_map(msg)
             self.ego_light.on_map(msg)
         self.latest[mtype] = msg
@@ -218,21 +226,19 @@ class State:
             except Exception:                 # a malformed road message must not stop the fan-out
                 import logging
                 logging.getLogger("roadsense_api.state").exception("lead tracker failed")
-            lanes_out = None
+            lanes_out = geom = None
             try:
                 out = lanes_out = self.lanes.on_road(msg)
                 if out is not None:
                     self.ego_light.on_lanes(out)      # the lane lines the ego light is assigned by
                     self._emit("lanes", out, now)
                     self.latest["egolane"] = self.egolane.on_lanes(out, msg)
-                    geom = self.roadgeom.on_lanes(out, msg)
-                    if geom is not None:
-                        self._emit("roadgeom", geom, now)
+                    geom = self.roadgeom.on_lanes(out, msg)    # no topic of its own since 2.0: part of `view.road`
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("road-geometry tracker failed")
             try:                              # the display channel, last: derived from the topics above
-                out = self.view.on_frame(msg, self.latest.get("lead"), lanes_out)
+                out = self.view.on_frame(msg, self.latest.get("lead"), lanes_out, geom, self.latest.get("egolane"))
                 if out is not None:
                     self._emit("view", out, now)
             except Exception:
@@ -408,7 +414,9 @@ class State:
         env = self.latest.get("env") or {}
         sl = self.latest.get("speed_limit")
         lt = self.latest.get("lights") or {}
+        from . import API_MAJOR, __version__
         return {
+            "api": {"major": API_MAJOR, "version": __version__},
             "daemons": daemons,
             "fps": {t: self.fps(t) for t in TOPICS},
             "model_ms": road.get("model_ms"),
@@ -425,7 +433,6 @@ class State:
             "fused": self.fusion.summary(self.latest["fused"]) if "fused" in self.latest else None,
             "lead": self.lead.summary(self.latest["lead"]) if "lead" in self.latest else None,
             "lanes": self.lanes.summary(self.latest["lanes"]) if "lanes" in self.latest else None,
-            "roadgeom": self.roadgeom.summary(self.latest.get("roadgeom")),
             "view": self.view.summary(self.latest.get("view")),
             "vehicle": self.vehicle_summary(),
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),

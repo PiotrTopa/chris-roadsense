@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Synthetic drive for the fused road geometry (api topic `roadgeom`), without hardware and without daemons.
+"""Synthetic drive for the fused road geometry (`view.road`; api 1: topic `roadgeom`), without hardware and without daemons.
 
 A vehicle is driven along a route (mapd's simulator); its position input goes through the real map engine,
 a synthetic camera produces `road` messages from the true lane geometry, the real road-geometry tracker and
-the real fusion turn them into `lanes` and `roadgeom`. The result is compared with the truth and can be
+the real fusion turn them into `lanes` and `view` (with `view.road`). The result is compared with the truth and can be
 written as a recording for a consumer to render.
 
     # the built-in test network: a bend, a signal-controlled crossroads, a roundabout, a side road
@@ -16,7 +16,7 @@ written as a recording for a consumer to render.
 The synthetic camera is deliberately limited: it sees the ego lane for `--see` metres at most and not round
 a bend sharper than its field of view, its far points are noisy, and it loses the lane lines on a roundabout
 and in the last metres before it (the planned path stays). The recording holds `t<TAB>json` lines (gzip) of
-the topics `map`, `fused`, `ego`, `road`, `lanes`, `roadgeom`; positions are those of the synthetic network
+the topics `map`, `fused`, `ego`, `road`, `lanes`, `view`; positions are those of the synthetic network
 or of the route given.
 """
 import argparse
@@ -37,6 +37,8 @@ import numpy as np                                        # noqa: E402
 from roadsense_api.fusion import Fusion                   # noqa: E402
 from roadsense_api.lanes import RoadGeometryTracker       # noqa: E402
 from roadsense_api.roadgeom import RoadGeometryFusion     # noqa: E402
+from roadsense_api.egolane import EgoLaneEstimator        # noqa: E402
+from roadsense_api.view import ViewBuilder                # noqa: E402
 from roadsense_mapd import geo, rsmap as R, sim           # noqa: E402
 from roadsense_mapd.engine import Engine                  # noqa: E402
 
@@ -263,6 +265,7 @@ def main():
     cam = Camera(drive, a.see, a.seed + 2)
     eng = Engine(pack)
     tracker, fusion, fuse = RoadGeometryTracker(), RoadGeometryFusion(), Fusion(None)
+    egolane, view = EgoLaneEstimator(), ViewBuilder()
     out = gzip.open(a.out, "wt") if a.out else None
     t0 = 10 ** 12
     latest = {}
@@ -291,6 +294,8 @@ def main():
                 ego = dict(eng.ego, ts_real_ns=ts)
                 tracker.on_ego(ego)
                 fusion.on_ego(ego)
+                egolane.on_ego(ego)
+                view.on_ego(ego)
                 rec(o.t, ego)
             continue
         if o.t >= next_map:
@@ -299,6 +304,8 @@ def main():
             latest["map"] = m
             tracker.on_map(m)
             fusion.on_map(m)
+            egolane.on_map(m)
+            view.on_map(m)
             rec(o.t, m)
             f = fuse.update(latest, ts, ts)
             rec(o.t, f)
@@ -316,7 +323,8 @@ def main():
             latest["lanes"] = ln
             rec(o.t, ln)
             g = fusion.on_lanes(ln, road)
-            rec(o.t, g)
+            latest["egolane"] = egolane.on_lanes(ln, road)
+            rec(o.t, view.on_frame(road, None, ln, g, latest["egolane"]))      # the geometry goes out inside view.road
             stats["frames"] += 1
             stats["used"] += bool(g["map"]["used"])
             why = g["map"]["why"] or "used"

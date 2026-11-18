@@ -123,19 +123,19 @@ class RecorderTest(unittest.TestCase):
             json.dump({"max_mb": 10}, f)
         self.assertIsNone(load_config(self.tmp.name))
 
-    def test_vehicle_objects_and_roadgeom_are_recorded(self):
+    def test_vehicle_objects_and_view_are_recorded(self):
         r = self.rec()
         for k in range(20):                                   # 2 s at 10 Hz
             self.clock.t += 0.1
             r.on_message("vehicle", json.dumps({"type": "vehicle", "seq": k}))
             r.on_message("objects", json.dumps({"type": "objects", "seq": k, "objects": []}))
-            r.on_message("roadgeom", json.dumps({"type": "roadgeom", "seq": k}))
+            r.on_message("view", json.dumps({"type": "view", "seq": k}))
         n = {}
         for m in self.lines(r):
             n[m["type"]] = n.get(m["type"], 0) + 1
         self.assertEqual(n["vehicle"], 20)                    # what the host said about the car: every message
         self.assertIn(n["objects"], (19, 20))                 # at most objects_hz (10)
-        self.assertIn(n["roadgeom"], (4, 5))                  # at most roadgeom_hz (2)
+        self.assertIn(n["view"], (4, 5))                  # at most view_hz (2)
 
     def test_session_started_on_a_stale_clock_is_renamed_when_the_clock_steps(self):
         wall = [1794300000.0]                                 # a boot without a clock source: days in the past

@@ -9,7 +9,7 @@ directory `<dir>/<YYYYmmdd-HHMMSS>/` with
                         speed, pose) with the numbers shortened, at most `road_hz` per second; `lights`, `signs`,
                         `env`, `speed_limit`, `rules`, `fused`, `map`, `ego` (at most `ego_hz`), `vehicle` (what
                         the host says about the car), `objects` (range-sensor scans, at most `objects_hz`),
-                        `roadgeom` (the fused road geometry as consumers got it, at most `roadgeom_hz`),
+                        `view` (the display channel as consumers got it, with the road picture `view.road`, at most `view_hz`),
                         `calib` and one `camera` message a second, as they are. `lanes` and `lead` are not written: they are
                         derived from `road` and `ego`, and `tools/lanes_replay.py` / `tools/lead_replay.py`
                         recompute them from this file.
@@ -25,7 +25,7 @@ Cost: about 30 kB/s of compressed messages and one 40-110 kB JPEG a second, a fe
 core per second. Old sessions are deleted, oldest first, when the directory exceeds `max_mb`. Nothing leaves
 the device. The recorder never raises into the fan-out: a full disk stops the recording, not the api.
 
-Config keys (all optional but `dir`): `max_mb` (4000), `road_hz` (20), `ego_hz` (10), `objects_hz` (10), `roadgeom_hz` (2),
+Config keys (all optional but `dir`): `max_mb` (4000), `road_hz` (20), `ego_hz` (10), `objects_hz` (10), `view_hz` (2),
 `frame_every_s` (1.0; 0 = no frames), `topics` (list; default below).
 """
 import gzip
@@ -38,8 +38,8 @@ import time
 log = logging.getLogger("roadsense_api.recorder")
 
 DEFAULT_TOPICS = ("road", "lights", "signs", "env", "speed_limit", "rules", "fused", "map", "ego", "calib", "camera",
-                  "vehicle", "objects", "roadgeom")
-DEFAULTS = dict(dir=None, max_mb=4000, road_hz=20.0, ego_hz=10.0, objects_hz=10.0, roadgeom_hz=2.0, frame_every_s=1.0,
+                  "vehicle", "objects", "view")
+DEFAULTS = dict(dir=None, max_mb=4000, road_hz=20.0, ego_hz=10.0, objects_hz=10.0, view_hz=2.0, frame_every_s=1.0,
                 topics=list(DEFAULT_TOPICS))
 CLOCK_STEP_S = 120.0            # the wall clock moved this much against the monotonic one: re-date the session
 
@@ -131,7 +131,7 @@ class Recorder:
             return
         now = self.clock()
         cap = {"road": self.cfg["road_hz"], "ego": self.cfg["ego_hz"], "objects": self.cfg["objects_hz"],
-               "roadgeom": self.cfg["roadgeom_hz"], "camera": 1.0}.get(mtype)
+               "view": self.cfg["view_hz"], "camera": 1.0}.get(mtype)
         if cap and now - self._last.get(mtype, -1e9) < 1.0 / cap - 0.005:
             return
         self._last[mtype] = now

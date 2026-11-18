@@ -114,7 +114,7 @@ class ApiTest(unittest.TestCase):
             for k in ("label", "confidence", "stable_s", "scores"):
                 self.assertIn(k, e[g])
             self.assertIn(e[g]["label"], e[g]["scores"])
-        self.assertIn(b"/v1/env", self.fetch("/")[2])
+        self.assertIn(b"/v2/env", self.fetch("/")[2])
 
     def test_speed_limit(self):
         s = self.get("/v1/speed_limit")
@@ -130,7 +130,7 @@ class ApiTest(unittest.TestCase):
         self.assertGreater(s["odometer_m"], 0)
         h = self.get("/v1/health")["speed_limit"]
         self.assertEqual(h["limit_kmh"], 50)
-        self.assertIn(b"/v1/speed_limit", self.fetch("/")[2])
+        self.assertIn(b"/v2/speed_limit", self.fetch("/")[2])
 
     def test_rules(self):
         # the fake signd also shows a B-25 (no overtaking) track at 6-10 s and an A-16 warning at 12-16 s of each 20 s
@@ -148,7 +148,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(by_id["speed_limit"]["value"], 50)         # the L6 engine's B-33 50, as one of the rules
         h = self.get("/v1/health")["rules"]
         self.assertIn("B-25 no overtaking", h["in_effect"])
-        self.assertIn(b"/v1/rules", self.fetch("/")[2])
+        self.assertIn(b"/v2/rules", self.fetch("/")[2])
         self.wait(lambda: any(w["id"] == "pedestrian_crossing_ahead" for w in self.get("/v1/rules")["ahead"]), 25)
         w = next(w for w in self.get("/v1/rules")["ahead"] if w["id"] == "pedestrian_crossing_ahead")
         self.assertEqual(w["sign"], "A-16")
@@ -169,7 +169,7 @@ class ApiTest(unittest.TestCase):
         self.assertFalse(by_id[2]["ego"])
         self.assertIn(lt["ego"]["state"], ("red", "red_yellow", "green", "yellow"))
         self.assertIn("lights", self.get("/v1/health"))
-        self.assertIn(b"/v1/lights", self.fetch("/")[2])
+        self.assertIn(b"/v2/lights", self.fetch("/")[2])
 
     def test_camera(self):
         c = self.get("/v1/camera")

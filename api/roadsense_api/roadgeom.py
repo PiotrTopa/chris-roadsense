@@ -1,4 +1,4 @@
-"""Fused road geometry: the api-derived topic `roadgeom`.
+"""Fused road geometry: the geometry inside `view.road` (until roadsense 2.0 the api-derived topic `roadgeom`).
 
 One picture of the road ahead in the car's frame (x forward from the camera, y right, metres), for a consumer
 that draws it: where the ego lane runs, from the camera as far as the camera knows it and from the map beyond,
@@ -7,7 +7,7 @@ comes from and how far it can be trusted.
 
     lanes (tracked lane lines, lanes.py) ─┐
     road (the model's planned path) ──────┤
-    ego (vehicle speed, yaw rate,         ├─> RoadGeometryFusion ─> {"type":"roadgeom", ...}
+    ego (vehicle speed, yaw rate,         ├─> RoadGeometryFusion ─> roadview.py ─> view["road"]
          turn signal when the host has it)┤
     map (ahead.geometry, 2 per second) ───┘
 
@@ -220,7 +220,8 @@ class RoadGeometryFusion:
 
     # ---- one frame -------------------------------------------------------------------------------
     def on_lanes(self, lanes, road=None):
-        """One `lanes` message (and the `road` message it was made from) -> one `roadgeom` message."""
+        """One `lanes` message (and the `road` message it was made from) -> the geometry for that frame
+        (roadview.py puts it into `view.road`)."""
         c = self.cfg
         ts_ns = (lanes or {}).get("ts_mono_ns")
         if not _fin(ts_ns):
@@ -256,7 +257,7 @@ class RoadGeometryFusion:
             vx, vy, vsd, vsrc = vis
             reach = self._reach(vx, vsd)
 
-        out = {"type": "roadgeom", "seq": lanes.get("seq"), "ts_mono_ns": ts_ns, "ts_real_ns": lanes.get("ts_real_ns"),
+        out = {"seq": lanes.get("seq"), "ts_mono_ns": ts_ns, "ts_real_ns": lanes.get("ts_real_ns"),
                "source": "vision", "lane_width_m": round(self.width or c["lane_width_m"], 2),
                "vision": {"from": vsrc, "reach_m": round(reach, 1)},
                "motion": {"source": motion, "speed_mps": round(v, 2), "yaw_rate_rps": round(-yaw_r, 4)},

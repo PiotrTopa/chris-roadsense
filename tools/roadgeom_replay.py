@@ -95,7 +95,7 @@ def main():
             if out:
                 out.write(json.dumps(g, separators=(",", ":")) + "\n")
     tot = sum(src.values()) or 1
-    print("road messages %d, roadgeom messages %d" % (n, tot))
+    print("road messages %d, geometry frames %d" % (n, tot))
     print("camera centre from: " + ", ".join("%s %.1f %%" % (k, 100.0 * v / tot) for k, v in src.most_common()))
     print("camera reach (m): median %.0f, p10 %.0f, p90 %.0f; while driving: median %.0f, p10 %.0f, p90 %.0f"
           % (pct(reach, 0.5), pct(reach, 0.1), pct(reach, 0.9), pct(moving_reach, 0.5), pct(moving_reach, 0.1),
