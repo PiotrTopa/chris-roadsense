@@ -26,13 +26,14 @@ that uses it (headless render with simulated data).</sub>
 |---|---|---|
 | `road` | modeld: openpilot supercombo (v0.9.7, MIT) | planned path, 4 lane lines and 2 road edges with probabilities, lead vehicles, ego pose, desire and meta state |
 | `lanes` | api tracker | the road geometry over time: lane-line and edge presence with hysteresis, Kalman-filtered geometry, coasting through drop-outs |
-| `lead` | api tracker | the lead vehicle: distance, relative speed, time gap, standstill hold, a "lead moved off" cue, raw vision value alongside |
+| `lead` | api tracker | the lead vehicle: distance, relative speed, time gap, a live filtered value while standing, a "lead moved off" cue, raw vision value alongside |
 | `lights` | sign provider + api | traffic lights with state, the ego light held over short misses, and the light assigned to the ego lane where several are visible |
 | `signs`, `speed_limit`, `rules` | sign provider (optional) + api | sign tracks with persistent ids and best crop; the speed limit and rules in effect, recent and ahead |
 | `env` | envd: zero-shot CLIP-type encoder, 1 fps | place (motorway, city, residential, forest road, tunnel, parking ...), weather and light, smoothed with confidence |
 | `map` | mapd: position filter + OpenStreetMap pack | position state, matched road (class, lanes, tunnel, bridge, limit), look-ahead along the likely path: curves, junctions and roundabouts with their arms, crossings, signals, tunnel exit |
 | `fused` | api | map and camera combined per fact with provenance: speed limit, built-up area, lane count and ego lane, tunnel with exit distance |
 | `vehicle`, `objects`, `ego` | mapd, from the host's feeder | the car as the host describes it: motion, driver controls, body signals with age, quality and source per signal, calibration estimates; range-sensor object lists in the camera's frame |
+| `view` | api (display channel) | for consumers that draw: lead, traffic lights, signs, lane lines and edges with stable ids, smoothed positions in the car frame, velocities for extrapolation, fades; derived from the measurement topics, never fed back |
 | `camera`, `health` | all daemons | frame metadata and MJPEG preview with overlays; fps, latency and temperature per stage |
 
 Full contract, message formats and the REST / WebSocket reference: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

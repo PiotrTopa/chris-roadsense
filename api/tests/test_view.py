@@ -132,7 +132,8 @@ class LeadAndLines(unittest.TestCase):
         for k in range(1, 12):
             v = vb.on_frame(road(100 + 0.075 * k, k, v=0.0), lead_msg(0, 3.0 + 0.01 * k, standing=True), None)
             o = obj(v, "lead")
-            self.assertEqual(o["x"], round(3.0 + 0.01 * k, 2))            # the tracked value itself
+            self.assertEqual(o["attrs"]["dist_m"], round(3.0 + 0.01 * k, 2))   # the tracked value itself
+            self.assertLess(abs(o["x"] - (3.0 + 0.01 * k)), 0.05)             # drawn: eased, near it
             self.assertTrue(o["attrs"]["standing"])
             alphas.append(o["alpha"])
         self.assertEqual(alphas[0] < 1.0, True)

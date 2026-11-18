@@ -39,7 +39,7 @@
 - [ ] pack updates are manual (re-run fetch / build / install)
 
 ## Lead vehicle (tracker in the api; built 2026-11-15, not deployed)
-- [x] topic `lead` / `/v1/lead` / `fused.lead` (`api/roadsense_api/lead.py`, docs/lanes/L14-lead.md): Kalman track of `road.leads[0]` with the ego speed as input, a standstill hold (frozen distance while both stand), gating of inconsistent frames (cut-in, lead change, flicker between two vehicles), `departed` cue, uncertainty, the raw vision value alongside; `tools/lead_replay.py`
+- [x] topic `lead` / `/v1/lead` / `fused.lead` (`api/roadsense_api/lead.py`, docs/lanes/L14-lead.md): Kalman track of `road.leads[0]` with the ego speed as input, a standstill hold (frozen distance while both stand; replaced by a live standing regime in 2.0, lane L19), gating of inconsistent frames (cut-in, lead change, flicker between two vehicles), `departed` cue, uncertainty, the raw vision value alongside; `tools/lead_replay.py`
 - [x] the car's own motion for it: mapd relays accepted vehicle `motion` as `ego` on `<rundir>/ego.sock`; without a feeder the tracker runs on vision alone
 - [x] measured on replayed rides (laptop, ORT fp32, 20 fps and every 2nd frame) and on synthetic scenes with the measured noise; numbers in docs/lanes/L14-lead.md
 - [ ] not verified on the car: no drive with the lead output and the CAN motion recorded together exists (the 2026-11-13 trip log has CAN but no roadsense messages); the ego path ran on synthetic scenes and with a stand-in wheel speed derived from the model's own speed
@@ -110,3 +110,12 @@ The ncnn/Vulkan fp16-packed backend misses the original accuracy gate only at th
 - [ ] not used yet: turn signal for the ego traffic light (a left-turn signal group), wipers / rain / light sensors as environment hints in `fused`, accelerations, the accelerator, the cruise state; the lane tracker's ego-motion compensation with the vehicle yaw rate is untried
 - [ ] mapd's fix handling with a lagging, smoothing receiver: fixes rejected more often the faster the car goes and re-anchoring jumps after dead reckoning (drive 2026-11-17); the lag estimate is the input for it, the weighting and the re-anchor logic are open
 - [ ] the map matcher takes service roads too readily while driving (38 % of the matches on that drive)
+
+## roadsense 2.0: display channel and a live lead at standstill (lane L19, 2026-11-18; docs/lanes/L19-view-channel.md)
+
+- [x] `lead` stays live while both stand (filter with a standing model, Huber, CUSUM ahead of the gate); the frozen `hold` mode is gone (`standing` and `departed` stay); measured on the car's recorded drives
+- [x] topic `view` / `/v1/view`: display channel (lead, traffic lights, signs, lane lines, edges, path) with ids, car-frame positions, velocities, fades; never feeds the measurement topics; `road: null` slot for the fused road geometry (lane L20)
+- [x] `tools/view_replay.py` (a recorder session through the trackers and the view, jitter metrics, the api's stream for consumer-side replays); the replay tools read truncated sessions
+- [x] car computer (branch `v2-l19`): the MFD draws lead, ego light, lanes from `view`; scene built per `view` message; no stale health-mirror light; road picture redrawn while standing; read-out hysteresis
+- [ ] not seen on the car yet: deploy roadsense and the car computer from the `v2-l19` branches, then one drive with the recorder (`tools/view_replay.py`, the car repo's `tools/scene_feed_replay.py`)
+- [ ] `view.road`: merge the fused road geometry (lane L20)

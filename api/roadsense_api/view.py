@@ -55,6 +55,9 @@ DEFAULT_CFG = dict(
     shift_m=0.8, shift_s=0.4,    # a line that moves this much in one frame (a track restart) blends over shift_s
     fade_s=0.3,                  # fade in / out of lines and objects
     lead_keep_s=0.4,             # a lead that disappeared fades out at its extrapolated place for this long
+    lead_tau_s=0.1, lead_tau_rel=0.01,   # drawn distance: carried by the relative speed, corrections eased over
+                                 # lead_tau_s + lead_tau_rel * distance (0.15 s at 5 m, 0.5 s at 40 m: the tracked
+                                 # distance is good near and noisy far); the measured value stays in attrs.dist_m
     # static objects (traffic lights, signs)
     light_sx_rel=0.25, light_sx_floor=1.0,          # distance from the housing size: 25 % (1 sigma)
     light_sy_floor=0.4, light_sy_rel=0.03,          # lateral: 0.4 m + 3 % of the distance
@@ -337,8 +340,13 @@ class ViewBuilder:
                     self.seen.pop(cur["id"], None)
                 cur = self.lead = {"id": oid, "alpha": 0.0 if cur is None else cur["alpha"]}
             vx = lead.get("v_rel_mps") if _fin(lead.get("v_rel_mps")) else 0.0
-            cur.update(x=lead["dist_m"], y=lead.get("lateral_m") or 0.0, vx=vx, ts=ts, msg=lead, gone=False,
-                       alpha=min(1.0, cur["alpha"] + fade))
+            d, y = lead["dist_m"], lead.get("lateral_m") or 0.0
+            if "x" in cur and dt > 0:
+                k = 1.0 - math.exp(-dt / (c["lead_tau_s"] + c["lead_tau_rel"] * d))
+                px = cur["x"] + vx * dt
+                d = px + k * (d - px)
+                y = cur["y"] + min(1.0, 2.0 * k) * (y - cur["y"])
+            cur.update(x=d, y=y, vx=vx, ts=ts, msg=lead, gone=False, alpha=min(1.0, cur["alpha"] + fade))
             coast = lead.get("mode") == "coast"
             phase = "appear" if cur["alpha"] < 1.0 else "coast" if coast else "steady"
         elif cur is not None:
