@@ -367,7 +367,7 @@ def main():
             print(f"{ride}: streams missing, skipped", flush=True)
             continue
         S = {s: load(p, strip_plan=s.endswith("~noplan")) for s, p in paths.items()}
-        ref20 = [S[s] for s in S if s == "vis.20"] + [S[s] for s in S if s.startswith("sc.")]
+        ref20 = ([S[s] for s in S if s == "vis.20"] or [S[s] for s in S if s == "vis.17"]) + [S[s] for s in S if s.startswith("sc.")]
         ego_src = os.environ.get("EGO", "mean")   # diagnostic: odometry of one model only (sc / vis)
         ego = ego_track(ref20[:2] if ego_src == "mean" else ref20[1:2] if ego_src == "sc" else ref20[:1])
         res = {s: metrics(S[s], ego) for s in streams}

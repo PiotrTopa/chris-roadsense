@@ -36,8 +36,10 @@ def main():
                 picks.setdefault(ride, set()).add((int(r["seq"]), int(r["why"][4])))
     wins = {a.a: 0, a.b: 0, "tie": 0}
     for ride, ps in sorted(picks.items()):
-        S = {s: ev.load(os.path.join(a.road_dir, f"{ride}.{s}.jsonl.gz")) for s in {a.a, a.b, "sc.13.8", "vis.20"}}
-        t_e, Xe, Ye, Pe, se = ev.ego_track([S["vis.20"], S["sc.13.8"]])
+        names = {a.a, a.b, "sc.13.8", "vis.20" if os.path.exists(os.path.join(a.road_dir, f"{ride}.vis.20.jsonl.gz"))
+                 else "vis.17"}
+        S = {s: ev.load(os.path.join(a.road_dir, f"{ride}.{s}.jsonl.gz")) for s in names}
+        t_e, Xe, Ye, Pe, se = ev.ego_track([S.get("vis.20", S.get("vis.17")), S["sc.13.8"]])
         for seq, line in sorted(ps):
             res = {}
             for name in (a.a, a.b):
