@@ -31,6 +31,11 @@ def lanes(e, direction):
         return {"total": n, "forward": n, "backward": 0, "source": "assumed"}
     if e.flags2 & R.F2_LANES_SPLIT and fwd and bwd:
         return {"total": e.lanes or fwd + bwd, "forward": fwd, "backward": bwd, "source": "tagged"}
+    if e.flags2 & R.F2_LANES_SPLIT and fwd:              # the own direction is tagged (lanes:forward, or its turn lanes)
+        back = e.lanes - fwd if e.lanes > fwd else 1
+        return {"total": fwd + back, "forward": fwd, "backward": back, "source": "tagged"}
+    if e.flags2 & R.F2_LANES_SPLIT and bwd and e.lanes > bwd:
+        return {"total": e.lanes, "forward": e.lanes - bwd, "backward": bwd, "source": "tagged"}
     if e.lanes >= 2 and e.lanes % 2 == 0:
         return {"total": e.lanes, "forward": e.lanes // 2, "backward": e.lanes // 2, "source": "tagged_total"}
     if e.lanes == 1:
@@ -39,6 +44,38 @@ def lanes(e, direction):
         f = fwd or (e.lanes - bwd if bwd else e.lanes // 2)
         return {"total": e.lanes, "forward": f, "backward": e.lanes - f, "source": "tagged" if fwd or bwd else "assumed"}
     return {"total": 2, "forward": 1, "backward": 1, "source": "assumed"}
+
+
+def turn_lanes(e, direction):
+    """Painted turn arrows of the own direction, lane by lane from the left: [["left"], ["through"],
+    ["through", "right"]]; an empty list is a lane without an arrow. None when not tagged (and on a format 1
+    pack), or when the tag disagrees with the tagged lane count (then neither can be trusted lane by lane)."""
+    tl = R.turn_lanes(e, direction)
+    if tl is None:
+        return None
+    ln = lanes(e, direction)
+    if ln["source"] == "tagged" and ln["forward"] != len(tl):
+        return None
+    return tl
+
+
+LEFT_ARROWS = ("left", "slight_left", "sharp_left")
+RIGHT_ARROWS = ("right", "slight_right", "sharp_right")
+
+
+def lanes_for_turn(tl, turn_deg):
+    """Which lanes of `tl` lead where a path turning by turn_deg (positive = right) goes: [bool per lane], or
+    None when the arrows do not say (no lane carries a matching arrow)."""
+    if abs(turn_deg) < 25.0:
+        ok = [(not a) or "through" in a for a in tl]
+    elif abs(turn_deg) > 150.0:
+        ok = ["reverse" in a for a in tl]
+    else:
+        want = RIGHT_ARROWS if turn_deg > 0 else LEFT_ARROWS
+        ok = [any(w in a for w in want) for a in tl]
+        if not any(ok) and abs(turn_deg) < 50.0:         # a slight bend at the node of a road that goes straight on
+            ok = [(not a) or "through" in a for a in tl]
+    return ok if any(ok) else None
 
 
 def is_expressway(e, limits=None):
@@ -67,6 +104,7 @@ def road_info(e, direction):
     return {
         "class": e.cls_name, "name": e.name or None, "ref": e.road_ref or None,
         "oneway": e.oneway, "lanes": lanes(e, direction),
+        "turn_lanes": turn_lanes(e, direction),
         "tunnel": bool(e.flags & R.F_TUNNEL), "bridge": bool(e.flags & R.F_BRIDGE),
         "covered": bool(e.flags & R.F_COVERED),
         "lit": True if e.flags & R.F_LIT_YES else False if e.flags & R.F_LIT_NO else None,
@@ -315,6 +353,7 @@ def look_ahead(pack, m, limits, horizon_m=1500.0, shape_m=600.0, shape_step=20.0
            "features": feats[:40], "junctions": junctions[:20], "tunnel": tunnel,
            "built_up_change": changes["built_up"], "speed_limit_changes": changes["speed_limit"],
            "road_change": changes["road"]}
+    out["turn_lanes"] = _turn_lanes_ahead(segs, junctions)
     out.update(_shape(segs, m, shape_m, shape_step))
     try:
         out["junction_view"] = junction_view(pack, segs, feats, m, memo)
@@ -325,6 +364,39 @@ def look_ahead(pack, m, limits, horizon_m=1500.0, shape_m=600.0, shape_step=20.0
     except Exception:
         out["geometry"] = None
     return out
+
+
+TURN_LANES_M = 400.0        # turn lanes are announced when their stretch begins within this distance on the path
+
+
+def _turn_lanes_ahead(segs, junctions):
+    """The first stretch with painted turn arrows on the most likely path: where it begins, the junction it
+    leads to (the end of the stretch: mappers split the way where the arrows begin and at the junction they
+    belong to), the arrows lane by lane, and which lanes lead where the most likely path goes."""
+    start = tl = None
+    end = conf = 0.0
+    for e, d, dist, s_from, s_to, c in segs:
+        if dist > TURN_LANES_M and tl is None:
+            break
+        cur = turn_lanes(e, d)
+        if tl is None:
+            if cur is None:
+                continue
+            start, tl, conf = dist, cur, c
+        elif cur is None:
+            break
+        elif len(cur) != len(tl):
+            # the stretch nearest to the junction is the one that says where each lane goes
+            tl = cur
+        else:
+            tl = cur
+        end = dist + abs(s_to - s_from)
+    if tl is None:
+        return None
+    turn = next((j["turn_deg"] for j in junctions if abs(j["dist_m"] - end) < 1.0), None)
+    path = lanes_for_turn(tl, turn) if turn is not None else None
+    return {"dist_m": round(start, 1), "junction_m": round(end, 1), "lanes": tl, "count": len(tl),
+            "path": path, "turn_deg": turn, "source": "tagged", "confidence": round(conf, 2)}
 
 
 def _shape(segs, m, shape_m, step):
@@ -430,7 +502,8 @@ def _control(feats, dist):
 def _approach(e, d):
     ln = lanes(e, d)
     return {"class": e.cls_name, "name": e.name or None, "ref": e.road_ref or None,
-            "lanes": ln["forward"], "lanes_source": ln["source"], "oneway": e.oneway}
+            "lanes": ln["forward"], "lanes_source": ln["source"], "oneway": e.oneway,
+            "turn_lanes": turn_lanes(e, d)}
 
 
 def _plain_view(pack, segs, i, feats):

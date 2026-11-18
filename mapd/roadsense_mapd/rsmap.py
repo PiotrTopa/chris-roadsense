@@ -1,8 +1,8 @@
-"""The roadsense map pack (`.rsmap`, format version 1): one file, tiled road graph, read through mmap.
+"""The roadsense map pack (`.rsmap`, format version 2; version 1 is still read): one file, tiled road graph, read through mmap.
 
 Layout (little-endian; docs/MAPS.md has the full description):
 
-    header   64 bytes   "RSMAP001", u32 version, u32 manifest_len, u64 manifest_off,
+    header   64 bytes   "RSMAP001", u32 version (2; 1 = no turn lanes, 44-byte edge records), u32 manifest_len, u64 manifest_off,
                         u64 index_off, u64 index_count, zero padding
     manifest            UTF-8 JSON (region, OSM timestamp, build time, counts, attribution)
     tiles               zlib-compressed tile blobs, one per non-empty tile
@@ -29,7 +29,8 @@ import zlib
 import numpy as np
 
 MAGIC = b"RSMAP001"
-VERSION = 1
+VERSION = 2                               # written by build_pack
+READABLE = (1, 2)                         # format 1 (no turn lanes) is read as it is: its edges have none
 HEADER = struct.Struct("<8sIIQQQ")
 HEADER_SIZE = 64
 TILES_PER_DEG = 32
@@ -47,7 +48,9 @@ EDGE_DT = np.dtype([
     ("length_dm", "<u4"), ("flags", "<u2"), ("name", "<u2"), ("ref", "<u2"),
     ("cls", "u1"), ("flags2", "u1"), ("ms_fwd", "u1"), ("ms_bwd", "u1"),
     ("lanes", "u1"), ("lanes_fwd", "u1"), ("lanes_bwd", "u1"), ("layer", "i1"),
-    ("surface", "u1"), ("pad", "u1")])
+    ("surface", "u1"), ("pad", "u1"),
+    ("turn_fwd", "<u2"), ("turn_bwd", "<u2")])       # format 2: `turn:lanes` per direction, string table index
+EDGE_DT_V1 = np.dtype(EDGE_DT.descr[:-2])            # format 1: the same record without the turn lanes
 FEAT_DT = np.dtype([("pt", "<u2"), ("kind", "u1"), ("dir", "u1")])
 FOREIGN_DT = np.dtype([("tile", "<u4"), ("edge", "<u2"), ("pad", "<u2")])
 TILE_HEADER = struct.Struct("<10I")       # strings_bytes, nodes, adj, edges, points, feats, foreign, grid_n, grid_items, 0
@@ -61,7 +64,8 @@ SURFACES = ("unknown", "asphalt", "concrete", "paved", "paving_stones", "sett", 
             "unpaved", "ground", "other")
 SURFACE_ID = {s: i for i, s in enumerate(SURFACES)}
 FEATURES = ("none", "traffic_signals", "crossing", "crossing_signals", "level_crossing", "tram_crossing",
-            "stop", "give_way", "mini_roundabout", "speed_bump", "toll_booth", "motorway_junction")
+            "stop", "give_way", "mini_roundabout", "speed_bump", "toll_booth", "motorway_junction",
+            "speed_camera")                # speed_camera: packs built since format 2 (a node of the road only)
 FEATURE_ID = {f: i for i, f in enumerate(FEATURES)}
 DIR_BOTH, DIR_FORWARD, DIR_BACKWARD = 0, 1, 2
 
@@ -90,6 +94,36 @@ F2_LANES_SPLIT = 1 << 3    # lanes:forward / lanes:backward were tagged
 MS_NONE = 255              # maxspeed=none; 0 = not tagged
 
 
+TURN_WORDS = ("left", "slight_left", "sharp_left", "through", "right", "slight_right", "sharp_right",
+              "reverse", "merge_to_left", "merge_to_right", "none")
+
+
+def normalise_turn_lanes(v):
+    """An OSM `turn:lanes` value -> the pack's form: lanes left to right separated by `|`, the arrows of a lane
+    by `;`, only the words of TURN_WORDS (an empty or unknown entry is `none`: no arrow painted). "" when the
+    tag is absent, has more than 12 lanes, or names no arrow at all."""
+    if not v:
+        return ""
+    lanes = []
+    for part in v.strip().split("|"):
+        words = [w.strip().lower() for w in part.split(";")]
+        words = [w for w in words if w in TURN_WORDS and w != "none"]
+        lanes.append(";".join(dict.fromkeys(words)) or "none")
+    if len(lanes) > 12 or all(x == "none" for x in lanes):
+        return ""
+    return "|".join(lanes)
+
+
+def turn_lanes(e, direction):
+    """Turn lanes of edge e seen from a car driving in `direction`: [[arrows of the leftmost lane], ...], or
+    None when not tagged."""
+    v = e.turn_fwd if direction > 0 else e.turn_bwd
+    if not v:
+        return None
+    out = [[] if p == "none" else p.split(";") for p in v.split("|")]
+    return out if any(out) else None
+
+
 def tile_key(lat, lon):
     return (int(math.floor((lat + 90.0) * TILES_PER_DEG)) << 16) | int(math.floor((lon + 180.0) * TILES_PER_DEG))
 
@@ -108,10 +142,11 @@ class RawEdge:
     """One edge handed to build_pack. `pts`: int32 array (n, 2) of absolute micro-degrees (lon, lat);
     `a`, `b`: hashable ids of its end nodes; `feats`: [(point index, feature id, dir)]."""
     __slots__ = ("a", "b", "pts", "cls", "flags", "flags2", "ms_fwd", "ms_bwd", "lanes", "lanes_fwd",
-                 "lanes_bwd", "layer", "surface", "name", "ref", "feats")
+                 "lanes_bwd", "layer", "surface", "name", "ref", "feats", "turn_fwd", "turn_bwd")
 
     def __init__(self, a, b, pts, cls, flags=0, flags2=0, ms_fwd=0, ms_bwd=0, lanes=0, lanes_fwd=0,
-                 lanes_bwd=0, layer=0, surface=0, name="", ref="", feats=()):
+                 lanes_bwd=0, layer=0, surface=0, name="", ref="", feats=(), turn_fwd="", turn_bwd=""):
+        self.turn_fwd, self.turn_bwd = turn_fwd, turn_bwd    # normalised `turn:lanes` (normalise_turn_lanes), a -> b / b -> a
         self.a, self.b, self.pts = a, b, pts
         self.cls, self.flags, self.flags2 = cls, flags, flags2
         self.ms_fwd, self.ms_bwd = ms_fwd, ms_bwd
@@ -154,8 +189,11 @@ def _edge_cells(pts):
     return np.unique((gy << 20) | gx)
 
 
-def build_pack(path, edges, manifest, level=6, progress=None):
-    """Write a pack from RawEdge objects. Returns the manifest written (with counts)."""
+def build_pack(path, edges, manifest, level=6, progress=None, version=VERSION):
+    """Write a pack from RawEdge objects. Returns the manifest written (with counts). `version` 1 writes the
+    old format (no turn lanes), for tests of the reader."""
+    if version not in READABLE:
+        raise ValueError("pack format %r" % (version,))
     tiles = collections.defaultdict(list)            # tile key -> [RawEdge] (home edges, index = position)
     node_pos = {}                                    # node id -> (lon_u, lat_u)
     for e in edges:
@@ -196,7 +234,7 @@ def build_pack(path, edges, manifest, level=6, progress=None):
                     f = foreign[tk]
                     cells[tk][cell].append(("f", f.setdefault((k, i), len(f))))
     keys = sorted(set(tiles) | set(tile_nodes) | set(cells))
-    manifest = dict(manifest, format=VERSION, tiles=len(keys), edges=n_edges, nodes=len(node_pos), points=n_points)
+    manifest = dict(manifest, format=version, tiles=len(keys), edges=n_edges, nodes=len(node_pos), points=n_points)
     mj = json.dumps(manifest, ensure_ascii=False, sort_keys=True).encode()
     index = np.zeros(len(keys), dtype=INDEX_DT)
     tmp = path + ".tmp"
@@ -206,7 +244,7 @@ def build_pack(path, edges, manifest, level=6, progress=None):
         f.write(b"\0" * (-f.tell() % 8))
         for n, k in enumerate(keys):
             raw = _encode_tile(k, tiles.get(k, []), tile_nodes.get(k, []), node_pos, node_ref, adj,
-                               cells.get(k, {}), foreign.get(k, {}))
+                               cells.get(k, {}), foreign.get(k, {}), version)
             comp = zlib.compress(raw, level)
             index[n] = (k, f.tell(), len(comp), len(raw))
             f.write(comp)
@@ -216,12 +254,12 @@ def build_pack(path, edges, manifest, level=6, progress=None):
         index_off = f.tell()
         f.write(index.tobytes())
         f.seek(0)
-        f.write(HEADER.pack(MAGIC, VERSION, len(mj), HEADER_SIZE, index_off, len(keys)))
+        f.write(HEADER.pack(MAGIC, version, len(mj), HEADER_SIZE, index_off, len(keys)))
     os.replace(tmp, path)
     return manifest
 
 
-def _encode_tile(key, edges, nodes, node_pos, node_ref, adj, cells, foreign):
+def _encode_tile(key, edges, nodes, node_pos, node_ref, adj, cells, foreign, version=VERSION):
     lat0, lon0 = tile_origin(key)
     ox, oy = int(round(lon0 * 1e6)), int(round(lat0 * 1e6))
     strings, sidx = [], {"": 0}
@@ -242,7 +280,7 @@ def _encode_tile(key, edges, nodes, node_pos, node_ref, adj, cells, foreign):
         na[i] = (p[0] - ox, p[1] - oy, len(adj_rows), len(lst), 0)
         adj_rows += lst
     aa = np.array(adj_rows, dtype=ADJ_DT) if adj_rows else np.zeros(0, dtype=ADJ_DT)
-    ea = np.zeros(len(edges), dtype=EDGE_DT)
+    ea = np.zeros(len(edges), dtype=EDGE_DT if version >= 2 else EDGE_DT_V1)
     pts_parts, feat_rows, npts = [], [], 0
     for i, e in enumerate(edges):
         ar, br = node_ref[e.a], node_ref[e.b]
@@ -250,9 +288,10 @@ def _encode_tile(key, edges, nodes, node_pos, node_ref, adj, cells, foreign):
         d = rel.copy()
         d[1:] -= rel[:-1]                              # delta-coded: first point relative to the tile corner
         pts_parts.append(d.astype(np.int32))
-        ea[i] = (ar[0], br[0], ar[1], br[1], npts, len(e.pts), len(e.feats), len(feat_rows),
-                 min(0xFFFFFFFF, int(round(_edge_length_m(e.pts) * 10))), e.flags, sid(e.name), sid(e.ref),
-                 e.cls, e.flags2, e.ms_fwd, e.ms_bwd, e.lanes, e.lanes_fwd, e.lanes_bwd, e.layer, e.surface, 0)
+        row = (ar[0], br[0], ar[1], br[1], npts, len(e.pts), len(e.feats), len(feat_rows),
+               min(0xFFFFFFFF, int(round(_edge_length_m(e.pts) * 10))), e.flags, sid(e.name), sid(e.ref),
+               e.cls, e.flags2, e.ms_fwd, e.ms_bwd, e.lanes, e.lanes_fwd, e.lanes_bwd, e.layer, e.surface, 0)
+        ea[i] = row + (sid(e.turn_fwd), sid(e.turn_bwd)) if version >= 2 else row
         npts += len(e.pts)
         feat_rows += [tuple(x) for x in e.feats]
     pa = np.concatenate(pts_parts) if pts_parts else np.zeros((0, 2), dtype=np.int32)
@@ -282,7 +321,7 @@ class Edge:
     `s`: cumulative length along the points. ref = (tile key, index)."""
     __slots__ = ("ref", "a", "b", "lat", "lon", "x", "y", "s", "length", "mlat", "mlon", "bbox", "brg0", "brg1", "cls", "flags", "flags2",
                  "ms_fwd", "ms_bwd", "lanes", "lanes_fwd", "lanes_bwd", "layer", "surface", "name", "road_ref",
-                 "feats", "_seg")
+                 "feats", "turn_fwd", "turn_bwd", "_seg")
 
     @property
     def cls_name(self):
@@ -325,8 +364,9 @@ class Edge:
 
 
 class Tile:
-    def __init__(self, key, raw):
+    def __init__(self, key, raw, version=VERSION):
         self.key = key
+        self.version = version
         self.lat0, self.lon0 = tile_origin(key)
         nsb, nn, nadj, ne, npt, nf, nfo, gn, ni, _ = TILE_HEADER.unpack_from(raw, 0)
         off = TILE_HEADER.size
@@ -347,7 +387,7 @@ class Tile:
 
         self.nodes = take(NODE_DT, nn)
         self.adj = take(ADJ_DT, nadj)
-        self.edges = take(EDGE_DT, ne)
+        self.edges = take(EDGE_DT if version >= 2 else EDGE_DT_V1, ne)
         self.points = take(np.dtype("<i4"), npt * 2).reshape(-1, 2)
         self.feats = take(FEAT_DT, nf)
         self.foreign = take(FOREIGN_DT, nfo)
@@ -384,6 +424,10 @@ class Tile:
         e.lanes, e.lanes_fwd, e.lanes_bwd = int(r["lanes"]), int(r["lanes_fwd"]), int(r["lanes_bwd"])
         e.layer, e.surface = int(r["layer"]), int(r["surface"])
         e.name, e.road_ref = self.strings[int(r["name"])], self.strings[int(r["ref"])]
+        if self.version >= 2:
+            e.turn_fwd, e.turn_bwd = self.strings[int(r["turn_fwd"])], self.strings[int(r["turn_bwd"])]
+        else:
+            e.turn_fwd = e.turn_bwd = ""
         fs, fc = int(r["feat_start"]), int(r["feat_count"])
         e.feats = [(int(f["pt"]), int(f["kind"]), int(f["dir"])) for f in self.feats[fs:fs + fc]]
         self._cache[idx] = e
@@ -400,12 +444,13 @@ class Pack:
         self.identity = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
         self._mm = mmap.mmap(self._f.fileno(), 0, access=mmap.ACCESS_READ)
         magic, ver, mlen, moff, ioff, icount = HEADER.unpack_from(self._mm, 0)
-        if magic != MAGIC or ver != VERSION:
+        if magic != MAGIC or ver not in READABLE:
             self._mm.close()
             self._f.close()
             if magic != MAGIC:
                 raise ValueError("%s: not a roadsense map pack" % path)
-            raise ValueError("%s: pack format %d, this reader handles %d" % (path, ver, VERSION))
+            raise ValueError("%s: pack format %d, this reader handles %s" % (path, ver, ", ".join(map(str, READABLE))))
+        self.version = ver
         self.manifest = json.loads(self._mm[moff:moff + mlen].decode())
         self.index = np.frombuffer(self._mm, dtype=INDEX_DT, count=icount, offset=ioff)
         self._keys = self.index["key"]
@@ -432,7 +477,7 @@ class Pack:
             return None
         r = self.index[i]
         off, clen = int(r["off"]), int(r["clen"])
-        t = Tile(key, zlib.decompress(self._mm[off:off + clen]))
+        t = Tile(key, zlib.decompress(self._mm[off:off + clen]), self.version)
         self.tile_loads += 1
         self._tiles[key] = t
         while len(self._tiles) > self.cache_tiles:

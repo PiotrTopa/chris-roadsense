@@ -214,11 +214,23 @@ def way_attrs(t, with_tracks=False):
         flags2 |= F.F2_LANES_SPLIT
     if oneway and lanes and not lf:
         lf = lanes
+    # turn lanes (format 2): `turn:lanes` is the driving direction of a one-way way, else the per-direction keys
+    tf = F.normalise_turn_lanes(t.get("turn:lanes:forward") or (t.get("turn:lanes") if oneway else None))
+    tb = "" if oneway else F.normalise_turn_lanes(t.get("turn:lanes:backward"))
+    if tf and not lf:                                  # painted arrows count the lanes as well as a lanes tag
+        lf = tf.count("|") + 1
+        if not oneway:
+            flags2 |= F.F2_LANES_SPLIT
+    if tb and not lb:
+        lb = tb.count("|") + 1
+        flags2 |= F.F2_LANES_SPLIT
+    if oneway and tf and not lanes:
+        lanes = lf
     if reverse:
-        ms_fwd, ms_bwd, lf, lb = ms_bwd, ms_fwd, lb, lf
+        ms_fwd, ms_bwd, lf, lb, tf, tb = ms_bwd, ms_fwd, lb, lf, tb, tf
     surface = F.SURFACE_ID[SURFACE_MAP.get(t.get("surface") or "", "other" if t.get("surface") else "unknown")]
     return (F.CLASS_ID[hw], flags, flags2, ms_fwd, ms_bwd, lanes, lf, lb, parse_int(t.get("layer"), -5, 5),
-            surface, (t.get("name") or "")[:120], (t.get("ref") or "")[:60], builtup, reverse)
+            surface, (t.get("name") or "")[:120], (t.get("ref") or "")[:60], builtup, reverse, tf, tb)
 
 
 def node_feature(t):
@@ -246,6 +258,8 @@ def node_feature(t):
         kind = F["speed_bump"]
     elif t.get("barrier") == "toll_booth":
         kind = F["toll_booth"]
+    elif hw == "speed_camera":
+        kind = F["speed_camera"]
     if kind is None:
         return None
     d = t.get("direction") or t.get("traffic_signals:direction")
@@ -426,7 +440,7 @@ def make_edges(ways, ids, lon, lat, starts, feats, masks):
     synth = -1
     n_out = 0
     for w, at in enumerate(ways):
-        (cls, flags, flags2, ms_fwd, ms_bwd, lanes, lf, lb, layer, surface, name, ref, builtup, reverse) = at
+        (cls, flags, flags2, ms_fwd, ms_bwd, lanes, lf, lb, layer, surface, name, ref, builtup, reverse, tf, tb) = at
         s, e = int(starts[w]), int(starts[w + 1])
         order = np.arange(e - 1, s - 1, -1) if reverse else np.arange(s, e)
         brk = is_break[order]
@@ -492,7 +506,7 @@ def make_edges(ways, ids, lon, lat, starts, feats, masks):
                     nb = pb if q1 == len(pp) else ("s", w, c, q1 - 1)
                     n_out += 1
                     yield F.RawEdge(na, nb, pp[q0:q1], cls, fg, flags2, ms_fwd, ms_bwd, lanes, lf, lb, layer,
-                                    surface, name, ref, [(j - q0, k, d) for j, k, d in pf if q0 <= j < q1])
+                                    surface, name, ref, [(j - q0, k, d) for j, k, d in pf if q0 <= j < q1], tf, tb)
         if w % 500000 == 0 and w:
             log("  %d / %d ways -> %d edges" % (w, len(ways), n_out))
 
@@ -518,7 +532,9 @@ def cmd_build(a):
     t2 = time.time()
     edges = list(make_edges(ways, ids, lon, lat, starts, feats, masks))
     del ways, ids, lon, lat, starts, masks
-    log("graph: %d edges" % len(edges))
+    log("graph: %d edges, %d with turn lanes, %d speed cameras on a road" % (
+        len(edges), sum(1 for e in edges if e.turn_fwd or e.turn_bwd),
+        sum(1 for e in edges for f in e.feats if f[1] == rsmap.FEATURE_ID["speed_camera"])))
     t3 = time.time()
     out = a.out or os.path.join(d, "packs", "%s-%s.rsmap" % (name, (osm_ts[:10] or time.strftime("%Y-%m-%d")).replace("-", "")))
     os.makedirs(os.path.dirname(out), exist_ok=True)

@@ -64,7 +64,7 @@ class PackCase(unittest.TestCase):
 class TestPack(PackCase):
     def test_manifest_and_counts(self):
         m = self.pack.manifest
-        self.assertEqual(m["format"], 1)
+        self.assertEqual(m["format"], 2)
         self.assertEqual(m["edges"], len(SP.edges()))
         self.assertGreater(m["tiles"], 1)
 
