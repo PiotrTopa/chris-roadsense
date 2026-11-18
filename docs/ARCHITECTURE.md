@@ -1430,13 +1430,16 @@ the smallest `limit - average` over the zones. The shed decision looks ahead: it
 10 s on (the slope of the hottest average, itself averaged over 10 s, so one burst is not a trend); restoring
 uses the headroom as it is.
 
-* Shed: expected headroom under 4 K -> one step, then 8 s for it to show before the next; under 1.5 K, or
-  while the platform limiter is already cutting, 3 s; after a step that saves little (`quick`: preview,
-  recorder pictures) 1 s.
-* An active limiter alone sheds nothing more (its states linger while the temperature already falls); it
-  blocks restoring.
+* Shed: expected headroom under 4 K and the temperature not already falling -> one step, then 8 s for it to
+  show before the next; with less than 1.5 K left now, 3 s and regardless of the trend; after a step that saves
+  little (`quick`: preview, recorder pictures) 1 s.
+* The road model (`last_resort`) is never shed on a forecast: only with less than 1.5 K left now, or while the
+  platform limiter is cutting.
+* An active limiter alone sheds nothing above the road step (its states linger while the temperature already
+  falls); it blocks restoring.
 * Restore: headroom above 9 K for 30 s and the limiter idle -> one step back. A step that had to be shed again
-  within 90 s is held twice as long the next time (up to 10 min).
+  within 90 s was worth more than assumed: the next time it needs 3 K more headroom (up to 20 K) and twice the
+  hold (up to 10 min).
 
 All of it is configuration (`<config dir>/governor.json`, keys of `governor.DEFAULT_CFG`: `shed_at_k`,
 `urgent_k`, `lookahead_s`, `restore_at_k`, `shed_dwell_s`, `restore_hold_s`, `max_level` (7 = never touch the

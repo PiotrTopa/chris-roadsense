@@ -45,7 +45,9 @@ DEFAULT_STEPS = (
     {"what": "signs", "caps": {"signs_hz": 2.5}},                    # sign detector at half rate
     {"what": "lights", "caps": {"lights_hz": 2.5}},                  # light detector at half rate
     {"what": "detectors_floor", "caps": {"env_hz": 0, "signs_hz": 1.25, "lights_hz": 1.25}},
-    {"what": "road", "caps": {"road_hz": 10}},                       # last: the road model at half rate
+    # last resort: only when the limit is really being hit (headroom under urgent_k now, or the limiter cutting),
+    # never on a forecast
+    {"what": "road", "caps": {"road_hz": 10}, "last_resort": True},  # the road model at half rate
 )
 
 DEFAULT_CFG = {
@@ -65,6 +67,8 @@ DEFAULT_CFG = {
     "urgent_dwell_s": 3.0,
     "restore_hold_s": 30.0,
     "restore_backoff": 2.0,    # a step that had to be shed again within regret_s is held this much longer next time
+    "regret_step_k": 3.0,      # ... and needs this much more headroom to be given back (it was worth more than assumed)
+    "regret_max_k": 20.0,
     "regret_s": 90.0,
     "restore_hold_max_s": 600.0,
     "valid_s": 10.0,
@@ -209,6 +213,7 @@ class Governor:
         self._t_shed = -1e9                # time of the last shed step (the dwell runs from it)
         self._above_since = None           # since when the headroom has been above restore_at_k
         self._hold = {}                    # level -> restore hold in s (grows when a restore was regretted)
+        self._extra = {}                   # level -> extra headroom in K its restore needs (grows the same way)
         self._restored_at = {}             # level -> time it was last given back
         self.headroom_k = None
         self.headroom_ahead_k = None       # headroom_k extrapolated lookahead_s ahead (never above headroom_k)
@@ -277,6 +282,8 @@ class Governor:
                 self._hold[self.level] = min(self.cfg["restore_hold_max_s"],
                                              self._hold.get(self.level, self.cfg["restore_hold_s"])
                                              * self.cfg["restore_backoff"])
+                self._extra[self.level] = min(self.cfg["regret_max_k"],
+                                              self._extra.get(self.level, 0.0) + self.cfg["regret_step_k"])
             self._event("shed", self.level, why)
         while self.level > level:
             self._restored_at[self.level] = now
@@ -306,13 +313,18 @@ class Governor:
             return self.state()
         c = self.cfg
         ha = self.headroom_ahead_k         # shed on where the temperature is going, restore on where it is
+        nxt = self.steps[self.level] if self.level < self.max_level else None
+        rising = self._slope > -0.02       # a step already taken that turned the temperature is given its time
+        hard = self.limited or h < c["urgent_k"]            # the limit is being hit now
         # An active limiter alone does not shed further (its states linger while the temperature already falls,
-        # and shedding on them would empty the whole list for one overshoot): it blocks restoring, and it makes
-        # the steps quick while the headroom is short.
-        if ha < c["shed_at_k"] and self.level < self.max_level:
+        # and shedding on them would empty the whole list for one overshoot): it blocks restoring.
+        want = nxt is not None and ha < c["shed_at_k"] and (rising or h < c["urgent_k"])
+        if want and nxt.get("last_resort") and not hard:
+            want = False
+        if want:
             if self.level and self.steps[self.level - 1].get("quick"):
                 dwell = c["quick_dwell_s"]
-            elif self.limited or ha < c["urgent_k"]:
+            elif h < c["urgent_k"]:
                 dwell = c["urgent_dwell_s"]
             else:
                 dwell = c["shed_dwell_s"]
@@ -320,7 +332,7 @@ class Governor:
                 self._set_level(self.level + 1, now, "headroom %.1f K, %.1f K in %.0f s%s" % (
                     h, ha, c["lookahead_s"], ", limiter active" if self.limited else ""))
             self._above_since = None
-        elif h > c["restore_at_k"] and not self.limited and self.level > 0:
+        elif h > c["restore_at_k"] + self._extra.get(self.level, 0.0) and not self.limited and self.level > 0:
             if self._above_since is None:
                 self._above_since = now
             hold = self._hold.get(self.level, c["restore_hold_s"])

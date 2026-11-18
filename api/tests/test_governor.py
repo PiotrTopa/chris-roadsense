@@ -56,8 +56,10 @@ class GovernorTest(unittest.TestCase):
         run(g, clk, 87.0, 1)
         self.assertEqual(g.shed()[-1], "view")
         run(g, clk, 87.0, 200)
-        self.assertEqual(g.shed(), [s["what"] for s in G.DEFAULT_STEPS])
-        self.assertEqual(g.shed()[-1], "road")                       # the road model is the last step
+        self.assertEqual(g.shed(), [s["what"] for s in G.DEFAULT_STEPS][:-1])
+        self.assertEqual(g.caps()["road_hz"], -1)                    # 3 K of headroom left: the road model is not touched
+        run(g, clk, 89.0, 10)                                        # the limit is being hit: the last resort
+        self.assertEqual(g.shed()[-1], "road")
         caps = g.caps()
         self.assertEqual((caps["road_hz"], caps["env_hz"], caps["preview_hz"], caps["record_frames"]), (10, 0, 0, 0))
         self.assertEqual([e["what"] for e in g.events if e["action"] == "shed"], g.shed())
@@ -67,9 +69,20 @@ class GovernorTest(unittest.TestCase):
         run(g, clk, 89.5, 10)                                        # 0.5 K: quick steps, then one every 3 s
         self.assertEqual(g.level, 5)
         g, clk = self.make()
-        run(g, clk, 87.0, 10, limiter=3)                             # short headroom and the limiter cutting: every 3 s
-        self.assertEqual(g.level, 5)
+        run(g, clk, 87.0, 60, limiter=3)                             # 3 K and the limiter cutting: down to the road model
+        self.assertEqual(g.level, 8)
         self.assertTrue(g.state()["limited"])
+
+    def test_a_step_that_turned_the_temperature_is_given_time(self):
+        g, clk = self.make(tau_s=4.0)
+        run(g, clk, 87.0, 3)
+        self.assertEqual(g.level, 3)
+        t = 87.0
+        for _ in range(40):                                          # still inside the margin, but falling
+            t -= 0.05
+            clk.t += 1.0
+            g.step(reading(t))
+        self.assertEqual(g.level, 3)
 
     def test_limiter_alone_holds_the_level(self):
         g, clk = self.make()
@@ -119,9 +132,11 @@ class GovernorTest(unittest.TestCase):
         self.assertEqual(g.level, 0)
         run(g, clk, 87.0, 1)                                         # shed again within 90 s
         self.assertEqual(g.level, 1)
-        run(g, clk, 79.0, 45)
+        run(g, clk, 79.0, 100)
+        self.assertEqual(g.level, 1)                                 # and it now needs 3 K more headroom (12 K)
+        run(g, clk, 77.0, 45)
         self.assertEqual(g.level, 1)                                 # hold doubled to 60 s
-        run(g, clk, 79.0, 20)
+        run(g, clk, 77.0, 20)
         self.assertEqual(g.level, 0)
 
     def test_average_ignores_a_burst(self):
