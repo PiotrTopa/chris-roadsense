@@ -68,13 +68,23 @@ def centred(t, v, half=0.5, fn=np.mean):
     return out
 
 
-def load(path):
-    """Run one stream through the api pipeline; per road message the raw and tracked quantities."""
+TRACKER_CFG = {"lanes": {}, "lead": {}}   # --lanes-set / --lead-set: tracker options for a tracker-side variant
+
+
+def load(path, strip_plan=False):
+    """Run one stream through the api pipeline; per road message the raw and tracked quantities.
+    strip_plan: drop the `plan` key first (what the api sees from the vision model without the policy)."""
     p = Pipeline()
+    if TRACKER_CFG["lanes"] or TRACKER_CFG["lead"]:
+        from roadsense_api.lanes import RoadGeometryTracker
+        from roadsense_api.lead import LeadTracker
+        p.lanes, p.lead = RoadGeometryTracker(TRACKER_CFG["lanes"]), LeadTracker(TRACKER_CFG["lead"])
     R = {k: [] for k in ("t", "seq", "raw_in", "raw_edge", "raw_lp", "lead_raw_x", "lead_raw_p", "vx", "yr",
                          "tr_present", "tr_y", "tr_edge_present", "lead_present", "lead_d", "lead_v", "lead_id",
-                         "ego_idx", "has_plan", "model_ms")}
+                         "ego_idx", "has_plan", "model_ms", "geom_from")}
     for m in read_lines(path):
+        if strip_plan and m.get("type") == "road":
+            m.pop("plan", None)
         outs = p.feed(m)
         if m.get("type") != "road":
             continue
@@ -99,10 +109,12 @@ def load(path):
         R["lead_d"].append(ld["dist_m"] if lp and ld.get("dist_m") is not None else np.nan)
         R["lead_v"].append(ld["v_rel_mps"] if lp and ld.get("v_rel_mps") is not None else np.nan)
         R["lead_id"].append(ld.get("track_id") if lp else None)
+        vw = d.get("view") or {}
+        R["geom_from"].append(((vw.get("road") or {}).get("vision") or {}).get("from"))
         eg = p.latest.get("egolane") or {}
         R["ego_idx"].append(eg.get("ego_index"))
     for k in R:
-        if k not in ("lead_id", "ego_idx"):
+        if k not in ("lead_id", "ego_idx", "geom_from"):
             R[k] = np.asarray(R[k], float) if k not in ("tr_present", "tr_edge_present", "lead_present", "has_plan") \
                 else np.asarray(R[k], bool)
     return R
@@ -157,9 +169,14 @@ def far_range(S, ego, which):
                     y1 = Y[j, line, :]
                     if not np.isfinite(y1).all():
                         continue
-                    errs[b].append(abs(np.interp(xp, X, y1) - yp))
-    return {f"{b[0]}-{b[1]}": (float(np.median(v)) if v else float("nan"),
-                               float(np.percentile(v, 90)) if v else float("nan"), len(v)) for b, v in errs.items()}
+                    errs[b].append(np.interp(xp, X, y1) - yp)
+    out = {}
+    for b, v in errs.items():
+        v = np.asarray(v)
+        out[f"{b[0]}-{b[1]}"] = (float(np.median(np.abs(v))) if len(v) else float("nan"),
+                                 float(np.percentile(np.abs(v), 90)) if len(v) else float("nan"), len(v),
+                                 float(np.median(v)) if len(v) else float("nan"))  # signed: + = seen right of prediction
+    return out
 
 
 def metrics(S, ego):
@@ -177,6 +194,8 @@ def metrics(S, ego):
     ids = [i for i in S["lead_id"] if i is not None]
     out["lead_id_changes_pm"] = round(changes(ids) / minutes, 2)
     out["lead_present_pct"] = round(100.0 * float(np.mean(S["lead_present"])), 1)
+    for src in sorted(set(map(str, S["geom_from"]))):  # view.road.vision.from: where the road geometry came from
+        out[f"geom_from_{src}_pct"] = round(100.0 * sum(1 for g in S["geom_from"] if str(g) == src) / len(t), 1)
     out["ego_idx_changes_pm"] = round(changes(S["ego_idx"]) / minutes, 2)
     out["ego_idx_known_pct"] = round(100.0 * sum(1 for e in S["ego_idx"] if e is not None) / len(t), 1)
     # jitter of tracked / raw inner lines about a centred 1 s mean
@@ -197,8 +216,8 @@ def metrics(S, ego):
     v = S["lead_v"]
     out["lead_v_noise"] = round(rsd(v - centred(t, v, fn=np.median)), 3)
     for which in ("tracked", "raw"):
-        for band, (med, p90, n) in far_range(S, ego, which).items():
-            out[f"far_{which}_{band}"] = [round(med, 3), round(p90, 3), n]
+        for band, (med, p90, n, sgn) in far_range(S, ego, which).items():
+            out[f"far_{which}_{band}"] = [round(med, 3), round(p90, 3), n, round(sgn, 3)]
     return out
 
 
@@ -232,6 +251,32 @@ def agreement(A, B):
     return out
 
 
+def lag_ms(A, B, key):
+    """Delay of B against A (ms, + = B later) maximising the correlation of the first differences of `key`
+    (e.g. the model's own speed vx, or the tracked lead distance) on a 10 ms grid, over -400..400 ms."""
+    t0, t1 = max(A["t"][0], B["t"][0]) + 1, min(A["t"][-1], B["t"][-1]) - 1
+    if t1 - t0 < 30:
+        return None
+    g = np.arange(t0, t1, 0.01)
+    def series(S):
+        v = np.asarray(S[key], float); ok = np.isfinite(v)
+        if ok.sum() < 100:
+            return None
+        y = np.interp(g, S["t"][ok], v[ok])
+        y = np.convolve(y, np.ones(15) / 15, mode="same")  # 150 ms smoothing
+        return np.diff(y)
+    a, b = series(A), series(B)
+    if a is None or b is None:
+        return None
+    best, bl = -2, None
+    for L in range(-40, 41):
+        x, y = (a[:len(a) - L], b[L:]) if L >= 0 else (a[-L:], b[:len(b) + L])
+        c = np.corrcoef(x, y)[0, 1]
+        if np.isfinite(c) and c > best:
+            best, bl = c, L * 10
+    return [bl, round(float(best), 3)]
+
+
 def egolane_scores(path, labels):
     res = {}
     for mc in ("label", "none"):
@@ -248,10 +293,17 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("road_dir")
     ap.add_argument("--rides", default="")
-    ap.add_argument("--streams", default="sc.13.8,vis.13.8,vis.17,vis.20")
+    ap.add_argument("--streams", default="sc.13.8,vis.13.8,vis.17,vis.20,vis.13.8~noplan")
     ap.add_argument("--labels", default=os.path.expanduser("~/roadsense-labels"))
     ap.add_argument("--out", default="")
+    ap.add_argument("--lanes-set", action="append", default=[], help="lane tracker option KEY=JSON")
+    ap.add_argument("--lead-set", action="append", default=[], help="lead tracker option KEY=JSON")
+    ap.add_argument("--no-egolane", action="store_true", help="skip the label scoring")
     a = ap.parse_args()
+    for name, kvs in (("lanes", a.lanes_set), ("lead", a.lead_set)):
+        for kv in kvs:
+            k, _, v = kv.partition("=")
+            TRACKER_CFG[name][k] = json.loads(v)
     rides = a.rides.split(",") if a.rides else sorted({f.split(".")[0] for f in os.listdir(a.road_dir)
                                                        if f.endswith(".vis.20.jsonl.gz")})
     streams = a.streams.split(",")
@@ -261,18 +313,21 @@ def main():
     for ride in rides:
         if ride in allres:
             continue
-        paths = {s: os.path.join(a.road_dir, f"{ride}.{s}.jsonl.gz") for s in streams}
+        paths = {s: os.path.join(a.road_dir, f"{ride}.{s.split('~')[0]}.jsonl.gz") for s in streams}
         if not all(os.path.exists(p) for p in paths.values()):
             print(f"{ride}: streams missing, skipped", flush=True)
             continue
-        S = {s: load(p) for s, p in paths.items()}
-        ref20 = [S[s] for s in S if s.endswith(".20")] + [S[s] for s in S if s.startswith("sc.")]
+        S = {s: load(p, strip_plan=s.endswith("~noplan")) for s, p in paths.items()}
+        ref20 = [S[s] for s in S if s == "vis.20"] + [S[s] for s in S if s.startswith("sc.")]
         ego = ego_track(ref20[:2])
         res = {s: metrics(S[s], ego) for s in streams}
         res["agree_sc_vis13.8"] = agreement(S[streams[0]], S["vis.13.8"]) if "vis.13.8" in S else None
+        if "vis.20" in S:
+            res["lag_vis20_vs_sc_ms"] = {"pose_vx": lag_ms(S[streams[0]], S["vis.20"], "vx"),
+                                         "lead_dist": lag_ms(S[streams[0]], S["vis.20"], "lead_d")}
         lab = os.path.join(a.labels, f"{ride}.lanes.csv")
-        if os.path.exists(lab):
-            res["egolane"] = {s: egolane_scores(p, lab) for s, p in paths.items()}
+        if os.path.exists(lab) and not a.no_egolane:
+            res["egolane"] = {s: egolane_scores(p, lab) for s, p in paths.items() if "~" not in s}
         allres[ride] = res
         print(json.dumps({ride: res}), flush=True)
         if a.out:
