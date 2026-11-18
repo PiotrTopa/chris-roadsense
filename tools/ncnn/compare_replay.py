@@ -3,8 +3,9 @@
 
 usage: compare_replay.py REF.jsonl TEST.jsonl [--csv OUT.csv]
 
-Both runs keep their own recurrent state (features_buffer, prev curvature), so this measures the
-accumulated difference, not a single-frame one. Metrics per run, then mean/max over the replay:
+Both runs keep their own recurrent state (supercombo: features_buffer, prev curvature; vision: the policy's
+feature history), so this measures the accumulated difference, not a single-frame one. Works for both road
+models (`road_model` supercombo or vision); plan_xy only where both runs have a plan. Metrics per run, then mean/max over the replay:
   lane_y_mean / lane_y_max  |dy| over the 4 lane lines x 33 points (m); lane_y_in_* = the 2 inner lines
   lane_prob                 max |dprob| over the 4 lane lines
   lead_x / lead_v / lead_p  |d| of lead 0 (now hypothesis) at t=0
@@ -35,7 +36,8 @@ def main():
             lane_prob=max(abs(lr["prob"] - lt["prob"]) for lr, lt in zip(r["lane_lines"], t["lane_lines"])),
             lead_x=abs(lr0["x"][0] - lt0["x"][0]), lead_v=abs(lr0["v"][0] - lt0["v"][0]),
             lead_p=abs(lr0["prob"] - lt0["prob"]), lead_prob_ref=lr0["prob"],
-            plan_xy=max(max(abs(p - q) for p, q in zip(r["plan"][k], t["plan"][k])) for k in ("x", "y")),
+            plan_xy=(max(max(abs(p - q) for p, q in zip(r["plan"][k], t["plan"][k])) for k in ("x", "y"))
+                     if "plan" in r and "plan" in t else 0.0),
             model_ms_ref=r["model_ms"], model_ms_test=t["model_ms"]))
     keys = [k for k in rows[0] if k not in ("seq", "lead_prob_ref", "model_ms_ref", "model_ms_test")]
     print(f"{len(rows)} runs  {a[0]} vs {a[1]}")

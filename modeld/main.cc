@@ -1,4 +1,5 @@
-// modeld: camera frame ring -> openpilot v0.9.7 supercombo (ONNX Runtime CPU or ncnn Vulkan) -> `road` JSON lines.
+// modeld: camera frame ring -> road model (openpilot v0.9.7 supercombo, or v0.11.1 driving_vision [+ policy] with
+// --road-model vision; ONNX Runtime CPU or ncnn Vulkan) -> `road` JSON lines.
 //
 // Threads: a prep thread reads every new ring frame, selects model frames (20 Hz clock, see
 // FrameSelector) and warps+packs each selected frame for both model inputs, so the image pair
@@ -40,7 +41,7 @@ void on_signal(int) { g_run = false; }
 struct Options {
     SupercomboOptions sc;
     std::string cpus = "4-7";  // ncnn backend: 0-3 unless set (little cores do prep + GPU dispatch)
-    bool cpus_set = false, threads_set = false, model_set = false;
+    bool cpus_set = false, threads_set = false, model_set = false, policy_set = false;
     std::string prep_cpus;  // empty: inherit the process mask
     std::string rundir;
     std::string ring;
@@ -80,9 +81,16 @@ bool parse_cpus(const std::string &s, cpu_set_t *set) {
 
 void usage() {
     fprintf(stderr,
-            "usage: modeld [--backend ort|ncnn] [--model PATH] [--threads N] [--cpus LIST|none] [--prep-cpus LIST] [--rhd]\n"
+            "usage: modeld [--road-model supercombo|vision] [--policy PATH|none] [--backend ort|ncnn] [--model PATH] [--threads N] [--cpus LIST|none] [--prep-cpus LIST] [--rhd]\n"
             "              [--steer-delay S] [--max-hz N] [--throttle-temp MC] [--spin] [--ncnn-fp32] [--ncnn-no-flushall] [--runs N] [--stats S]\n"
             "              [--gpu-sched PATH|none] [--gpu-yield MS] [--verbose]\n"
+            "  --road-model M supercombo: openpilot v0.9.7 supercombo (default); vision: v0.11.1 driving_vision (pair\n"
+            "                 200 ms apart, nearest warp, no state; default model driving_vision-fp32.onnx / -ncnn.param)\n"
+            "  --policy PATH  vision: driving_policy-fp32.onnx run on the CPU after every vision run for the plan\n"
+            "                 (default /var/lib/roadsense/models/driving_policy-fp32.onnx if present; none = no plan)\n"
+            "  --policy-threads N  vision: ORT threads of the policy (default 1)\n"
+            "  --policy-hz F  vision: run the policy at most F times a second, the plan is held in between (default\n"
+            "                 0 = after every vision run)\n"
             "  --backend B    ort: ONNX Runtime on the CPU (default); ncnn: ncnn on the GPU through Vulkan (if built in)\n"
             "  --model PATH   ort: fp32 supercombo v0.9.7 (default /var/lib/roadsense/models/supercombo-fp32.onnx)\n"
             "                 ncnn: the .param file, weights in the .bin next to it\n"
@@ -182,7 +190,8 @@ void prep_thread(const Options *opt, Shared *sh) {
     }
     RingReader rr(opt->ring);
     FrameSelector sel;
-    Preprocessor pp;
+    Preprocessor pp(is_vision(opt->sc) ? WarpKind::kNearestV011 : WarpKind::kBilinearV097);
+    PairPicker picker(is_vision(opt->sc) ? 0.2 : 0.05);  // vision: (frame 200 ms earlier, current)
     Calib calib;
     std::string err;
     time_t calib_mtime = file_mtime(opt->calib_path);
@@ -219,6 +228,7 @@ void prep_thread(const Options *opt, Shared *sh) {
         if (fv.seq <= last_seq || (last_ts && fv.ts_mono_ns - last_ts > 500'000'000)) {
             sel.reset();
             prev.reset();
+            picker.reset();
         }
         last_seq = fv.seq;
         last_ts = fv.ts_mono_ns;
@@ -238,8 +248,8 @@ void prep_thread(const Options *opt, Shared *sh) {
         f.k.height = int(fv.height);
         auto pf = std::make_shared<PackedFrame>();
         pp.pack(f, calib, pf.get());
+        prev = picker.push(pf);
         if (prev) sh->post(Pair{prev, pf, sel.stream_dt_ms()});
-        prev = std::move(pf);
     }
 }
 
@@ -358,6 +368,9 @@ int main(int argc, char **argv) {
             double v;
             std::string str;
             if (json_string(s, "backend", &str)) opt.sc.backend = str;
+            if (json_string(s, "road_model", &str)) opt.sc.road_model = str;
+            if (json_string(s, "policy", &str)) opt.sc.policy_path = str, opt.policy_set = true;
+            if (json_number(s, "policy_hz", &v)) opt.sc.policy_hz = v;
             if (json_string(s, "model", &str)) opt.sc.model_path = str, opt.model_set = true;
             if (json_number(s, "threads", &v)) opt.sc.threads = int(v), opt.threads_set = true;
             if (json_string(s, "cpus", &str)) opt.cpus = str, opt.cpus_set = true;
@@ -383,6 +396,10 @@ int main(int argc, char **argv) {
             return argv[++i];
         };
         if (a == "--backend") opt.sc.backend = val();
+        else if (a == "--road-model") opt.sc.road_model = val();
+        else if (a == "--policy") opt.sc.policy_path = val(), opt.policy_set = true;
+        else if (a == "--policy-threads") opt.sc.policy_threads = atoi(val().c_str());
+        else if (a == "--policy-hz") opt.sc.policy_hz = atof(val().c_str());
         else if (a == "--model") opt.sc.model_path = val(), opt.model_set = true;
         else if (a == "--threads") opt.sc.threads = atoi(val().c_str()), opt.threads_set = true;
         else if (a == "--cpus") opt.cpus = val(), opt.cpus_set = true;
@@ -413,6 +430,19 @@ int main(int argc, char **argv) {
         fprintf(stderr, "modeld: backend '%s' not available in this build (ort%s)\n", opt.sc.backend.c_str(),
                 backend_available("ncnn") ? ", ncnn" : "");
         return 2;
+    }
+    if (is_vision(opt.sc)) {  // road-model defaults, unless set by config or CLI
+        if (!opt.model_set)
+            opt.sc.model_path = opt.sc.backend == "ncnn" ? "/var/lib/roadsense/models/driving_vision-ncnn.param"
+                                                         : "/var/lib/roadsense/models/driving_vision-fp32.onnx";
+        if (!opt.policy_set) {
+            opt.sc.policy_path = "/var/lib/roadsense/models/driving_policy-fp32.onnx";
+            if (access(opt.sc.policy_path.c_str(), R_OK) != 0) opt.sc.policy_path.clear();
+        }
+        if (opt.sc.policy_path == "none") opt.sc.policy_path.clear();
+        fprintf(stderr, "modeld: road model vision, policy %s\n",
+                opt.sc.policy_path.empty() ? "none (no plan in `road`)" : opt.sc.policy_path.c_str());
+        opt.model_set = true;
     }
     if (opt.sc.backend == "ncnn") {  // backend-specific defaults, unless set by config or CLI
         if (!opt.model_set) opt.sc.model_path = "/var/lib/roadsense/models/supercombo-ncnn.param";
@@ -568,12 +598,13 @@ int main(int argc, char **argv) {
         }
         bool ok;
         if (pipelined) {
-            ok = job.ok && model->run(*job.pf, nullptr, &err);
+            ok = job.ok && model->run(*job.pf, nullptr, &err, p.cur->ts_mono_ns);
             if (!job.ok) err = job.err;
             win_rec += job.record_ms;
             win_rerec += job.rerecords;
         } else {
-            ok = model->run(p.prev->med.data(), p.cur->med.data(), p.prev->big.data(), p.cur->big.data(), nullptr, &err);
+            ok = model->run(p.prev->med.data(), p.cur->med.data(), p.prev->big.data(), p.cur->big.data(), nullptr, &err,
+                            p.cur->ts_mono_ns);
         }
         if (!ok) {
             fprintf(stderr, "modeld: run failed: %s\n", err.c_str());

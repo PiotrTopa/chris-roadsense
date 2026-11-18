@@ -44,18 +44,43 @@ Mat3 uv_warp_matrix(const Mat3 &m) {
     return mat3_mul(mat3_mul(s_in, m), s_out);
 }
 
+Mat3 uv_warp_matrix_v011(const Mat3 &m) {
+    // compile_modeld.py: M_inv_uv = M_inv * [[1, 1, .5], [1, 1, .5], [2, 2, 1]] (elementwise)
+    static const double k[9] = {1, 1, 0.5, 1, 1, 0.5, 2, 2, 1};
+    Mat3 r;
+    for (int i = 0; i < 9; ++i) r[i] = m[i] * k[i];
+    return r;
+}
+
 static inline int16_t short_sat_rte(float v) {
     float r = std::nearbyint(v);  // default rounding mode = round half to even
     return int16_t(std::clamp(r, -32768.0f, 32767.0f));
 }
 
 void WarpTable::build(const Mat3 &md, int src_w, int src_h, int src_row_stride, int src_px_stride, int dst_w,
-                      int dst_h) {
+                      int dst_h, WarpKind kind) {
     dst_w_ = dst_w;
     dst_h_ = dst_h;
-    tab_.resize(size_t(dst_w) * dst_h);
     float m[9];
     for (int i = 0; i < 9; ++i) m[i] = float(md[i]);  // the kernel uses __constant float * M
+    if (kind == WarpKind::kNearestV011) {
+        // warp_perspective_tinygrad: float32 tfm, src = (M x) / w, round half to even, clip, gather
+        tab_.clear();
+        nn_.resize(size_t(dst_w) * dst_h);
+        for (int dy = 0; dy < dst_h; ++dy)
+            for (int dx = 0; dx < dst_w; ++dx) {
+                const float fx = float(dx), fy = float(dy);
+                const float X = m[0] * fx + m[1] * fy + m[2];
+                const float Y = m[3] * fx + m[4] * fy + m[5];
+                const float W = m[6] * fx + m[7] * fy + m[8];
+                const float sx = std::clamp(std::nearbyint(X / W), 0.0f, float(src_w - 1));
+                const float sy = std::clamp(std::nearbyint(Y / W), 0.0f, float(src_h - 1));
+                nn_[size_t(dy) * dst_w + dx] = uint32_t(int(sy) * src_row_stride + int(sx) * src_px_stride);
+            }
+        return;
+    }
+    nn_.clear();
+    tab_.resize(size_t(dst_w) * dst_h);
     for (int dy = 0; dy < dst_h; ++dy)
         for (int dx = 0; dx < dst_w; ++dx) {
             const float X0 = m[0] * dx + m[1] * dy + m[2];
@@ -80,6 +105,12 @@ void WarpTable::build(const Mat3 &md, int src_w, int src_h, int src_row_stride, 
 }
 
 void WarpTable::apply(const uint8_t *src, uint8_t *dst) const {
+    if (!nn_.empty()) {
+        const size_t n = nn_.size();
+        const uint32_t *o = nn_.data();
+        for (size_t i = 0; i < n; ++i) dst[i] = src[o[i]];
+        return;
+    }
     const size_t n = tab_.size();
     const Entry *t = tab_.data();
     for (size_t i = 0; i < n; ++i) {
@@ -139,9 +170,9 @@ void FramePacker::pack(const uint8_t *y, int y_stride, const uint8_t *uv, int uv
         y_stride_ = y_stride;
         uv_stride_ = uv_stride;
         m_ = model_warp_matrix(k, c, big_);
-        const Mat3 muv = uv_warp_matrix(m_);
-        ty_.build(m_, k.width, k.height, y_stride, 1, sc::kModelW, sc::kModelH);
-        tu_.build(muv, k.width / 2, k.height / 2, uv_stride, 2, sc::kModelUVW, sc::kModelUVH);
+        const Mat3 muv = kind_ == WarpKind::kNearestV011 ? uv_warp_matrix_v011(m_) : uv_warp_matrix(m_);
+        ty_.build(m_, k.width, k.height, y_stride, 1, sc::kModelW, sc::kModelH, kind_);
+        tu_.build(muv, k.width / 2, k.height / 2, uv_stride, 2, sc::kModelUVW, sc::kModelUVH, kind_);
         tv_ = tu_;  // same geometry, V is at +1 byte
         y_.resize(size_t(sc::kModelW) * sc::kModelH);
         u_.resize(size_t(sc::kModelUVW) * sc::kModelUVH);

@@ -1,5 +1,10 @@
 #include "supercombo.h"
 
+#include <chrono>
+#include <stdexcept>
+
+#include "vision.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -20,7 +25,25 @@ void softmax(const float *in, std::array<float, N> &out) {
 }
 }  // namespace
 
+static_assert(vis::kPolicyOutputLen == 1000, "policy_out_ size");
+
+bool is_vision(const SupercomboOptions &o) { return o.road_model == "vision"; }
+
+double Supercombo::pair_dt_s() const { return vision_ ? vis::kPairDtS : sc::kModelPeriodS; }
+
 Supercombo::Supercombo(const SupercomboOptions &opt) : opt_(opt) {
+    if (opt.road_model != "supercombo" && opt.road_model != "vision")
+        throw std::runtime_error("unknown road model '" + opt.road_model + "' (supercombo, vision)");
+    vision_ = is_vision(opt);
+    if (vision_) {
+        in_[0].assign(sc::kImgInput, 0.0f);
+        in_[1].assign(sc::kImgInput, 0.0f);
+        out_.assign(vis::kOutputLen, 0.0f);
+        if (!opt.policy_path.empty())
+            policy_ = std::make_unique<VisionPolicy>(opt.policy_path, opt.policy_threads, opt.rhd, opt.allow_spinning);
+        backend_ = make_backend(opt);
+        return;
+    }
     const std::array<std::vector<int64_t>, 7> shapes = {{{1, sc::kImgC, sc::kImgH, sc::kImgW},
                                                           {1, sc::kImgC, sc::kImgH, sc::kImgW},
                                                           {1, sc::kDesireLen, sc::kDesireW},
@@ -44,7 +67,7 @@ Supercombo::Supercombo(const SupercomboOptions &opt) : opt_(opt) {
 Supercombo::~Supercombo() = default;
 
 bool Supercombo::run(const float *med_prev, const float *med_cur, const float *big_prev, const float *big_cur,
-                     const float *desire, std::string *err) {
+                     const float *desire, std::string *err, int64_t ts_ns) {
     // images: [prev | cur] (spec 2.3)
     std::memcpy(in_[0].data(), med_prev, sizeof(float) * sc::kFramePacked);
     std::memcpy(in_[0].data() + sc::kFramePacked, med_cur, sizeof(float) * sc::kFramePacked);
@@ -54,7 +77,17 @@ bool Supercombo::run(const float *med_prev, const float *med_cur, const float *b
     std::array<const float *, 7> in;
     for (int i = 0; i < 7; ++i) in[i] = in_[i].data();
     if (!backend_->run(in, out_.data(), err)) return false;
-    finish();
+    finish(ts_ns);
+    return true;
+}
+
+bool Supercombo::run_raw(const float *raw, int64_t ts_ns, std::string *err) {
+    if (!vision_) {
+        if (err) *err = "run_raw: vision model only";
+        return false;
+    }
+    std::memcpy(out_.data(), raw, sizeof(float) * vis::kOutputLen);
+    finish(ts_ns);
     return true;
 }
 
@@ -77,18 +110,19 @@ std::unique_ptr<Supercombo::Prefetch> Supercombo::prefetch(const float *med_prev
 
 bool Supercombo::submit(Prefetch &p, std::string *err) { return backend_->submit_stage1(p.job.get(), err); }
 
-bool Supercombo::run(Prefetch &p, const float *desire, std::string *err) {
+bool Supercombo::run(Prefetch &p, const float *desire, std::string *err, int64_t ts_ns) {
     prepare_aux(desire);
     std::array<const float *, 7> in;
     in[0] = p.img0.data();
     in[1] = p.img1.data();
     for (int i = 2; i < 7; ++i) in[i] = in_[i].data();
     if (!backend_->run_stage2(p.job.get(), in, out_.data(), err)) return false;
-    finish();
+    finish(ts_ns);
     return true;
 }
 
 void Supercombo::prepare_aux(const float *desire) {
+    if (vision_) return;  // no auxiliary inputs (v_ego: finish())
     // desire: rising-edge pulse, index 0 forced 0, FIFO shift, newest at row 99 (spec 1.1)
     std::array<float, 8> d{};
     if (desire) std::copy(desire, desire + 8, d.begin());
@@ -107,10 +141,59 @@ void Supercombo::prepare_aux(const float *desire) {
     in_[4][1] = opt_.steer_delay;
 }
 
-void Supercombo::finish() {
+void Supercombo::finish(int64_t ts_ns) {
     ++runs_;
+    if (ts_ns < 0) ts_ns = last_ts_ + int64_t(sc::kModelPeriodS * 1e9);
+    last_ts_ = ts_ns;
+    if (vision_) {
+        // v_ego (published only): the model's own pose vx of the previous run, as for supercombo
+        v_ego_ = runs_ > 1 ? std::clamp(parsed_.pose[0], 0.0f, 70.0f) : 0.0f;
+        if (!std::isfinite(v_ego_)) v_ego_ = 0;
+        parsed_ = parse_vision(out_.data());
+        policy_ms_ = 0;
+        if (policy_) {
+            // the history gets every run's features; the policy itself may run less often (policy_hz)
+            const bool due = opt_.policy_hz <= 0 || policy_ts_ < 0 || ts_ns < policy_ts_ ||
+                             double(ts_ns - policy_ts_) >= 1e9 / opt_.policy_hz - 25e6;
+            std::string perr;
+            const auto t0 = std::chrono::steady_clock::now();
+            if (due) {
+                if (policy_->run(out_.data() + vis::kHiddenState, ts_ns, policy_out_.data(), &perr)) {
+                    policy_ts_ = ts_ns;
+                    policy_valid_ = true;
+                } else {
+                    policy_valid_ = false;
+                    fprintf(stderr, "modeld: %s\n", perr.c_str());
+                }
+            } else {
+                policy_->push(out_.data() + vis::kHiddenState, ts_ns);
+            }
+            policy_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            if (policy_valid_) {
+                const auto &po = policy_out_;
+                bool fin = true;
+                for (float v : po) fin = fin && std::isfinite(v);
+                for (int t = 0; t < sc::kIdxN; ++t)
+                    for (int c = 0; c < sc::kPlanWidth; ++c) {
+                        parsed_.plan[t][c] = po[vis::kPlanMean + t * vis::kPlanWidth + c];
+                        parsed_.plan_std[t][c] = std::exp(po[vis::kPlanStd + t * vis::kPlanWidth + c]);
+                    }
+                softmax(po.data() + vis::kDesireState, parsed_.desire_state);
+                parsed_.has_plan = parsed_.has_desire_state = true;
+                parsed_.plan_hyp = 0;
+                parsed_.plan_weight = NAN;
+                parsed_.finite = parsed_.finite && fin;
+            }
+        }
+        fcw();
+        return;
+    }
     parsed_ = parse(out_.data());
+    fcw();
+    feedback();
+}
 
+void Supercombo::fcw() {
     // FCW (fill_model_msg.py): hard-brake-5 > [.05,.05,.15,.15,.15] for the last 5 runs and
     // hard-brake-3 > [.7,.7] for the last 2, using the t = 2 s entries.
     std::rotate(fcw5_.begin(), fcw5_.begin() + 1, fcw5_.end());
@@ -121,7 +204,9 @@ void Supercombo::finish() {
     bool f = fcw3_[0] > .7f && fcw3_[1] > .7f;
     for (int i = 0; i < 5; ++i) f = f && fcw5_[i] > t5[i];
     parsed_.fcw = f;
+}
 
+void Supercombo::feedback() {
     // feedback FIFOs after the run (spec 4)
     float *fb = in_[6].data();
     std::memmove(fb, fb + sc::kFeatW, sizeof(float) * (sc::kFeatLen - 1) * sc::kFeatW);
@@ -272,8 +357,10 @@ std::string road_json(const RoadOutputs &o, const RoadMeta &m) {
     j.key("rate_limited"), j.s += m.rate_limited ? "true" : "false", j.s += ',';
     j.key("steer_delay"), j.num(m.steer_delay), j.s += ',';
     j.key("valid"), j.s += o.finite ? "true" : "false", j.s += ',';
+    j.key("road_model"), j.s += '"', j.s += o.model, j.s += "\",";
 
-    // plan
+    // plan (absent, not null, when the model has none: consumers test road.get("plan"))
+    if (o.has_plan) {
     static const char *pk[15] = {"x", "y", "z", "vx", "vy", "vz", "ax", "ay", "az",
                                  "roll", "pitch", "yaw", "roll_rate", "pitch_rate", "yaw_rate"};
     j.key("plan"), j.s += '{';
@@ -286,8 +373,9 @@ std::string road_json(const RoadOutputs &o, const RoadMeta &m) {
     j.s += ',', j.key("x_std"), j.arrf(sc::kIdxN, [&](int t) { return o.plan_std[t][0]; });
     j.s += ',', j.key("y_std"), j.arrf(sc::kIdxN, [&](int t) { return o.plan_std[t][1]; });
     j.s += ',', j.key("z_std"), j.arrf(sc::kIdxN, [&](int t) { return o.plan_std[t][2]; });
-    j.s += ',', j.key("prob"), j.num(o.plan_weight);
+    j.s += ',', j.key("prob"), j.num(o.plan_mhp ? o.plan_weight : NAN);
     j.s += "},";
+    }
 
     auto line = [&](const RoadOutputs::Line &l, bool prob) {
         j.s += '{';
@@ -342,10 +430,11 @@ std::string road_json(const RoadOutputs &o, const RoadMeta &m) {
     j.s += "},";
     j.key("road_transform"), j.arr(o.road_transform), j.s += ',';
     j.key("road_transform_std"), j.arr(o.road_transform_std), j.s += ',';
-    j.key("desired_curvature"), j.num(o.desired_curvature), j.s += ',';
-    j.key("desired_curvature_std"), j.num(o.desired_curvature_std), j.s += ',';
+    j.key("desired_curvature"), j.num(o.has_curvature ? o.desired_curvature : NAN), j.s += ',';
+    j.key("desired_curvature_std"), j.num(o.has_curvature ? o.desired_curvature_std : NAN), j.s += ',';
 
-    j.key("desire_state"), j.arr(o.desire_state), j.s += ',';
+    if (o.has_desire_state) j.key("desire_state"), j.arr(o.desire_state), j.s += ',';
+    else j.key("desire_state"), j.s += "null,";
     j.key("desire_pred"), j.s += '[';
     for (int k = 0; k < sc::kDesirePredLen; ++k) {
         if (k) j.s += ',';
