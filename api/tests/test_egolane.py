@@ -16,9 +16,10 @@ def line(y, conf=0.9, present=True):
     return {"present": present, "conf": conf, "y": [y] * len(X)} if present else {"present": False, "conf": 0.0, "y": None}
 
 
-def lanes_msg(ts, lanes_right, lanes_left, w=3.5, far_r=True, far_l=True, edges=True):
-    """A tracked frame on a road with `lanes_right` lanes to the right and `lanes_left` to the left of the car."""
-    yl, yr = -w / 2, w / 2
+def lanes_msg(ts, lanes_right, lanes_left, w=3.5, far_r=True, far_l=True, edges=True, centre=0.0):
+    """A tracked frame on a road with `lanes_right` lanes to the right and `lanes_left` to the left of the car;
+    `centre`: where the ego lane's centre is (m, right positive: the car is that far left of it)."""
+    yl, yr = centre - w / 2, centre + w / 2
     gap = lambda k: 2.5 + 1.8 * k * (w / 3.4)          # noqa: E731 - the model's edge placement (egolane.py)
     return {"type": "lanes", "ts_mono_ns": ts, "x": X, "lane_width_m": w,
             "lines": [line(yl - w, present=far_l and lanes_left > 0), line(yl), line(yr),
@@ -82,26 +83,92 @@ class EgoLane(unittest.TestCase):
             out = est.on_lanes(lanes_msg(t, 1, 1, far_r=False, edges=False), road_msg(t))
         self.assertNotEqual(out["ego_index"], 2)
 
+    @staticmethod
+    def change(est, t0, direction, n=3, w=3.5, relabel_s=0.4):
+        """A lane change as the tracked lines show it: the centre drifts to one side over 1.5 s (the car nears
+        the line), slides to the other side while the network relabels, and comes back to the middle."""
+        sg = 1.0 if direction == "left" else -1.0        # going left: the lines move right
+        seq = [sg * 0.45 * w * i / 15 for i in range(16)]
+        k = max(1, int(relabel_s * 10))
+        seq += [sg * (0.45 - 0.9 * (i + 1) / k) * w for i in range(k)]
+        seq += [-sg * 0.45 * w * (1 - (i + 1) / 10) for i in range(10)]
+        out, t = None, t0
+        for c in seq:
+            t += NS // 10
+            est.on_map(map_msg(t, n))
+            out = est.on_lanes(lanes_msg(t, 1, 1, far_r=False, far_l=False, edges=False, centre=c), None)
+        return out, t
+
     def test_lane_change_moves_the_estimate(self):
+        """Measured on the labelled rides (L22): no real change is one clean frame; the pattern over about a second
+        is what is read, and its direction is the side the centre was on before it came back."""
         est = EgoLaneEstimator()
-        out, ts = drive(est, 3, 2, 2.0)                 # rightmost
+        out, ts = drive(est, 3, 2, 3.0)                 # rightmost
         self.assertEqual(out["ego_index"], 2)
-        # a change to the left: the raw ego centre jumps by a lane width (lines move right in the car's frame)
-        t = ts + NS // 10
-        est.on_map(map_msg(t, 3))
-        out = est.on_lanes(lanes_msg(t, 1, 1, far_r=False, far_l=False, edges=False), road_msg(t, centre=3.5))
+        out, ts = self.change(est, ts, "left")
         self.assertEqual(out["last_change"]["dir"], "left")
+        self.assertGreater(out["probs"][1], 0.6)        # at once, before the camera shows the lane on the right
+        self.assertNotEqual(out["ego_index"], 2)
+        out, ts = drive(est, 3, 1, 1.0, t0=ts + NS // 10)
+        self.assertEqual(out["ego_index"], 1)
+        out, ts = self.change(est, ts + 3 * NS, "right", relabel_s=0.1)      # a clean relabel in one frame
+        self.assertEqual(out["last_change"]["dir"], "right")
+        self.assertGreater(out["probs"][2], 0.6)
+
+    def test_weaving_inside_the_lane_is_not_a_change(self):
+        est = EgoLaneEstimator()
+        out, ts = drive(est, 3, 1, 3.0)
+        for i in range(100):                             # +-0.9 m with a period of 5 s
+            ts += NS // 10
+            est.on_map(map_msg(ts, 3))
+            import math
+            out = est.on_lanes(lanes_msg(ts, 1, 1, centre=0.9 * math.sin(i / 8.0)), None)
+        self.assertIsNone(out["last_change"])
         self.assertEqual(out["ego_index"], 1)
 
     def test_turn_signal_strengthens_a_change(self):
         a, b = EgoLaneEstimator(), EgoLaneEstimator()
         b.on_ego({"turn_signal": "left"})
         for est in (a, b):
-            _, ts = drive(est, 3, 2, 2.0)
-            t = ts + NS // 10
-            est.on_map(map_msg(t, 3))
-            est.on_lanes(lanes_msg(t, 1, 1, far_r=False, far_l=False, edges=False), road_msg(t, centre=3.5))
+            _, ts = drive(est, 3, 2, 3.0)
+            self.change(est, ts, "left")
         self.assertGreater(b.out["probs"][1], a.out["probs"][1])
+
+    def test_a_changed_lane_count_opens_the_estimate(self):
+        """3 -> 4 lanes: the lane was added on the right or on the left, the map count does not say which. A
+        confident 'rightmost' must not stay confident (krakow-night-tunnel, exit lane: wrong for 2.5 s before)."""
+        est = EgoLaneEstimator()
+        out, ts = drive(est, 3, 2, 3.0)
+        self.assertEqual(out["ego_index"], 2)
+        ts += NS // 10
+        est.on_map(map_msg(ts, 4))
+        m = lanes_msg(ts, 1, 2, far_r=False, far_l=False, edges=False)
+        out = est.on_lanes(m, None)
+        self.assertIsNone(out["ego_index"])
+        self.assertAlmostEqual(out["probs"][2], out["probs"][3], delta=0.1)
+        for i in range(30):                              # the camera then shows the new lane on the right
+            ts += NS // 10
+            est.on_map(map_msg(ts, 4))
+            out = est.on_lanes(lanes_msg(ts, 1, 2), None)
+        self.assertEqual(out["ego_index"], 2)
+
+    def test_turn_arrows_say_on_which_side_the_lane_was_added(self):
+        """2 -> 3 lanes with a left-turn pocket (left | through | through): the car in the left lane of two is
+        now in the middle; with a right-turn lane (through | through | right) the rightmost car is in the middle."""
+        for arrows, start, want in (([["left"], ["through"], ["through"]], 0, 1),
+                                    ([["through"], ["through"], ["right"]], 1, 1),
+                                    ([["through"], ["through"], ["right"]], 0, 0)):
+            est = EgoLaneEstimator()
+            out, ts = drive(est, 2, start, 3.0)
+            self.assertEqual(out["ego_index"], start)
+            ts += NS // 10
+            m = map_msg(ts, 3)
+            m["road"]["turn_lanes"] = arrows
+            est.on_map(m)
+            out = est.on_lanes(lanes_msg(ts, 1, 1, far_r=False, far_l=False, edges=False), None)
+            self.assertEqual(max(range(3), key=lambda i: out["probs"][i]), want, (arrows, start, out))
+            self.assertGreater(out["probs"][want], 0.7)
+            self.assertIn("map:turn_lanes", out["provenance"])
 
     def test_without_a_map_count_index_from_the_right_only(self):
         est = EgoLaneEstimator()

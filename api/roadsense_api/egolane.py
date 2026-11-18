@@ -12,9 +12,14 @@ Evidence per camera frame (the tracked lines and edges of the `lanes` topic, at 
   (and so k >= 1), its absence weakly says k = 0; the same on the left;
 * the map's lane count of the matched road (`map.road.lanes`, tagged values only): it bounds k to
   0..forward-1 and ties the two sides together (lanes on the left = forward - 1 - k + backward);
-* lane changes: a jump of the camera's ego-lane centre by about one lane width between two frames (the
-  network relabels its lines when the car crosses one) shifts the distribution by one lane; the turn signal
-  (vehicle input, `ego.turn_signal`) makes a change in its direction more likely, never forces one.
+* lane changes: the tracked ego-lane centre moves to one side and comes back on the other within about a
+  second (the network relabels its lines when the car crosses one; measured on the labelled rides it is never
+  one clean frame) shifts the distribution by one lane; the turn signal (vehicle input, `ego.turn_signal`)
+  makes a change in its direction more likely, never forces one;
+* a change of the map's lane count: the lane was added or removed on the right or on the left, which the count
+  does not say, so a confident estimate opens up (half each way) until the camera settles it; painted turn
+  arrows of the new stretch (`map.road.turn_lanes`, pack format 2) say the side when the new lanes at one edge
+  only turn (a turn pocket, an exit lane).
 
 Between frames the distribution diffuses a little (a lane change the camera did not see). `probs` is the
 distribution over lanes from the left (or from the right while the count is unknown); `ego_index` is given only
@@ -41,18 +46,30 @@ DEFAULT_CFG = dict(
     edge_min_conf=0.5,          # the tracker's edge confidence needed to use it
     line_hit=0.7, line_false=0.05,      # P(outer line seen | a lane there), P(... | no lane there): measured on
                                         # the labelled rides 0.69-0.73 and 0.00-0.13 (L20)
-    absence_trust=0.4,          # an outer line NOT seen is weak evidence (worn paint, a bus lane's wide line, a
-                                # queue beside the car): P(not seen | lane) is taken as 1 - absence_trust * line_hit
+    absence_trust=0.2,          # an outer line NOT seen is weak evidence (worn paint, a bus lane's wide line, a
+                                # queue beside the car, a wide lens): P(not seen | lane) is taken as
+                                # 1 - absence_trust * line_hit. 0.4 until L22; 0.2 halved the confident errors on
+                                # the car's camera and in town
     line_min_conf=0.45,
     width_default_m=3.4,
     diffuse_per_s=0.01,         # probability per second of a lane change the camera did not see
-    change_jump=0.55,           # a centre jump of this many lane widths between frames is a lane change
-    change_max_dt_s=0.35,       # ... between frames at most this far apart
-    change_p=0.85,              # probability that such a jump is a real change (else a relabel glitch)
+    # A lane change as the camera shows it: the ego-lane centre drifts to one side (the car nears a line), then
+    # the network relabels its lines and the centre comes back on the other side. The relabelling is rarely one
+    # clean frame (at night it alternates between the two labellings for half a second, and the tracker slides
+    # between them), so the pattern is read on the tracked lines over a window: a move of change_drop lane
+    # widths within change_window_s, from a centre at least change_from widths to one side to one at least
+    # change_to widths to the other.
+    change_drop=0.38, change_window_s=1.2, change_from=0.2, change_to=0.1,
+    change_refractory_s=2.0,    # one change per this long
+    change_p=0.85,              # probability that such a pattern is a real change (else a relabel glitch)
+    count_memory_s=10.0,
+    turn_lanes_side_p=0.85,     # ... unless the new lanes carry turn-only arrows on one side (map turn lanes)
+    count_change_right=0.5,     # the map's lane count changed: probability that the lane was added / removed on
+                                # the right (unknown without turn lanes: the estimate becomes "unknown", not wrong)
     signal_boost=1.5,           # the turn signal multiplies the weight of a change in its direction
     map_min_match=0.5,          # the map count is used from this match confidence on
     map_max_age_s=3.0,
-    commit_p=0.75,              # ego_index only when one lane holds this much
+    commit_p=0.8,               # ego_index only when one lane holds this much (0.75 until L22)
     evidence_tau_s=0.5,         # consecutive frames see the same road: their evidence counts as one
                                 # independent observation per this many seconds (likelihood ** (dt / tau))
     min_speed_mps=2.0,          # standing: the evidence is not used (queues hide the edges)
@@ -82,12 +99,15 @@ class EgoLaneEstimator:
     def reset(self):
         self.p = None               # distribution over k (lanes to the right), length n
         self.n = None               # number of own lanes the distribution is over (None: unknown, k_max)
+        self.n_known = None         # (the map's last count, when)
         self.t = None
         self.map = None
         self.turn = None
-        self.c_prev = None          # (t, centre, width) of the previous frame
+        self.c_hist = []            # (t, centre of the ego lane from the tracked inner lines) of the last seconds
+        self.c_block = 0            # no lane change is read before this time (refractory)
         self.last_change = None     # {"dir": "left"|"right", "ts": ns}
         self.evidence = {}
+        self.evidence_side = None
         self.out = None
 
     # ---- inputs ------------------------------------------------------------------------------------
@@ -110,28 +130,59 @@ class EgoLaneEstimator:
         ln = (m.get("road") or {}).get("lanes") or {}
         if ln.get("source") not in ("tagged", "tagged_total") or not ln.get("forward"):
             return None
+        tl = (m.get("road") or {}).get("turn_lanes")
+        if not (isinstance(tl, list) and len(tl) == int(ln["forward"]) and all(isinstance(x, list) for x in tl)):
+            tl = None
         return {"forward": int(ln["forward"]), "backward": int(ln.get("backward") or 0),
-                "oneway": bool((m.get("road") or {}).get("oneway")), "source": ln["source"]}
+                "oneway": bool((m.get("road") or {}).get("oneway")), "source": ln["source"], "turn_lanes": tl}
 
-    def _resize(self, n):
-        """Change the support to n own lanes (None: unknown). Probability beyond the new count piles up on the
-        outermost lane; a grown support gets a little mass everywhere (a lane was added somewhere)."""
+    def _side_of_new_lanes(self, ml):
+        """The map's count grew and the road has painted turn arrows (pack format 2): a lane that only turns,
+        at the edge of the carriageway, is the one that was added (a turn pocket, an exit lane). Probability
+        that the new lanes are on the right, or None when the arrows do not say."""
+        tl = ml.get("turn_lanes")
+        if not tl or not self.n_known or ml["forward"] <= self.n_known[0]:
+            return None
+        d = ml["forward"] - self.n_known[0]
+        only = lambda a, side: bool(a) and all(side in w for w in a)      # noqa: E731
+        right = all(only(a, "right") for a in tl[-d:])
+        left = all(only(a, "left") for a in tl[:d])
+        if right != left:
+            self.evidence_side = "right" if right else "left"
+            return self.cfg["turn_lanes_side_p"] if right else 1.0 - self.cfg["turn_lanes_side_p"]
+        return None
+
+    def _resize(self, n, p_right=None):
+        """Change the support to n own lanes (None: unknown). When the map's count differs from the last one it
+        gave (within count_memory_s: a junction or a doubtful match in between does not hide the change), the
+        lane was added or removed on the right with probability p_right (k, the lanes to the right, moves with
+        it) and on the left otherwise (k stays): without knowledge of the side a confident estimate becomes an
+        open one, which the next seconds of evidence settle. Probability beyond the count piles up on the
+        outermost lane."""
         c = self.cfg
         size = n if n else c["k_max"]
         if self.p is None:
             self.p = [1.0 / size] * size
-        elif len(self.p) != size:
+        else:
             old = self.p
-            new = [0.0] * size
-            for k, v in enumerate(old):
-                new[min(k, size - 1)] += v
-            self.p = _norm([v + 0.15 / size for v in new])
+            d = 0
+            if n and self.n_known and n != self.n_known[0] and (self.t - self.n_known[1]) / NS <= c["count_memory_s"]:
+                d = n - self.n_known[0]
+            if d or len(old) != size:
+                pr = (c["count_change_right"] if p_right is None else p_right) if d else 0.0
+                new = [0.0] * size
+                for k, v in enumerate(old):
+                    new[min(max(k + d, 0), size - 1)] += v * pr          # on the right: k changes by d
+                    new[min(k, size - 1)] += v * (1.0 - pr)              # on the left: k stays
+                self.p = _norm([v + (0.15 / size if len(old) != size else 0.0) for v in new])
         self.n = n
+        if n:
+            self.n_known = (n, self.t)
 
     # ---- the filter --------------------------------------------------------------------------------
     def on_lanes(self, lanes, road=None, speed_mps=None):
         """One tracked frame (`lanes` topic message); `road` is the raw model frame of it (lane changes are read
-        from its unfiltered inner lines). Returns the estimate (also kept as `self.out`)."""
+        on the tracked lines; `road` is unused and kept for callers). Returns the estimate (also kept as `self.out`)."""
         c = self.cfg
         ts = lanes.get("ts_mono_ns")
         if not isinstance(ts, int):
@@ -139,7 +190,8 @@ class EgoLaneEstimator:
         dt = 0.0 if self.t is None else max(0.0, (ts - self.t) / NS)
         self.t = ts
         ml = self._map_lanes(ts)
-        self._resize(ml["forward"] if ml else None)
+        self.evidence_side = None
+        self._resize(ml["forward"] if ml else None, self._side_of_new_lanes(ml) if ml else None)
         size = len(self.p)
         # diffusion: a change the camera did not see
         if dt > 0 and size > 1:
@@ -159,8 +211,8 @@ class EgoLaneEstimator:
         lo, hi = c["x_window"]
         ev = {}
         spd = speed_mps if speed_mps is not None else ((lanes.get("ego") or {}).get("speed_mps") or 0.0)
-        # ---- lane change from the raw inner lines
-        chg = self._lane_change(road, ts, w)
+        # ---- lane change from the tracked inner lines
+        chg = self._lane_change(lanes, ts, w)
         if chg and size > 1:
             sh = 1 if chg == "left" else -1                 # moving left: one more own lane to the right
             pc = c["change_p"]
@@ -177,6 +229,8 @@ class EgoLaneEstimator:
             self.p = q
             self.last_change = {"dir": chg, "ts": ts}
             ev["change"] = chg
+        if self.evidence_side:
+            ev["new_lanes"] = self.evidence_side
         if spd >= c["min_speed_mps"]:
             yl = _at(xs, (lines[1] or {}).get("y"), lo, hi) if (lines[1] or {}).get("present") else None
             yr = _at(xs, (lines[2] or {}).get("y"), lo, hi) if (lines[2] or {}).get("present") else None
@@ -247,28 +301,39 @@ class EgoLaneEstimator:
             v *= math.exp(-0.5 * ((g - hi) / c["edge_far_sigma_m"]) ** 2)
         return c["edge_outlier"] + v
 
-    def _lane_change(self, road, ts, w):
-        """'left' / 'right' when the camera's ego-lane centre jumped by about a lane width since the last frame."""
+    def _lane_change(self, lanes, ts, w):
+        """'left' / 'right' when the ego-lane centre of the tracked lines shows the pattern of a lane change
+        (DEFAULT_CFG): it was to one side, and within the window it moved by change_drop lane widths to the
+        other side. A car that goes left sees its lines move right (the centre grows), then the lines of the
+        lane on the left become the ego lane's (the centre falls by a lane width)."""
         c = self.cfg
-        ll = (road or {}).get("lane_lines")
-        if not ll or len(ll) != 4:
+        ln = (lanes or {}).get("lines") or []
+        h = self.c_hist
+        while h and (ts - h[0][0]) / NS > 3.0:
+            h.pop(0)
+        if len(ln) != 4 or not (ln[1] or {}).get("present") or not (ln[2] or {}).get("present"):
             return None
-        a, b = ll[1], ll[2]
-        if (a.get("prob") or 0) < 0.5 or (b.get("prob") or 0) < 0.5 or not a.get("y") or not b.get("y"):
-            self.c_prev = None
+        xs = lanes.get("x") or []
+        ya, yb = _at(xs, ln[1].get("y"), 3.0, 10.0), _at(xs, ln[2].get("y"), 3.0, 10.0)
+        if ya is None or yb is None or not 0.6 * w <= yb - ya <= 1.5 * w:
             return None
-        xs = a.get("x") or []
-        ya, yb = _at(xs, a["y"], 3.0, 10.0), _at(b.get("x") or xs, b["y"], 3.0, 10.0)
-        if ya is None or yb is None:
+        cur = 0.5 * (ya + yb)
+        h.append((ts, cur))
+        if ts < self.c_block:
             return None
-        cen = 0.5 * (ya + yb)
-        prev, self.c_prev = self.c_prev, (ts, cen)
-        if prev is None or (ts - prev[0]) / NS > c["change_max_dt_s"]:
+        win = [v for t, v in h[:-1] if (ts - t) / NS <= c["change_window_s"]]
+        if len(win) < 3:
             return None
-        jump = cen - prev[1]
-        if abs(jump) < c["change_jump"] * w:
-            return None
-        return "left" if jump > 0 else "right"           # lines moved right in the car's frame: the car went left
+        hi, lo = max(win), min(win)
+        out = None
+        if hi >= c["change_from"] * w and cur <= -c["change_to"] * w and hi - cur >= c["change_drop"] * w:
+            out = "left"
+        elif lo <= -c["change_from"] * w and cur >= c["change_to"] * w and cur - lo >= c["change_drop"] * w:
+            out = "right"
+        if out:
+            self.c_block = ts + int(c["change_refractory_s"] * NS)
+            del h[:]
+        return out
 
     def _result(self, ml):
         c = self.cfg
@@ -290,6 +355,8 @@ class EgoLaneEstimator:
             prov.append("lane_change")
         if self.turn:
             prov.append("turn_signal")
+        if ml and ml.get("turn_lanes"):
+            prov.append("map:turn_lanes")
         return {"ego_index": ego,
                 "ego_from_right": best if conf >= c["commit_p"] else None,
                 "probs": probs, "probs_from": "left" if ml else "right",
