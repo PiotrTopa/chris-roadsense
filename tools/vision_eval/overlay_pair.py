@@ -87,6 +87,9 @@ def main():
     ap.add_argument("ride"); ap.add_argument("road_dir"); ap.add_argument("out")
     ap.add_argument("--a", default="sc.13.8"); ap.add_argument("--b", default="vis.13.8")
     ap.add_argument("--n", type=int, default=5)
+    ap.add_argument("--kind", choices=("any", "lines", "lead"), default="any",
+                    help="pick only line disagreements, only lead disagreements, or the largest of either")
+    ap.add_argument("--tag", default="", help="suffix of the output names")
     a = ap.parse_args()
     slug = os.path.basename(os.path.normpath(a.ride))
     A = run(os.path.join(a.road_dir, f"{slug}.{a.a}.jsonl.gz"))
@@ -106,7 +109,11 @@ def main():
             elif ya.get("present") != yb.get("present"):
                 if 1.0 > score:
                     score, why = 1.0, f"line{i} present {a.a}={ya.get('present')} {a.b}={yb.get('present')}"
+        if a.kind == "lead":
+            score, why = 0.0, ""
         pa, pb = bool(da and da.get("present")), bool(db and db.get("present"))
+        if a.kind == "lines":
+            pa = pb = False
         if pa != pb:
             if 1.5 > score:
                 score, why = 1.5, f"lead present {a.a}={pa} {a.b}={pb}"
@@ -127,7 +134,7 @@ def main():
     cam = json.load(open(os.path.join(a.ride, "camera-replay.json")))
     cal = json.load(open(os.path.join(a.ride, "calib.json")))
     mj = sorted(glob.glob(os.path.join(a.ride, "*.mjpeg")))[0]
-    with open(os.path.join(a.out, f"{slug}.csv"), "w") as f:
+    with open(os.path.join(a.out, f"{slug}{a.tag}.csv"), "w") as f:
         f.write("seq,t_s,score,why\n")
         for sc, s, why in sorted(picks, key=lambda p: p[1]):
             img = frame(mj, s)
@@ -136,7 +143,7 @@ def main():
             R = draw(img.copy(), proj, *B[s], f"{slug} t={(s - 1) / 20:.1f}s  {a.b}")
             both = Image.new("RGB", (img.width * 2, img.height))
             both.paste(L, (0, 0)); both.paste(R, (img.width, 0))
-            both.resize((img.width * 3 // 2, img.height * 3 // 4)).save(os.path.join(a.out, f"{slug}_{s}.jpg"), quality=85)
+            both.resize((img.width * 3 // 2, img.height * 3 // 4)).save(os.path.join(a.out, f"{slug}{a.tag}_{s}.jpg"), quality=85)
             f.write(f"{s},{(s - 1) / 20:.2f},{sc:.2f},{why}\n")
     print(f"{slug}: {len(picks)} picks -> {a.out}")
 

@@ -68,14 +68,54 @@ def centred(t, v, half=0.5, fn=np.mean):
     return out
 
 
-TRACKER_CFG = {"lanes": {}, "lead": {}}   # --lanes-set / --lead-set: tracker options for a tracker-side variant
+TRACKER_CFG = {"lanes": {}, "lead": {}}
+# --pre: a temporal stage in front of the trackers (exponential low-pass by message time, constants in s):
+#   prob_tau  presence probabilities (lane lines, leads[0]); geo_tau  lane-line / edge y, leads[0] x / v
+PRE = {"prob_tau": 0.0, "geo_tau": 0.0}
+TRACKER_ON = ["all"]
+
+
+class PreStage:
+    """Low-pass of the model outputs before the api's trackers (the candidate 'temporal stage')."""
+
+    def __init__(self, prob_tau, geo_tau):
+        self.pt, self.gt, self.t, self.st = prob_tau, geo_tau, None, {}
+
+    def _f(self, key, v, a):
+        old = self.st.get(key)
+        if old is None or a >= 1.0:
+            new = np.asarray(v, float)
+        else:
+            new = old + a * (np.asarray(v, float) - old)
+        self.st[key] = new
+        return new
+
+    def __call__(self, m):
+        t = m["ts_mono_ns"] * 1e-9
+        dt = 0.05 if self.t is None else min(max(t - self.t, 0.0), 1.0)
+        if self.t is not None and t - self.t > 1.0:
+            self.st.clear()
+        self.t = t
+        ap = 1.0 - math.exp(-dt / self.pt) if self.pt > 0 else 1.0
+        ag = 1.0 - math.exp(-dt / self.gt) if self.gt > 0 else 1.0
+        for i, l in enumerate(m["lane_lines"]):
+            l["prob"] = float(self._f(f"lp{i}", l["prob"], ap))
+            l["y"] = self._f(f"ly{i}", l["y"], ag).tolist()
+        for i, e in enumerate(m["road_edges"]):
+            e["y"] = self._f(f"ey{i}", e["y"], ag).tolist()
+        L = m["leads"][0]
+        L["prob"] = float(self._f("ldp", L["prob"], ap))
+        for k in ("x", "v"):
+            L[k] = self._f("ld" + k, L[k], ag).tolist()
+        return m   # --lanes-set / --lead-set: tracker options for a tracker-side variant
 
 
 def load(path, strip_plan=False):
     """Run one stream through the api pipeline; per road message the raw and tracked quantities.
     strip_plan: drop the `plan` key first (what the api sees from the vision model without the policy)."""
     p = Pipeline()
-    if TRACKER_CFG["lanes"] or TRACKER_CFG["lead"]:
+    pre = PreStage(PRE["prob_tau"], PRE["geo_tau"]) if (PRE["prob_tau"] or PRE["geo_tau"]) and "vis" in os.path.basename(path) else None
+    if (TRACKER_CFG["lanes"] or TRACKER_CFG["lead"]) and (TRACKER_ON[0] == "all" or "vis" in os.path.basename(path)):
         from roadsense_api.lanes import RoadGeometryTracker
         from roadsense_api.lead import LeadTracker
         p.lanes, p.lead = RoadGeometryTracker(TRACKER_CFG["lanes"]), LeadTracker(TRACKER_CFG["lead"])
@@ -85,6 +125,8 @@ def load(path, strip_plan=False):
     for m in read_lines(path):
         if strip_plan and m.get("type") == "road":
             m.pop("plan", None)
+        if pre is not None and m.get("type") == "road":
+            m = pre(m)
         outs = p.feed(m)
         if m.get("type") != "road":
             continue
@@ -299,7 +341,14 @@ def main():
     ap.add_argument("--lanes-set", action="append", default=[], help="lane tracker option KEY=JSON")
     ap.add_argument("--lead-set", action="append", default=[], help="lead tracker option KEY=JSON")
     ap.add_argument("--no-egolane", action="store_true", help="skip the label scoring")
+    ap.add_argument("--pre", default="", help="vision streams only: PROB_TAU,GEO_TAU of the low-pass in front of "
+                    "the trackers (s)")
+    ap.add_argument("--tracker-on", default="all", choices=("all", "vis"),
+                    help="apply --lanes-set / --lead-set to all streams or to the vision streams only")
     a = ap.parse_args()
+    if a.pre:
+        PRE["prob_tau"], PRE["geo_tau"] = map(float, a.pre.split(","))
+    TRACKER_ON[0] = a.tracker_on
     for name, kvs in (("lanes", a.lanes_set), ("lead", a.lead_set)):
         for kv in kvs:
             k, _, v = kv.partition("=")
@@ -319,9 +368,13 @@ def main():
             continue
         S = {s: load(p, strip_plan=s.endswith("~noplan")) for s, p in paths.items()}
         ref20 = [S[s] for s in S if s == "vis.20"] + [S[s] for s in S if s.startswith("sc.")]
-        ego = ego_track(ref20[:2])
+        ego_src = os.environ.get("EGO", "mean")   # diagnostic: odometry of one model only (sc / vis)
+        ego = ego_track(ref20[:2] if ego_src == "mean" else ref20[1:2] if ego_src == "sc" else ref20[:1])
         res = {s: metrics(S[s], ego) for s in streams}
         res["agree_sc_vis13.8"] = agreement(S[streams[0]], S["vis.13.8"]) if "vis.13.8" in S else None
+        for s_ in streams[1:]:
+            res[s_]["lag_vs_ref_ms"] = {"pose_vx": lag_ms(S[streams[0]], S[s_], "vx"),
+                                        "lead_dist": lag_ms(S[streams[0]], S[s_], "lead_d")}
         if "vis.20" in S:
             res["lag_vis20_vs_sc_ms"] = {"pose_vx": lag_ms(S[streams[0]], S["vis.20"], "vx"),
                                          "lead_dist": lag_ms(S[streams[0]], S["vis.20"], "lead_d")}
