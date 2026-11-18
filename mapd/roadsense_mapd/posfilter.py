@@ -141,6 +141,20 @@ class PositionFilter:
         s = sigma if sigma is not None else self.cfg["speed_sigma"]
         self._update(H, np.array([v - self.x[V]]), np.array([[s * s]]))
 
+    def innovation(self, lat, lon, hacc):
+        """(squared Mahalanobis distance, along-track innovation m, cross-track innovation m) of a fix against
+        the prediction, or None before the filter has a state. Read-only: the receiver-accuracy estimator uses it."""
+        if not self.initialised:
+            return None
+        zx, zy = self.local.to_xy(lat, lon)
+        s = max(hacc, 1.0) / 1.5
+        S = self.P[:2, :2] + np.eye(2) * s * s
+        innov = np.array([zx - self.x[E], zy - self.x[N]])
+        th = self.x[TH]
+        along = float(innov[0] * math.sin(th) + innov[1] * math.cos(th))
+        cross = float(innov[0] * math.cos(th) - innov[1] * math.sin(th))
+        return float(innov @ np.linalg.inv(S) @ innov), along, cross
+
     def update_position(self, lat, lon, hacc, gate=True):
         """GNSS position. hacc: 68 % horizontal radius, metres. Returns True when used."""
         if not self.initialised:

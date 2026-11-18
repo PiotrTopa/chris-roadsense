@@ -41,6 +41,11 @@ DEFAULTS = dict(
     vision_speed_sigma=(0.5, 0.1), vision_yaw_sigma_deg=2.0,
     feedback_min_conf=0.5, feedback_cross_m=4.0, feedback_heading_deg=6.0,
     feedback_max_dist_m=10.0, feedback_max_heading_deg=10.0,
+    # Receiver accuracy (lane L20): a receiver's own hacc can be far too optimistic (the reference car's head
+    # unit reported 1-4 m while its fixes scattered 10-15 m across the road with 3-5 satellites). The ratio of
+    # the fixes' innovations to what hacc promises is tracked over the last fixes and the hacc in use is
+    # scaled by it (never below the receiver's own value, at most gnss_scale_max times it).
+    gnss_adaptive=True, gnss_scale_n=20.0, gnss_scale_max=6.0,
     country="pl",
 )
 
@@ -93,6 +98,14 @@ class Engine:
         self._fed_synth = None          # kind of the GNSS source that fed the state: True synthetic, False real, None nothing yet
         self.resets = 0
         self.last_reset = None          # {"ts", "reason"}
+        self.gnss_nis = 1.0             # running mean of (innovation / promised sigma)^2 per axis (1 = honest)
+
+    @property
+    def gnss_scale(self):
+        """Factor applied to the receiver's hacc (1 = taken as reported)."""
+        if not self.cfg["gnss_adaptive"]:
+            return 1.0
+        return min(self.cfg["gnss_scale_max"], math.sqrt(max(1.0, self.gnss_nis)))
 
     def set_pack(self, pack):
         self.pack = pack
@@ -385,6 +398,14 @@ class Engine:
                 # the fix is older than the filter state (motion arrived since): carry it forward along the heading
                 h = math.radians(f.heading_deg)
                 lat, lon = geo.offset(lat, lon, f.speed * lag * math.cos(h), f.speed * lag * math.sin(h))
+            if self.state == "good" and self.last_fix is not None and ts - self.last_fix <= 2.5 * NS:
+                # receiver accuracy: only between consecutive fixes (after dead reckoning the innovation is the
+                # dead-reckoning error, not the receiver's)
+                inn = f.innovation(lat, lon, hacc)
+                if inn is not None:
+                    n = self.cfg["gnss_scale_n"]
+                    self.gnss_nis += (min(inn[0] / 2.0, 36.0) - self.gnss_nis) / n
+            hacc = hacc * self.gnss_scale
             used = f.update_position(lat, lon, hacc)
             if used:
                 if speed is not None and not reverse:
@@ -500,7 +521,8 @@ class Engine:
             gn = {"source": g["source"], "fix": g["fix"], "age_s": round((now_ns - g["ts"]) / NS, 2),
                   "hacc_m": g["hacc_m"], "sats": g["sats"], "hdop": g["hdop"],
                   "used": self.counts["gnss_used"], "ignored": self.counts["gnss_ignored"],
-                  "rejected": f.rejected_total, "resets": f.resets}
+                  "rejected": f.rejected_total, "resets": f.resets,
+                  "hacc_scale": round(self.gnss_scale, 2)}     # lane L20: factor on the receiver's hacc in use
         mo = self.motion
         out["input"] = {"gnss": gn, "motion": {"source": src, "tag": mo["tag"] if mo and src != "none" else None,
                                                "age_s": round((now_ns - mo["ts"]) / NS, 2) if mo else None},

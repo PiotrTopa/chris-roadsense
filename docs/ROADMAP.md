@@ -119,3 +119,11 @@ The ncnn/Vulkan fp16-packed backend misses the original accuracy gate only at th
 - [x] car computer (branch `v2-l19`): the MFD draws lead, ego light, lanes from `view`; scene built per `view` message; no stale health-mirror light; road picture redrawn while standing; read-out hysteresis
 - [ ] not seen on the car yet: deploy roadsense and the car computer from the `v2-l19` branches, then one drive with the recorder (`tools/view_replay.py`, the car repo's `tools/scene_feed_replay.py`)
 - [ ] `view.road`: merge the fused road geometry (lane L20)
+
+## Ego lane, junctions on the display (lane L20, 2026-11-18; docs/lanes/L20-ego-lane-junctions.md)
+- [x] where the junction chain broke on the recorded drives (44 labelled junctions, no roundabout in any recording): no position at all at 21 of them (car side: the head-unit GNSS started on 17 Nov afternoon; since 17 Nov 22:07 the feeder sends only `fix: none` and no CAN); a matcher that trusted an optimistic receiver; the MFD's junction schematic off by default and a strict trust gate. Drawn on the MFD: 5 -> 15 (replay of the same drives)
+- [x] mapd: receiver accuracy from its own innovations (`input.gnss.hacc_scale`), service / parking roads lose with speed, `match.confidence` of the road (median while moving 0.45 -> 0.55; service road at speed 20.5 -> 15.0 %, on raw fixes 24.4 -> 7.0 %)
+- [x] api: ego-lane filter (`egolane.py`) in `fused.lanes`: probabilities per lane, "unknown" instead of a guess; held out on the car's camera: wrong and confident 21.4 -> 11.1 %, with the real map 17.6 -> 1.2 %
+- [x] tools: `tools/map_replay.py`, `tools/egolane_replay.py`; car repo `tools/mfd_chain_replay.py`
+- [ ] the car's position input since 17 Nov 22:07 (feeder connected, no CAN, no fix) and the weak head-unit receiver: to check on the car
+- [ ] a drive through a roundabout with a fix; `turn:lanes` and speed cameras in the pack

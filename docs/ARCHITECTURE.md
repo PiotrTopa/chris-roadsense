@@ -626,7 +626,13 @@ knows which), so "exactly zero" means "below the sensor's threshold".
 **Filter** (`posfilter.py`): an extended Kalman filter over east, north, heading, speed and yaw-rate bias in a
 local tangent plane. Yaw rate is the control input, speed a measurement, GNSS position / speed / course are
 measurements; a fix more than 99.9 % unlikely is dropped, five such fixes in a row restart the filter on the
-fix. Without `course_deg` the first heading comes from the displacement between fixes. Motion sources, in
+fix. **Receiver accuracy** (since lane L20): a receiver's own `hacc_m` can be far too optimistic (the
+reference car's head unit claimed 1-4 m while its fixes scattered 10-15 m across the road with 3-5
+satellites). Between consecutive fixes mapd keeps a running mean (20 fixes) of the fixes' squared innovations
+against what the claimed accuracy promises and scales the `hacc_m` in use by its square root, never below
+1 and at most 6 times (`gnss_adaptive`, `gnss_scale_n`, `gnss_scale_max`); the factor is reported as
+`input.gnss.hacc_scale`. An honest `hacc_m` widens the matcher's distance term, so heading and continuity
+weigh more than a position that is not as good as it says. Without `course_deg` the first heading comes from the displacement between fixes. Motion sources, in
 order: vehicle `motion` (fresh for `motion_timeout_s` 1.5 s), the normal source; else, **only when switched
 on** (`"vision_odometry": true` in `mapd.json`, or `--vision-odometry`), **vision odometry**: modeld's `road`
 message (`v_ego`, `pose.yaw_rate`; read from `modeld.sock`, at most 10 Hz, not parsed while vehicle motion
@@ -658,11 +664,17 @@ heading against the edge bearing (one-way edges only in their direction), a clas
 restricted roads lose a tie) and a transition term: no penalty for the current edge and for edges reachable
 from it along the graph within the distance travelled, a penalty for everything else. A road that is not
 connected to the current one wins only when it fits far better at once or clearly better over 250 m, so a
-parallel road does not capture the match during a multipath excursion and a wrong match corrects itself.
+parallel road does not capture the match during a multipath excursion and a wrong match corrects itself. The class prior of
+service, restricted and parking roads grows with speed (x1 at walking pace up to x4 from 10 m/s,
+`class_speed`, `class_speed_mps`, `parking_prior`; lane L20: on the recorded drives the matcher put the car on
+a service road in 20-35 % of the moving time while the frames showed a multi-lane road).
 At a fork the continuation of the same road (same class and ref or name) is followed freely, a branch
 (an exit ramp, a side street) has to be clearly nearer; the alternatives of the last fork stay reachable
 for 150 m.
 `match.confidence` is the winner's share among the candidate roads, scaled by how well the winner fits.
+Since lane L20 it is the confidence of the **road**: candidate edges that are pieces of the matched road
+(connected, same class and the same `ref` or `name`) are not rivals (`road_confidence`), so it no longer dips
+where the road is split into edges at a side road (median while moving on the recorded drives 0.45 -> 0.56).
 
 **Message** (2 per second, `--hz`; the last one is sent to a client when it connects):
 
@@ -671,7 +683,8 @@ for 150 m.
 "state": "good", "available": true, "reason": null,
 "pack": {"region":"poland","osm_timestamp":"2026-11-14T21:20:41Z","built":"...","format":1},      // null without a pack
 "input": {"gnss": {"source":"headunit","fix":"3d","age_s":0.4,"hacc_m":4.0,"sats":14,"hdop":0.8,
-                   "used":812,"ignored":0,"rejected":2,"resets":0},                                // null before the first gnss message
+                   "used":812,"ignored":0,"rejected":2,"resets":0,
+                   "hacc_scale":1.0},                                                    // since L20: factor on the receiver's hacc                                // null before the first gnss message
           "motion": {"source":"vehicle|vision|none","tag":"prius-can","age_s":0.03},
           "errors": 0, "last_error": null,
           "synthetic": false,                                   // the position was fed by input tagged synthetic since the last reset
@@ -933,6 +946,11 @@ stale one; once a hold has run out or been refused, only a confident message sta
           "scores":{...},"vision":{"label":"city_street","confidence":0.5},"map":{"label":"tunnel","prior":{...}}},
 "lanes": {"count":4,"forward":2,"backward":2,          // lanes of the road, own direction, oncoming
           "ego_index":0,                               // 0 = leftmost lane of the own direction; null = unknown
+          "ego_from_right":1,                          // since L20: lanes of the own direction to the right; null = unknown
+          "probs":[0.81,0.19],"probs_from":"left",     // since L20: probability per own lane (from the left with a map
+                                                       //   count, else from the right: lanes to the right 0..4)
+          "estimator":{"probs":..,"confidence":0.81,"provenance":["vision","map:tagged","lane_change"],
+                       "last_change":{"dir":"left","age_s":3.2},"evidence":{"edge_right_m":4.1,"lane_right":true}},
           "oncoming_left":true,                        // the lane to the left is oncoming traffic; null = unknown
           "source":"map:tagged+vision","confidence":0.8,
           "vision":{"lane_to_left":true,"lane_to_right":true},"map":{"total":4,"forward":2,"backward":2,"source":"tagged"}},
@@ -966,7 +984,11 @@ Rules:
   confidence (tunnel x20 on a tunnel edge and x0.15 elsewhere; motorway / expressway -> highway; forest
   flag -> forest_road; built-up -> city_street or residential by class; parking aisle -> parking_lot or
   underground_parking; bridge x3) and renormalised. Without envd the map label alone is served (`map`).
-* **Lanes.** Counts from the map (`road.lanes`, source marked: tagged per direction, tagged total, assumed).
+* **Lanes** (since lane L20). The ego lane comes from the ego-lane filter (`egolane.py`, below) whenever it
+  ran with the matched road's tagged count: its answer, or `ego_index: null` when no lane holds 0.75 of the
+  probability ("unknown" is a valid answer, a wrong confident one is not). Otherwise, and before L20, the rule
+  below.
+* **Lanes, rule** (before L20 and as a fallback). Counts from the map (`road.lanes`, source marked: tagged per direction, tagged total, assumed).
   The ego lane comes from the model's four lane lines: a lane to the right exists when the tracker (topic
   `lanes`, below) reports the far-right and the right line present (`vision.tracked: true`; without a fresh
   `lanes` message the frame's probabilities decide as before: far-right >= 0.5 and right >= 0.3); likewise
@@ -1125,6 +1147,24 @@ stands on them.
 Constants: `DEFAULT_CFG` in `lanes.py`, overridable per key in `<config dir>/lanes.json`. Replay and
 measurement on recorded `road` lines: `tools/lanes_replay.py ROAD.jsonl[.gz] [--every N] [--lanes-total N
 --lanes-forward N] [--out LANES.jsonl]`.
+
+### Ego lane (`api/roadsense_api/egolane.py`, lane L20; inside `fused.lanes`)
+A discrete Bayes filter (an HMM) over k, the number of own-direction lanes to the right of the car, run on
+every `lanes` message (10-14 per second). Index from the left is `forward - 1 - k` once the map gives the own
+lane count. Evidence per frame, read at 8-20 m: the right road edge's distance from the ego lane's right line
+(one-sided: an edge well inside the k-th lane rules k out, one beyond k lanes says little, a shoulder or verge
+lies there; the model places edges nearer than the lane geometry, 2.5 m + about 1.8 m per lane on the labelled
+rides); the far-right line one lane width out (seen in 70 % of the frames when a lane is there, 0-13 % when
+not; its absence counts only weakly); the same on the left, where the lanes are `forward - 1 - k` own plus
+the oncoming ones of a two-way road; the map's tagged lane count (`map.road.lanes`, match >= 0.5) as the
+support of k; a jump of the raw ego-lane centre by about one lane width between two frames (the network
+relabels its lines when the car crosses one) as a lane change, made more likely by `ego.turn_signal` in its
+direction. Consecutive frames see the same road, so their evidence counts as one observation per 0.5 s; the
+distribution diffuses by 1 % per second (a change nobody saw). `ego_index` only when one lane holds 0.75.
+Constants: `DEFAULT_CFG` in `egolane.py`, overridable per key in `<config dir>/egolane.json`. Cost 0.05 ms per
+frame on the laptop (the `lanes` tracker: 0.38 ms). Replay and score against hand labels:
+`tools/egolane_replay.py ROAD_OR_SESSION --labels LANES.csv [--clock ride|session] [--map-count label|recorded|none]`
+(numbers in docs/lanes/L20-ego-lane-junctions.md).
 
 ### api-derived topic: `{"type":"roadgeom", ...}`
 `api/roadsense_api/roadgeom.py` joins everything that is known about the shape of the road ahead into one

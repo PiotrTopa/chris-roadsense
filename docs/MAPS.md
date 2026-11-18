@@ -75,7 +75,9 @@ touched. Old packs are deleted by hand. `install --dry-run` prints the commands 
   railway and tram level crossings, stop and give-way signs, mini roundabouts, speed bumps, toll booths,
   motorway junctions, each with the direction it applies to when tagged.
 * **Not in a pack:** turn restrictions, lane-level geometry and turn lanes, traffic-sign nodes
-  (`traffic_sign=city_limit` etc.), speed cameras, fuel stations and other POIs, elevation.
+  (`traffic_sign=city_limit` etc.), speed cameras, fuel stations and other POIs, elevation. Lane L20 measured the coverage
+  of `turn:lanes` and speed cameras in the Poland extract (docs/lanes/L20-ego-lane-junctions.md, "Map data")
+  and left them out for now: a format change, a 27-minute rebuild and a new pack on the device.
 
 ## Format (`.rsmap`, version 1)
 

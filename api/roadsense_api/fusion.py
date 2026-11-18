@@ -340,7 +340,7 @@ class Fusion:
                 "fused(map)" if label != ep.get("label") else "fused(vision)",
                 "scores": {k: round(v, 3) for k, v in post.items()}, "vision": vision, "map": mapinfo}
 
-    def _lanes(self, m, road_msg, lanes_msg=None, now_mono_ns=None):
+    def _lanes(self, m, road_msg, lanes_msg=None, now_mono_ns=None, egolane=None):
         c = self.cfg
         left = right = None
         ll = (road_msg or {}).get("lane_lines")
@@ -354,12 +354,31 @@ class Fusion:
             left = p[0] >= c["lane_prob"] and p[1] >= c["lane_prob_inner"]
             right = p[3] >= c["lane_prob"] and p[2] >= c["lane_prob_inner"]
         vision = {"lane_to_left": left, "lane_to_right": right, "tracked": tracked} if (ll or tracked) else None
+        # the ego-lane filter (egolane.py, lane L20): probabilities per lane, lane changes, the map count
+        est = None
+        if isinstance(egolane, dict) and "probs" in egolane:
+            est = {k: egolane.get(k) for k in ("probs", "probs_from", "ego_from_right", "confidence", "provenance",
+                                               "last_change", "evidence")}
         if not m:
             return {"count": None, "forward": None, "backward": None, "ego_index": None, "oncoming_left": None,
-                    "source": "none", "confidence": 0.0, "vision": vision, "map": None}
+                    "ego_from_right": est["ego_from_right"] if est else None,
+                    "probs": est["probs"] if est else None, "probs_from": est["probs_from"] if est else None,
+                    "source": "vision" if est and est["ego_from_right"] is not None else "none",
+                    "confidence": est["confidence"] if est and est["ego_from_right"] is not None else 0.0,
+                    "estimator": est, "vision": vision, "map": None}
         ln = m["road"]["lanes"]
         fwd, bwd = ln["forward"], ln["backward"]
         one_dir = bwd == 0
+        mc = (m.get("match") or {}).get("confidence", 0.0)
+        if est is not None and est["probs_from"] == "left" and len(est["probs"] or ()) == fwd:
+            # the filter ran with this road's tagged count: its answer, or "unknown"
+            ego = egolane.get("ego_index")
+            oncoming = False if one_dir else (None if ego is None else ego == 0)
+            return {"count": ln["total"], "forward": fwd, "backward": bwd, "ego_index": ego, "oncoming_left": oncoming,
+                    "ego_from_right": est["ego_from_right"], "probs": est["probs"], "probs_from": "left",
+                    "source": "map:" + ln["source"] + "+vision",
+                    "confidence": round((est["confidence"] or 0.0) * min(1.0, mc / 0.7), 2) if ego is not None else 0.0,
+                    "estimator": est, "vision": vision, "map": ln}
         ego = None
         if fwd == 1:
             ego = 0
@@ -378,11 +397,12 @@ class Fusion:
             oncoming = None
         else:
             oncoming = ego == 0
-        mc = (m.get("match") or {}).get("confidence", 0.0)
         base = {"tagged": 0.85, "tagged_total": 0.7, "assumed": 0.4}.get(ln["source"], 0.4)
         return {"count": ln["total"], "forward": fwd, "backward": bwd, "ego_index": ego, "oncoming_left": oncoming,
+                "ego_from_right": None if ego is None else fwd - 1 - ego,
+                "probs": est["probs"] if est else None, "probs_from": est["probs_from"] if est else None,
                 "source": "map:" + ln["source"] + ("+vision" if ego is not None and fwd > 1 else ""),
-                "confidence": round(base * mc, 2), "vision": vision, "map": ln}
+                "confidence": round(base * mc, 2), "estimator": est, "vision": vision, "map": ln}
 
     def _tunnel(self, m, env):
         ep = (env or {}).get("place") or {}
@@ -423,7 +443,7 @@ class Fusion:
                "speed_limit": self._speed_limit(m, vis, built_up),
                "built_up": built_up,
                "place": self._place(m, env),
-               "lanes": self._lanes(m, latest.get("road"), latest.get("lanes"), now_mono_ns),
+               "lanes": self._lanes(m, latest.get("road"), latest.get("lanes"), now_mono_ns, latest.get("egolane")),
                "tunnel": self._tunnel(m, env),
                "lead": self._lead(latest, now_mono_ns)}
         if m:

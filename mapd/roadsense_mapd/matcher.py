@@ -38,7 +38,15 @@ class MapMatcher:
     def __init__(self, pack, cfg=None):
         c = dict(radius_min=35.0, radius_max=120.0, sigma_d_min=5.0, sigma_h=22.0, jump_penalty=7.0,
                  uturn_penalty=5.0, switch_margin=2.0, off_road_m=35.0, lost_updates=6, min_speed_heading=1.5,
-                 persist=8, persist_m=250.0, persist_margin=1.5, branch_margin=1.2, fork_memory_m=150.0)
+                 persist=8, persist_m=250.0, persist_margin=1.5, branch_margin=1.2, fork_memory_m=150.0,
+                 # lane L20: service / restricted / parking roads lose more the faster the car goes (a car at
+                 # 40 km/h is rarely on a parking aisle); the class prior is scaled from 1 at walking pace up to
+                 # 1 + class_speed at class_speed_mps and above
+                 class_speed=3.0, class_speed_mps=10.0, parking_prior=-1.0,
+                 # lane L20: confidence of the ROAD: candidates that are pieces of the matched road (the same
+                 # edge in the other direction does not count; the next edge of the same named road does) are
+                 # not rivals, so the confidence does not dip where the road is split at a side road
+                 road_confidence=True)
         c.update(cfg or {})
         self.cfg = c
         self.pack = pack
@@ -106,13 +114,17 @@ class MapMatcher:
                     reach.setdefault(k, v)
         best_per_edge = {}
         cur_cand = None
+        kspeed = 1.0 + c["class_speed"] * min(1.0, max(0.0, (abs(speed) - 1.5) / max(0.1, c["class_speed_mps"] - 1.5)))
         for e in self.pack.query(lat, lon, radius):
             d, s, brg = e.project(lat, lon)
             if d > radius:
                 continue
-            base = -0.5 * (d / sigma_d) ** 2 + CLASS_PRIOR.get(e.cls_name, 0.0)
+            prior = CLASS_PRIOR.get(e.cls_name, 0.0)
             if e.flags & rsmap.F_ACCESS_RESTRICTED:
-                base -= 1.0
+                prior -= 1.0
+            if e.flags & rsmap.F_PARKING:
+                prior += c["parking_prior"]
+            base = -0.5 * (d / sigma_d) ** 2 + prior * kspeed
             for direction in ((1,) if e.oneway else (1, -1)):
                 b = brg if direction > 0 else (brg + 180.0) % 360.0
                 hd = geo.ang_diff(heading_deg, b) if use_heading else None
@@ -172,6 +184,10 @@ class MapMatcher:
             return self._lose()
         tot = sum(math.exp(max(-60.0, x[0] - ranked[0][0])) for x in ranked)
         share = math.exp(max(-60.0, score - ranked[0][0])) / tot
+        if c["road_confidence"]:
+            same = sum(math.exp(max(-60.0, x[0] - ranked[0][0])) for x in ranked
+                       if x[1].ref != e.ref and x[7] and self._same_road(x[1], e))
+            share = min(1.0, share + same / tot)
         fit = math.exp(-0.5 * (d / (2.5 * sigma_d)) ** 2)
         if hd is not None:
             fit *= math.exp(-0.5 * (hd / (2.5 * c["sigma_h"])) ** 2)
@@ -190,6 +206,11 @@ class MapMatcher:
         self.cur = m
         self.lost = 0
         return m
+
+    @staticmethod
+    def _same_road(a, b):
+        """Two edges that are pieces of one road: same class and the same road number or name."""
+        return a.cls == b.cls and ((a.road_ref and a.road_ref == b.road_ref) or (a.name and a.name == b.name))
 
     def _lose(self):
         self.lost += 1

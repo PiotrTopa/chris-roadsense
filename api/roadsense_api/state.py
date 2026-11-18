@@ -13,6 +13,7 @@ from .lanes import RoadGeometryTracker
 from .lead import LeadTracker
 from .roadgeom import RoadGeometryFusion
 from .view import ViewBuilder
+from .egolane import EgoLaneEstimator
 from .rules import RulesInEffect
 from .speedlimit import load_rules
 
@@ -98,6 +99,12 @@ def load_lanes_config():
     return _load_config("lanes.json", DEFAULT_CFG)
 
 
+def load_egolane_config():
+    """Ego-lane estimator (egolane.py): DEFAULT_CFG overridden per key by <config dir>/egolane.json."""
+    from .egolane import DEFAULT_CFG
+    return _load_config("egolane.json", DEFAULT_CFG)
+
+
 def load_roadgeom_config():
     """Fused road geometry (roadgeom.py): DEFAULT_CFG overridden per key by <config dir>/roadgeom.json."""
     from .roadgeom import DEFAULT_CFG
@@ -143,6 +150,7 @@ class State:
         self.lanes = RoadGeometryTracker(load_lanes_config())   # derived topic `lanes` (lanes.py)
         self.roadgeom = RoadGeometryFusion(load_roadgeom_config())   # derived topic `roadgeom` (roadgeom.py)
         self.view = ViewBuilder()                          # derived display channel `view` (view.py)
+        self.egolane = EgoLaneEstimator(load_egolane_config())  # ego lane over time, into `fused.lanes` (egolane.py)
         self.ego_light = lights_mod.EgoLightSelector()     # the ego traffic light over time (lights.py)
         self.ego_light.lane_assign = bool(load_lights_config().get("lane_assign", True))
 
@@ -175,6 +183,7 @@ class State:
             self.lead.on_ego(msg)
             self.lanes.on_ego(msg)
             self.roadgeom.on_ego(msg)
+            self.egolane.on_ego(msg)
         if mtype == "vehicle":     # what the host says about the car: the brake for the lead message
             self.lead.on_vehicle(msg)
         if mtype == "objects":     # a scan of a range sensor: the lead tracker's radar input (lead.json radar_fusion)
@@ -183,6 +192,7 @@ class State:
         if mtype == "map":         # lane count of the matched road: a soft prior for the outer lane lines
             self.lanes.on_map(msg)
             self.roadgeom.on_map(msg)
+            self.egolane.on_map(msg)
             self.ego_light.on_map(msg)
         self.latest[mtype] = msg
         self.arrivals[mtype].append(now)
@@ -214,6 +224,7 @@ class State:
                 if out is not None:
                     self.ego_light.on_lanes(out)      # the lane lines the ego light is assigned by
                     self._emit("lanes", out, now)
+                    self.latest["egolane"] = self.egolane.on_lanes(out, msg)
                     geom = self.roadgeom.on_lanes(out, msg)
                     if geom is not None:
                         self._emit("roadgeom", geom, now)
@@ -262,6 +273,7 @@ class State:
         self.lanes.reset()
         self.roadgeom.reset()
         self.view.reset()
+        self.egolane.reset()
         self.ego_light.reset()
 
     def _on_speed(self, msg, now):
