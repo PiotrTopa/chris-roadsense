@@ -42,6 +42,7 @@ Secrets: vault key `poco_user_password` via `dotinfra vault exec poco_user_passw
   optimise for SPEED and responsiveness, not for lower GPU/heat. Lane safety stop stays at 95 C.
 - 2026-10-27: L11 "signs in effect" (generalised speed-limit engine, panel) on Fable (user).
 - 2026-11-18: 2.0 campaign (refinement, refactoring, optimisation; quality first, breaking changes allowed, MFD stays connected): Fable approved for any lane of this campaign that benefits from it.
+- 2026-11-19: direction after the running lanes are done (L24-S, L25, L26, the on-phone governor proof): build around the new openpilot model line (vision + policy; path, ego-motion, lead speed), as the base for the future self-driving track. Lane lines for drawing on the MFD come from a separate cheap analysis and are a nice-to-have, not critical. L24-M's finding stands as the starting point: the new model's own lane and lead outputs are worse than supercombo's after the trackers, so the move needs a lane source and a lead-stability fix of its own.
 
 ## Preferences
 - Times in CEST. Commits: add only own paths; co-author trailer per session reminder.
