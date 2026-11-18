@@ -14,11 +14,13 @@ RuntimeDirectory=roadsense
 RuntimeDirectoryPreserve=yes
 StateDirectory=roadsense
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -e /dev/shm/roadsense-frames ] && exit 0; sleep 1; done; exit 0'
-# One frame per second on the big cores (ONNX Runtime, 2 threads): 320-345 ms per frame next to modeld
-# and signd at no cost to their rates (the little cores take 810 ms); frames are skipped while the
-# hottest zone is above 92 C. ncnn/Vulkan hung the GPU (kernel hangcheck), do not use it.
-# Numbers: docs/lanes/L2-envd.md (laptop), docs/lanes/L3-speed.md (phone).
-ExecStart=/usr/local/bin/envd --backend ort --threads 2 --cpus 4-7 --max-hz 1 --stats 60
+# One frame per second on the little cores (ONNX Runtime, 3 threads): 0.68 s per frame next to the rest of
+# the stack, still 1 Hz. On the big cores (2 threads, 0.33 s per frame, the setting until lane L21) the same
+# work took 61 % of a big core, 1.25 W of the phone's 6.7 W and 15 C on the big-core sensors; here it costs
+# 0.5 W less at the rail, and the road latency drops by 10 ms because the big cores are less contended.
+# Frames are skipped while the hottest zone is above 92 C. ncnn/Vulkan hung the GPU (kernel hangcheck), do
+# not use it. Numbers: docs/lanes/L21-budget-and-models.md; encoder: docs/lanes/L2-envd.md.
+ExecStart=/usr/local/bin/envd --backend ort --threads 3 --cpus 0-3 --max-hz 1 --stats 60
 Restart=always
 RestartSec=2
 Nice=5

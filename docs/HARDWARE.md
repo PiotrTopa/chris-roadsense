@@ -94,6 +94,30 @@ zones 65 -> 75-85 C, CPU zones 85 -> 92-95 C, GPU clock mostly 710 MHz. These
 temperatures are dominated by the CPU stack running alongside; a GPU-only stack
 was not measured live.
 
+## Budget of the running stack (measured 2026-11-18, lane L21)
+
+Bench, ride replay, fan 100 %, all eight cores online, rail power from `qcom-battery` (voltage x current);
+method and every row in [docs/lanes/L21-budget-and-models.md](lanes/L21-budget-and-models.md)
+(`tools/budget/`).
+
+| | rail W | big cores busy / C | GPU busy / C |
+|---|---|---|---|
+| idle (no pins) | 1.06 | - / 29 | - |
+| idle with the modeld unit's clock pins and CPU wake-up latency hold | 1.62 | - / 31 | - |
+| modeld alone, 19 road runs a second | 4.23 | 20 % / 42 | 90 % / 50 |
+| the stack as installed until 2026-11-18 (envd on the big cores, lights 3 Hz) | 6.67 | 146 % / 70 | 91 % / 57 |
+| envd on the little cores | 6.19 | 99 % / 62 | 92 % / 58 |
+| envd on the little cores, lights 5 Hz | 7.01 | 137 % / 68 | 91 % / 58 |
+
+* A fully busy A75 is about 2 W, the Adreno at 90 % about 2.3 W. The A55s do the same work for roughly half
+  the energy at a third of the speed.
+* The GPU is the cool part and the full part: 47 ms per road run and 51 ms per sign-detector run fill 91 %
+  of its time at 710 MHz. More GPU work means fewer road runs.
+* The clock pins and the wake-up latency hold of the modeld unit cost 0.5 W together and buy 0.9 road runs a
+  second and 30 ms of road latency.
+* Per-process GPU time is in `/proc/<pid>/fdinfo/*` (`drm-engine-gpu`); the daemons name their threads
+  (`md-prep`, `md-prefetch`, `md-main`, `sg-signs`, `sg-lights`), so `top -H` shows the stages.
+
 ## Camera
 
 | Item | Value |

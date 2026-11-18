@@ -447,7 +447,8 @@ drop out of the message. A provider that lists matched tracks only simply never 
 provider can alternate two views (`--lights-roi2`: every other frame looks at a smaller part of the picture
 at a higher scale, for the far lights that are too small after the wide view's downscale; `roi` / `view` say
 which one a message used) and can let boxes below the detection threshold continue an existing track
-(`--lights-thr-keep`); both are measured in `docs/lanes/L15-stability.md`. `red_yellow` is inferred from
+(`--lights-thr-keep`); both are measured in `docs/lanes/L15-stability.md`. The reference unit looks at the
+lights five times a second since lane L21 (three before; `docs/lanes/L21-budget-and-models.md`). `red_yellow` is inferred from
 the sequence (a yellow observation straight after red; the Vienna-convention phase before green), `off`
 covers dark housings and side or back views. The api annotates every `lights` message before storing and
 forwarding it (`api/roadsense_api/lights.py`): per light `dist_m` (from the housing size, rough),
@@ -1498,7 +1499,16 @@ with this stack is exactly:
   any roadsense code;
 * **cores**: the host reserves cpu3 for its backend with a
   `roadsense.slice.d` drop-in (`AllowedCPUs=0-2,4-7`); `--prep-cpus 0-3` /
-  `--cpus 4-7` masks are intersected with that set by the kernel;
+  `--cpus 4-7` masks are intersected with that set by the kernel. What runs
+  where on the reference phone (lane L21, measured shares in
+  `docs/lanes/L21-budget-and-models.md`): the big cores carry what must be
+  fresh and cannot go to the GPU (modeld's GPU dispatch and CPU layers, the
+  sign classifier, the light detector); the little cores carry frame decode,
+  modeld's frame preparation, envd, mapd and the api; the GPU carries the road
+  model and the sign detector and is full in time (91 %), so a new GPU job
+  costs road runs. The daemons name their threads (`md-prep`, `md-prefetch`,
+  `md-main`, `sg-signs`, `sg-lights`) for per-stage accounting
+  (`tools/budget/measure.py`);
 * **camera power**: the host switches the USB hub that carries the DVR camera
   (powerbox relay ch4) on before the start and off after the stop;
   `camerad-dvr --auto` tolerates the camera appearing late;

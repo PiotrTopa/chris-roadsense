@@ -72,7 +72,7 @@
 ## Later
 - [ ] car control integration (separate project; this API is the input)
 - [ ] GPU inference via ncnn/Vulkan: integrated 2026-10-21 (`modeld --backend ncnn`, ~60 ms/run, ~15 % of a core). Two blockers solved (turnip cache flush, fp16 overflow in the feature normalisation); full-replay accuracy still misses the gate on far-range outliers (lane y max 0.28 m at 192 m, lead x 1.9 m at 100 m; HARDWARE.md), so the unit stays on ORT. Open: reduce the fp16 activation error (ncnn per-layer fp32 is broken on Vulkan) or relax the gate to the ranges that matter
-- [ ] newer openpilot vision/policy split models
+- [ ] newer openpilot vision/policy split models: surveyed 2026-11-18 (lane L21, `docs/lanes/L21-budget-and-models.md`). Candidate: the v0.11.1 `driving_vision.onnx` alone (MIT; lanes, edges, leads, pose without recurrent state; converts to ncnn with every layer on Vulkan, largest activation 583, an estimated 28-38 ms of GPU per run against 47). Needs a parser, a five-frame ring per input, the phone accuracy gate and a check of the presence flicker (it has no memory: 2-69 ego-lane on/off changes a minute against 0-41). v0.9.8 / v0.9.9 and the merged graphs of v0.11.2 and master are not candidates
 
 ## Model choice note (2026-10-21)
 supercombo v0.9.7 is used first: single model, 54 ms fp32 on the phone, outputs lane lines, road edges, leads, plan, pose directly (docs/SUPERCOMBO_SPEC.md). openpilot v0.9.8–v0.11.1 split it into `driving_vision.onnx` + `driving_policy.onnx` with a 5 Hz history, which would allow running every 4th frame (less CPU) at the cost of a new parser; current master merged them again. Revisit when CPU budget becomes the problem.
@@ -140,3 +140,15 @@ The ncnn/Vulkan fp16-packed backend misses the original accuracy gate only at th
 - [ ] nothing of 2.0 has run on the phone or the car: deployment order and what a drive has to show are in the lane report
 - [ ] `/v1/...` aliases: remove once no consumer uses them
 - [ ] speed cameras mapped beside the road (526 of 643 in Poland) need a point layer in the pack
+
+- [ ] `view.road`: merge the fused road geometry (lane L20)
+
+## Budget and models (lane L21, 2026-11-18; docs/lanes/L21-budget-and-models.md)
+- [x] budget of the running stack per daemon and stage (`tools/budget/`): 6.67 W at the rail, big cores 146 % and 70 C, GPU 91 % busy and 57 C; a busy big core is about 2 W, the GPU about 2.3 W and full in time
+- [x] envd on the little cores: the same labels (60 of 60 replayed frames identical), 0.5 W and 8 C on the big cores less, road latency 120 -> 108 ms
+- [x] traffic lights at 5 Hz (roadsense-signs unit): reported share of the light-time on the replays 95.5 -> 98.3 % by day, 93.6 -> 98.9 % at night; lights under 12 px 81 -> 93-96 %
+- [x] light state model for the car's own camera (roadsense-signs `tools/lights/`, weights local): lit lights of the two recorded drives given their colour 70 -> 91 %, called dark 29 -> 9 % (cross-validated on 320 labelled detections)
+- [ ] none of it is deployed; the ego light over a whole drive with the new state model is unmeasured (the recorder keeps one frame a second)
+- [ ] signs under about 15 px and the sign detector's 5 Hz: the GPU has no time left; the v0.11.1 road model is the way to make room
+- [ ] light detector on the CPU is the largest big-core load (90 %): int8 or a detector whose layers all run on Vulkan
+- [ ] arrow signals, night / rain / yellow for the state model: need recorded drives and labels

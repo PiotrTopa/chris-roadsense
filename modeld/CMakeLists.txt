@@ -76,4 +76,8 @@ target_link_libraries(modeld PRIVATE modeld_core Threads::Threads)
 add_executable(modeld_replay ${ROADSENSE_ROOT}/tools/modeld_replay.cc)
 target_link_libraries(modeld_replay PRIVATE modeld_core)
 
+# warp_test: bit-exactness of the sampling table against the definition, and its cost per frame
+add_executable(warp_test warp_test.cc warp.cc)
+target_include_directories(warp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 install(TARGETS modeld modeld_replay RUNTIME DESTINATION bin)
