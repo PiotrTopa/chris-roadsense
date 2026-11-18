@@ -33,6 +33,7 @@ Secrets: vault key `poco_user_password` via `dotinfra vault exec poco_user_passw
 - 2026-10-26 ~18:40: thermal headroom is ample with the fan (CPU+GPU stress plateaus around 80 C per the user);
   optimise for SPEED and responsiveness, not for lower GPU/heat. Lane safety stop stays at 95 C.
 - 2026-10-27: L11 "signs in effect" (generalised speed-limit engine, panel) on Fable (user).
+- 2026-11-18: 2.0 campaign (refinement, refactoring, optimisation; quality first, breaking changes allowed, MFD stays connected): Fable approved for any lane of this campaign that benefits from it.
 
 ## Preferences
 - Times in CEST. Commits: add only own paths; co-author trailer per session reminder.
