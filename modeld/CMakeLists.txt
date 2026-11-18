@@ -29,7 +29,7 @@ if(NOT ORT_INCLUDE_DIR OR NOT ORT_LIBRARY)
   message(FATAL_ERROR "onnxruntime not found (set ONNXRUNTIME_ROOT)")
 endif()
 
-add_library(modeld_core STATIC warp.cc supercombo.cc pipeline.cc ort_backend.cc)
+add_library(modeld_core STATIC warp.cc supercombo.cc vision.cc pipeline.cc ort_backend.cc)
 target_include_directories(modeld_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ROADSENSE_ROOT} ${ORT_INCLUDE_DIR})
 target_link_libraries(modeld_core PUBLIC ${ORT_LIBRARY})
 

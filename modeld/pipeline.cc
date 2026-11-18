@@ -7,6 +7,7 @@
 #include <ctime>
 #include <fstream>
 #include <sstream>
+#include <climits>
 
 namespace roadsense {
 
@@ -106,6 +107,27 @@ void Preprocessor::pack(const NV12Frame &f, const Calib &c, PackedFrame *out) {
     out->calib = c;
     out->k = f.k;
     out->prep_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+std::shared_ptr<const PackedFrame> PairPicker::push(std::shared_ptr<const PackedFrame> cur) {
+    std::shared_ptr<const PackedFrame> partner;
+    const int64_t t = cur->ts_mono_ns;
+    if (dt_ns_ <= 50'000'000) {
+        if (!hist_.empty()) partner = hist_.back();
+    } else {
+        // within 30 ms (timestamp jitter); a dropped frame at t - 200 ms gives no pair for this frame, as
+        // openpilot skips the run after a frame drop (modeld.py prepare_only)
+        int64_t best = INT64_MAX;
+        for (const auto &f : hist_) {
+            const int64_t d = std::llabs(t - f->ts_mono_ns - dt_ns_);
+            if (d < best) best = d, partner = f;
+        }
+        if (best > 30'000'000) partner.reset();
+    }
+    hist_.push_back(std::move(cur));
+    while (hist_.size() > 1 && t - hist_.front()->ts_mono_ns > dt_ns_ + 100'000'000) hist_.erase(hist_.begin());
+    if (dt_ns_ <= 50'000'000 && hist_.size() > 1) hist_.erase(hist_.begin(), hist_.end() - 1);
+    return partner;
 }
 
 std::string calib_json(const Calib &c, const Intrinsics &k, uint64_t seq, const char *source) {

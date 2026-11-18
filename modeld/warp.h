@@ -45,11 +45,22 @@ Mat3 model_warp_matrix(const Intrinsics &k, const Calib &c, bool big);
 // transform_scale_buffer(M, 0.5): matrix for the half-resolution chroma planes.
 Mat3 uv_warp_matrix(const Mat3 &m);
 
-// Precomputed bilinear sampling table for one plane (the warp is constant between calibration changes).
+// How a road model's frames are warped.
+//   kBilinearV097: openpilot v0.9.7 transforms/transform.cl (spec 2.2), U/V matrix uv_warp_matrix (supercombo).
+//   kNearestV011:  openpilot v0.11.1 compile_modeld.py warp_perspective_tinygrad: source point computed in
+//                  float32, rounded half to even, clipped to the plane (no border fill); U/V matrix
+//                  M * [[1,1,.5],[1,1,.5],[2,2,1]] (uv_warp_matrix_v011). The v0.11.1 driving_vision model.
+enum class WarpKind { kBilinearV097, kNearestV011 };
+
+// v0.11.1: UV_SCALE @ M @ UV_SCALE_INV with UV_SCALE = diag(.5, .5, 1) (no half-pixel offsets, unlike v0.9.7).
+Mat3 uv_warp_matrix_v011(const Mat3 &m);
+
+// Precomputed sampling table for one plane (the warp is constant between calibration changes).
 class WarpTable {
 public:
     // src_px_stride: 1 for Y, 2 for interleaved NV12 UV (U at +0, V at +1).
-    void build(const Mat3 &m, int src_w, int src_h, int src_row_stride, int src_px_stride, int dst_w, int dst_h);
+    void build(const Mat3 &m, int src_w, int src_h, int src_row_stride, int src_px_stride, int dst_w, int dst_h,
+               WarpKind kind = WarpKind::kBilinearV097);
     // Sample: dst[i] for i in [0, dst_w*dst_h). src points to the plane (for V: uv plane + 1).
     void apply(const uint8_t *src, uint8_t *dst) const;
     int dst_w() const { return dst_w_; }
@@ -61,6 +72,7 @@ private:
         int16_t w00, w01, w10, w11;   // 15-bit weights (convert_short_sat_rte)
     };
     std::vector<Entry> tab_;
+    std::vector<uint32_t> nn_;  // kNearestV011: one byte offset per output pixel (tab_ empty)
     int dst_w_ = 0, dst_h_ = 0;
 };
 
@@ -68,7 +80,7 @@ private:
 // 6 x 128 x 256 floats. Tables are rebuilt only when intrinsics/calibration/strides change.
 class FramePacker {
 public:
-    explicit FramePacker(bool big) : big_(big) {}
+    explicit FramePacker(bool big, WarpKind kind = WarpKind::kBilinearV097) : big_(big), kind_(kind) {}
     // y/uv: NV12 planes with the given strides; k describes the frame (width/height must match).
     void pack(const uint8_t *y, int y_stride, const uint8_t *uv, int uv_stride, const Intrinsics &k, const Calib &c,
               float *out6);
@@ -80,6 +92,7 @@ public:
 
 private:
     bool big_;
+    WarpKind kind_;
     bool valid_ = false;
     Intrinsics k_;
     Calib c_;

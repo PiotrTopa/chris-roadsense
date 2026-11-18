@@ -12,6 +12,7 @@
 #include <net.h>
 
 #include "supercombo.h"
+#include "vision_layout.h"
 
 namespace roadsense {
 
@@ -75,7 +76,11 @@ public:
         if (net_.load_param(param.c_str()) != 0) throw std::runtime_error("ncnn: cannot load " + param);
         if (net_.load_model(bin.c_str()) != 0) throw std::runtime_error("ncnn: cannot load " + bin);
         const auto &in = net_.input_names(), &out = net_.output_names();
-        if (in.size() != 7 || out.size() != 1)
+        vision_ = is_vision(opt);
+        out_len_ = vision_ ? vis::kOutputLen : sc::kOutputLen;
+        if (vision_ && (in.size() != 2 || out.size() != 1))
+            throw std::runtime_error("ncnn: expected 2 inputs and 1 output (driving_vision-ncnn.param)");
+        if (!vision_ && (in.size() != 7 || out.size() != 1))
             throw std::runtime_error("ncnn: expected 7 inputs and 1 output (supercombo-ncnn.param)");
 
         in0_.create(sc::kImgW, sc::kImgH, sc::kImgC);
@@ -144,7 +149,7 @@ public:
         auto *job = static_cast<NcnnJob *>(j);
         copy_aux(in);
         if (!extract_rest(job->ex, err)) return false;
-        std::memcpy(out, out_.data, sizeof(float) * sc::kOutputLen);
+        std::memcpy(out, out_.data, sizeof(float) * size_t(out_len_));
         return true;
     }
 
@@ -157,12 +162,13 @@ public:
         static_assert((sc::kImgW * sc::kImgH * 4) % 16 == 0, "image plane must need no channel padding");
         copy_aux(in);
         if (!extract(img0, img1, err)) return false;
-        std::memcpy(out, out_.data, sizeof(float) * sc::kOutputLen);
+        std::memcpy(out, out_.data, sizeof(float) * size_t(out_len_));
         return true;
     }
 
 private:
     void copy_aux(const std::array<const float *, 7> &in) {
+        if (vision_) return;
         std::memcpy(in2_.data, in[2], sizeof(float) * sc::kDesireLen * sc::kDesireW);
         std::memcpy(in3_.data, in[3], sizeof(float) * sc::kTrafficConventionLen);
         std::memcpy(in4_.data, in[4], sizeof(float) * sc::kLatParamsLen);
@@ -219,7 +225,10 @@ private:
                 names.empty() ? "(none: no split)" : names.c_str());
     }
 
+    // vision: no inputs besides the images. In a split run the whole graph is stage 1 (its frontier is
+    // out0 itself), so stage 2 only downloads the result the prefetch thread's submit computed.
     bool extract_rest(ncnn::Extractor &ex, std::string *err) {
+        if (vision_) return extract_out(ex, err);
         const ncnn::Mat *ins[5] = {&in2_, &in3_, &in4_, &in5_, &in6_};
         static const char *names[5] = {"in2", "in3", "in4", "in5", "in6"};
         for (int i = 0; i < 5; ++i)
@@ -241,13 +250,15 @@ private:
 
     bool extract_out(ncnn::Extractor &ex, std::string *err) {
         int r = ex.extract("out0", out_);
-        if (r != 0 || out_.empty() || out_.total() != size_t(sc::kOutputLen) || out_.elemsize != 4) {
+        if (r != 0 || out_.empty() || out_.total() != size_t(out_len_) || out_.elemsize != 4) {
             if (err) *err = "ncnn: extract out0 failed (" + std::to_string(r) + ", " + std::to_string(out_.total()) + " values)";
             return false;
         }
         return true;
     }
 
+    bool vision_ = false;
+    int out_len_ = sc::kOutputLen;
     std::vector<int> frontier_;
     ncnn::Net net_;
     ncnn::Mat in0_, in1_, in2_, in3_, in4_, in5_, in6_, out_;

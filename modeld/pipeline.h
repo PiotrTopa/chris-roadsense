@@ -58,13 +58,30 @@ struct PackedFrame {
 
 class Preprocessor {
 public:
-    Preprocessor() : med_(false), big_(true) {}
+    explicit Preprocessor(WarpKind kind = WarpKind::kBilinearV097) : med_(false, kind), big_(true, kind) {}
     void pack(const NV12Frame &f, const Calib &c, PackedFrame *out);
     const FramePacker &med() const { return med_; }
     const FramePacker &big() const { return big_; }
 
 private:
     FramePacker med_, big_;
+};
+
+// The model's image pair from the stream of packed frames: (frame pair_dt earlier, current).
+// pair_dt <= 50 ms (supercombo): the previous selected frame, as before. Larger (vision, 200 ms): the
+// kept frame whose time is closest to t - pair_dt, if within tolerance (camera drops), else no pair yet.
+// reset() on a stream gap/restart: pairs never span one.
+class PairPicker {
+public:
+    explicit PairPicker(double pair_dt_s) : dt_ns_(int64_t(pair_dt_s * 1e9 + 0.5)) {}
+    // Adds cur; returns the partner frame or nullptr.
+    std::shared_ptr<const PackedFrame> push(std::shared_ptr<const PackedFrame> cur);
+    void reset() { hist_.clear(); }
+    int64_t pair_dt_ns() const { return dt_ns_; }
+
+private:
+    int64_t dt_ns_;
+    std::vector<std::shared_ptr<const PackedFrame>> hist_;  // oldest first, spans <= pair_dt + 100 ms
 };
 
 // `calib` JSON line (docs/ARCHITECTURE.md).

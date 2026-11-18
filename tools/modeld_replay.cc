@@ -31,6 +31,7 @@ void usage() {
             "         [--focal PX] [--cx PX] [--cy PX] [--calib FILE | --pitch R --yaw R --roll R --height-m M]\n"
             "         [--backend ort|ncnn] [--model PATH] [--threads N] [--ncnn-fp32] [--ncnn-no-flushall] [--rhd] [--steer-delay S]\n"
             "         [--start N] [--max-frames N] [--split]\n"
+            "         [--road-model supercombo|vision] [--policy PATH|none] [--policy-threads N] [--policy-hz F] [--rates R1,R2,.. --out-prefix P]\n"
             "         [--dump-input DIR] [--dump-runs N] [--dump-tensors]\n"
             "  defaults: fps 20, focal 1470*W/1920 (camerad default), cx W/2, cy H/2, calib from\n"
             "  $ROADSENSE_CONFIG_DIR/calib.json if present, backend ort, model /var/lib/roadsense/models/supercombo-fp32.onnx\n"
@@ -39,6 +40,11 @@ void usage() {
             "                    <run>_{input_imgs,big_input_imgs}_yuv.pgm (current frame, Y 512x256 over U|V)\n"
             "                    and <run>_{...}_ch.pgm (all 12 channels, 3x4 tiles of 256x128)\n"
             "  --dump-tensors    also write <run>_in<i>.f32 (all 7 inputs) and <run>_out.f32 (raw 6504 outputs)\n"
+            "  --road-model M    supercombo (default) or vision (v0.11.1 driving_vision; default model\n"
+            "                    driving_vision-fp32.onnx / -ncnn.param, policy driving_policy-fp32.onnx; --policy none = no plan)\n"
+            "  --rates R,..      simulate modeld's run rate: at R runs per second of stream time the run takes the newest\n"
+            "                    pair at each scheduled time (pairs skipped in between, as on the phone); one output file\n"
+            "                    P<R>.jsonl per rate, each with its own model state (vision: one network run per frame shared)\n"
             "  --split           ncnn: two-stage run as modeld pipelines it (vision stage recorded + submitted, then the\n"
             "                    rest); must give the same outputs as the default one-stage run\n");
 }
@@ -148,7 +154,9 @@ int main(int argc, char **argv) {
     double fps = 20, focal = 0, cx = -1, cy = -1;
     Calib calib;
     bool calib_cli = false, dump_tensors = false;
-    bool split = false;  // --split: modeld's two-stage run (ncnn), for checking it against the one-stage run
+    bool split = false;
+    std::string rates_s, out_prefix;
+    bool policy_set = false;  // --split: modeld's two-stage run (ncnn), for checking it against the one-stage run
     int dump_runs = 3;
     long start = 0, max_frames = -1;
     SupercomboOptions so;
@@ -174,6 +182,12 @@ int main(int argc, char **argv) {
         else if (a == "--roll") calib.roll = atof(val()), calib_cli = true;
         else if (a == "--height-m") calib.height_m = atof(val()), calib_cli = true;
         else if (a == "--backend") so.backend = val();
+        else if (a == "--road-model") so.road_model = val();
+        else if (a == "--policy") so.policy_path = val(), policy_set = true;
+        else if (a == "--policy-threads") so.policy_threads = atoi(val());
+        else if (a == "--policy-hz") so.policy_hz = atof(val());
+        else if (a == "--rates") rates_s = val();
+        else if (a == "--out-prefix") out_prefix = val();
         else if (a == "--model") so.model_path = val(), model_set = true;
         else if (a == "--threads") so.threads = atoi(val()), threads_set = true;
         else if (a == "--ncnn-fp32") so.ncnn_fp16 = false;
@@ -191,6 +205,14 @@ int main(int argc, char **argv) {
         else return usage(), 2;
     }
     if (input.empty()) return usage(), 2;
+    if (is_vision(so)) {
+        if (!model_set)
+            so.model_path = so.backend == "ncnn" ? "/var/lib/roadsense/models/driving_vision-ncnn.param"
+                                                 : "/var/lib/roadsense/models/driving_vision-fp32.onnx";
+        if (!policy_set) so.policy_path = "/var/lib/roadsense/models/driving_policy-fp32.onnx";
+        if (so.policy_path == "none") so.policy_path.clear();
+        model_set = true;
+    }
     if (so.backend == "ncnn") {
         if (!model_set) so.model_path = "/var/lib/roadsense/models/supercombo-ncnn.param";
         if (!threads_set) so.threads = 1;
@@ -224,24 +246,65 @@ int main(int argc, char **argv) {
         if (!stream) return fprintf(stderr, "modeld_replay: cannot open %s\n", input.c_str()), 1;
     }
 
-    std::unique_ptr<Supercombo> model;
+    std::vector<double> rates;  // --rates: simulated run rates (runs per second of stream time)
+    for (size_t p = 0; p < rates_s.size();) {
+        size_t q = rates_s.find(',', p);
+        if (q == std::string::npos) q = rates_s.size();
+        rates.push_back(atof(rates_s.substr(p, q - p).c_str()));
+        p = q + 1;
+    }
+    if (!rates.empty() && out_prefix.empty()) return fprintf(stderr, "modeld_replay: --rates needs --out-prefix\n"), 2;
+    if (rates.empty()) rates.push_back(0);  // 0 = every pair (the default)
+
+    // One model instance per rate (each keeps its own state); with several rates the vision network runs
+    // once per frame on its own instance and every due rate takes that output (run_raw).
+    const bool vision = is_vision(so);
+    const bool shared_net = vision && rates.size() > 1;
+    std::vector<std::unique_ptr<Supercombo>> models;
+    std::unique_ptr<Supercombo> net;
     try {
-        model = std::make_unique<Supercombo>(so);
+        if (!shared_net)
+            for (size_t r = 0; r < rates.size(); ++r) models.push_back(std::make_unique<Supercombo>(so));
+        if (shared_net) {
+            SupercomboOptions o = so;
+            o.policy_path.clear();
+            net = std::make_unique<Supercombo>(o);
+            for (size_t r = 0; r < rates.size(); ++r) {
+                SupercomboOptions oo = so;
+                oo.backend = "null";  // takes the shared run's outputs (run_raw)
+                models.push_back(std::make_unique<Supercombo>(oo));
+            }
+        }
     } catch (const std::exception &e) {
         fprintf(stderr, "modeld_replay: cannot load %s: %s\n", so.model_path.c_str(), e.what());
         return 1;
     }
+    Supercombo *model = models[0].get();
+    std::vector<FILE *> outs;
+    for (double r : rates) {
+        if (out_prefix.empty()) {
+            outs.push_back(stdout);
+            continue;
+        }
+        char fn[64];
+        snprintf(fn, sizeof fn, "%g.jsonl", r);
+        FILE *f = fopen((out_prefix + fn).c_str(), "w");
+        if (!f) return fprintf(stderr, "modeld_replay: cannot write %s%s\n", out_prefix.c_str(), fn), 1;
+        outs.push_back(f);
+    }
     if (!dump_dir.empty()) mkdir(dump_dir.c_str(), 0755);
 
     FrameSelector sel;
-    Preprocessor pp;
-    PackedFrame prev, cur;
-    bool have_prev = false, calib_sent = false;
+    Preprocessor pp(vision ? WarpKind::kNearestV011 : WarpKind::kBilinearV097);
+    PairPicker picker(vision ? 0.2 : 0.05);
+    std::vector<double> next_t(rates.size(), -1);  // stream time of each rate's next run
+    bool calib_sent = false;
     Image img;
     std::string err;
     long idx = 0, used = 0;
-    uint64_t runs = 0;
-    double model_sum = 0, prep_sum = 0;
+    uint64_t runs = 0, runs0 = 0;
+    double model_sum = 0, prep_sum = 0, policy_sum = 0;
+    const double frame_dt = 1.0 / fps;
     for (;; ++idx) {
         if (max_frames >= 0 && used >= max_frames) break;
         // load frame idx
@@ -282,69 +345,98 @@ int main(int argc, char **argv) {
         f.k.cx = cx >= 0 ? cx : img.w / 2.0;
         f.k.cy = cy >= 0 ? cy : img.h / 2.0;
         if (!sel.accept(f.ts_mono_ns)) continue;
-        std::swap(prev, cur);
-        pp.pack(f, calib, &cur);
+        auto curp = std::make_shared<PackedFrame>();
+        pp.pack(f, calib, curp.get());
+        const PackedFrame &cur = *curp;
         if (!calib_sent) {
-            printf("%s\n", calib_json(calib, f.k, f.seq, "config").c_str());
+            for (FILE *o : outs) fprintf(o, "%s\n", calib_json(calib, f.k, f.seq, "config").c_str());
             const auto &m = pp.med().matrix(), &b = pp.big().matrix();
-            fprintf(stderr, "modeld_replay: %dx%d f %.1f cx %.1f cy %.1f\n  M_med = [%g %g %g; %g %g %g; %g %g %g]\n"
-                    "  M_big = [%g %g %g; %g %g %g; %g %g %g]\n", f.k.width, f.k.height, f.k.fx, f.k.cx, f.k.cy,
-                    m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], b[0], b[1], b[2], b[3], b[4], b[5], b[6],
-                    b[7], b[8]);
+            fprintf(stderr, "modeld_replay: %s, %dx%d f %.1f cx %.1f cy %.1f\n  M_med = [%g %g %g; %g %g %g; %g %g %g]\n"
+                    "  M_big = [%g %g %g; %g %g %g; %g %g %g]\n", so.road_model.c_str(), f.k.width, f.k.height, f.k.fx,
+                    f.k.cx, f.k.cy, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], b[0], b[1], b[2], b[3], b[4], b[5],
+                    b[6], b[7], b[8]);
             calib_sent = true;
         }
-        if (!have_prev) {
-            have_prev = true;
-            continue;
+        auto prevp = picker.push(curp);
+        if (!prevp) continue;
+        const PackedFrame &prev = *prevp;
+        // which rates run on this frame: the frame is the newest one at the rate's scheduled time
+        const double t = double(cur.ts_mono_ns) * 1e-9;
+        std::vector<size_t> due;
+        for (size_t r = 0; r < rates.size(); ++r) {
+            if (rates[r] <= 0 || next_t[r] < 0 || next_t[r] < t + frame_dt - 1e-6) {
+                due.push_back(r);
+                if (rates[r] > 0) next_t[r] = (next_t[r] < 0 || t > next_t[r] ? t : next_t[r]) + 1.0 / rates[r];
+            }
         }
-        const auto t0 = std::chrono::steady_clock::now();
-        bool run_ok;
-        if (split) {  // modeld's pipelined path, sequentially: record stage 1, submit it, run stage 2
-            auto pf = model->prefetch(prev.med.data(), cur.med.data(), prev.big.data(), cur.big.data(), &err);
-            run_ok = pf && model->submit(*pf, &err) && model->run(*pf, nullptr, &err);
-        } else {
-            run_ok = model->run(prev.med.data(), cur.med.data(), prev.big.data(), cur.big.data(), nullptr, &err);
+        if (due.empty()) continue;
+        double net_ms = 0;
+        if (shared_net) {
+            const auto t0 = std::chrono::steady_clock::now();
+            if (!net->run(prev.med.data(), cur.med.data(), prev.big.data(), cur.big.data(), nullptr, &err, cur.ts_mono_ns))
+                return fprintf(stderr, "modeld_replay: run failed: %s\n", err.c_str()), 1;
+            net_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         }
-        if (!run_ok)
-            return fprintf(stderr, "modeld_replay: run failed: %s\n", err.c_str()), 1;
-        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        RoadMeta m;
-        m.seq = cur.seq;
-        m.seq_prev = prev.seq;
-        m.ts_mono_ns = cur.ts_mono_ns;
-        m.ts_real_ns = cur.ts_real_ns;
-        m.model_ms = ms;
-        m.prep_ms = cur.prep_ms;
-        m.pair_dt_ms = double(cur.ts_mono_ns - prev.ts_mono_ns) * 1e-6;
-        m.v_ego = model->v_ego();
-        m.steer_delay = model->steer_delay();
-        printf("%s\n", road_json(model->outputs(), m).c_str());
-        fflush(stdout);
-        if (!dump_dir.empty() && int(runs) < dump_runs) {
+        for (size_t r : due) {
+            Supercombo *mdl = models[r].get();
+            const auto t0 = std::chrono::steady_clock::now();
+            bool run_ok;
+            if (shared_net) {
+                run_ok = mdl->run_raw(net->raw().data(), cur.ts_mono_ns, &err);
+            } else if (split) {  // modeld's pipelined path, sequentially: record stage 1, submit it, run stage 2
+                auto pf = mdl->prefetch(prev.med.data(), cur.med.data(), prev.big.data(), cur.big.data(), &err);
+                run_ok = pf && mdl->submit(*pf, &err) && mdl->run(*pf, nullptr, &err, cur.ts_mono_ns);
+            } else {
+                run_ok = mdl->run(prev.med.data(), cur.med.data(), prev.big.data(), cur.big.data(), nullptr, &err,
+                                  cur.ts_mono_ns);
+            }
+            if (!run_ok) return fprintf(stderr, "modeld_replay: run failed: %s\n", err.c_str()), 1;
+            const double ms = net_ms + std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            RoadMeta m;
+            m.seq = cur.seq;
+            m.seq_prev = prev.seq;
+            m.ts_mono_ns = cur.ts_mono_ns;
+            m.ts_real_ns = cur.ts_real_ns;
+            m.model_ms = ms;
+            m.prep_ms = cur.prep_ms;
+            m.pair_dt_ms = double(cur.ts_mono_ns - prev.ts_mono_ns) * 1e-6;
+            m.v_ego = mdl->v_ego();
+            m.steer_delay = mdl->steer_delay();
+            m.effective_hz = rates[r] > 0 ? rates[r] : fps;
+            fprintf(outs[r], "%s\n", road_json(mdl->outputs(), m).c_str());
+            if (r == 0) {
+                ++runs0;
+                model_sum += ms;
+                policy_sum += mdl->policy_ms();
+            }
+        }
+        fflush(outs[0]);
+        if (!dump_dir.empty() && int(runs) < dump_runs && rates.size() == 1) {
             char base[64];
             snprintf(base, sizeof base, "/run%03llu", (unsigned long long)runs);
             dump_input(dump_dir + base + "_input_imgs", model->input(0).data());
             dump_input(dump_dir + base + "_big_input_imgs", model->input(1).data());
             if (dump_tensors) {
-                // inputs as they were fed to this run. Feedback FIFOs (5, 6) were already advanced
-                // after the run, so they are written pre-shift by undoing nothing: dump them before
-                // the next run instead (see below). Here: images, desire, traffic, latparams, raw out.
-                for (int i = 0; i < 5; ++i)
+                // inputs as they were fed to this run (vision: the two image inputs only); raw outputs;
+                // supercombo: feedback inputs of the next run (= state after this run)
+                for (int i = 0; i < (vision ? 2 : 5); ++i)
                     write_f32(dump_dir + base + "_in" + std::to_string(i) + ".f32", model->input(i).data(),
                               model->input(i).size());
                 write_f32(dump_dir + base + "_out.f32", model->raw().data(), model->raw().size());
-                // state after this run = feedback inputs of the next run
-                write_f32(dump_dir + base + "_next_in5.f32", model->input(5).data(), model->input(5).size());
-                write_f32(dump_dir + base + "_next_in6.f32", model->input(6).data(), model->input(6).size());
+                if (!vision) {
+                    write_f32(dump_dir + base + "_next_in5.f32", model->input(5).data(), model->input(5).size());
+                    write_f32(dump_dir + base + "_next_in6.f32", model->input(6).data(), model->input(6).size());
+                }
             }
         }
         ++runs;
-        model_sum += ms;
         prep_sum += cur.prep_ms;
     }
     if (stream) fclose(stream);
-    fprintf(stderr, "modeld_replay: %s: %ld frames read, %llu runs, model %.1f ms avg, prep %.2f ms avg (both inputs)\n",
-            model->backend_name(),
-            used, (unsigned long long)runs, runs ? model_sum / runs : 0.0, runs ? prep_sum / runs : 0.0);
+    for (FILE *o : outs)
+        if (o != stdout) fclose(o);
+    fprintf(stderr, "modeld_replay: %s: %ld frames read, %llu frames run, model %.1f ms avg (policy %.2f), prep %.2f ms avg (both inputs)\n",
+            shared_net ? net->backend_name() : model->backend_name(), used, (unsigned long long)runs,
+            runs0 ? model_sum / runs0 : 0.0, runs0 ? policy_sum / runs0 : 0.0, runs ? prep_sum / runs : 0.0);
     return 0;
 }
