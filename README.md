@@ -33,10 +33,16 @@ that uses it (headless render with simulated data).</sub>
 | `map` | mapd: position filter + OpenStreetMap pack | position state, matched road (class, lanes, tunnel, bridge, limit), look-ahead along the likely path: curves, junctions and roundabouts with their arms, crossings, signals, tunnel exit |
 | `fused` | api | map and camera combined per fact with provenance: speed limit, built-up area, lane count and ego lane, tunnel with exit distance |
 | `vehicle`, `objects`, `ego` | mapd, from the host's feeder | the car as the host describes it: motion, driver controls, body signals with age, quality and source per signal, calibration estimates; range-sensor object lists in the camera's frame |
-| `view` | api (display channel) | for consumers that draw: lead, traffic lights, signs, lane lines and edges with stable ids, smoothed positions in the car frame, velocities for extrapolation, fades; derived from the measurement topics, never fed back |
+| `view` | api (display channel) | for consumers that draw: lead, traffic lights, signs, lane lines and edges with stable ids, smoothed positions in the car frame, velocities for extrapolation, fades; and `view.road`, the road as one picture: the lane from the camera near the car and from the map beyond, side roads, the junction or roundabout ahead with its arms, lane count with the probability per lane and the ego lane, painted turn arrows, each part with provenance and an "approximate" mark on a weak position. Derived from the measurement topics, never fed back |
 | `camera`, `health` | all daemons | frame metadata and MJPEG preview with overlays; fps, latency and temperature per stage |
 
 Full contract, message formats and the REST / WebSocket reference: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+**roadsense 2.0** (api version 2): the measurement topics above say what was measured, as fresh as the model's
+frame, and are what anything that decides should read; `view` is the display channel, smoothed and allowed
+to lag, and is what anything that draws should read. What changed since 1.x (the frozen lead `hold` mode is
+gone, the topic `roadgeom` became `view.road`, `fused.lanes` says "unknown" instead of guessing, map pack
+format 2 with turn lanes, `/v2` paths): ARCHITECTURE.md, "roadsense 2.0: what changed since 1.x".
 
 ## Used in: a Toyota Prius Gen 2 car computer
 
@@ -66,7 +72,7 @@ contract: [MFD_MAIN_SCREEN.md](https://github.com/PiotrTopa/cyberpank-prius-gen2
                                └──────────────┬──────────────┴───────────────────────┘
  position feeder (GNSS, vehicle motion) ──> mapd (Python, map pack) ──┤
                                               ▼
-                                    api (Python, aiohttp) ──> HTTP /v1/*, WebSocket /ws, MJPEG /preview
+                                    api (Python, aiohttp) ──> HTTP /v2/*, WebSocket /ws, MJPEG /preview
 ```
 
 The processes share only two mechanisms:
@@ -122,7 +128,7 @@ scripts/fetch-models.sh            # dev box: download supercombo, convert (fp32
 scripts/push-models.sh             # models -> phone ~/roadsense/models
 scripts/sync-phone.sh user@phone   # source tree -> phone ~/roadsense
 ssh user@phone 'cd ~/roadsense && sudo sh scripts/install-phone.sh && sudo systemctl start roadsense.target'
-curl http://phone:8080/v1/health   # or open http://phone:8080/ for the status page
+curl http://phone:8080/v2/health   # or open http://phone:8080/ for the status page
 
 # GPU backend (modeld --backend ncnn): build ncnn once (~45 min), then install with it
 ssh -t user@phone 'sh ~/roadsense/scripts/build-ncnn.sh ~/ncnn'

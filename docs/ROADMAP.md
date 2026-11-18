@@ -118,7 +118,7 @@ The ncnn/Vulkan fp16-packed backend misses the original accuracy gate only at th
 - [x] `tools/view_replay.py` (a recorder session through the trackers and the view, jitter metrics, the api's stream for consumer-side replays); the replay tools read truncated sessions
 - [x] car computer (branch `v2-l19`): the MFD draws lead, ego light, lanes from `view`; scene built per `view` message; no stale health-mirror light; road picture redrawn while standing; read-out hysteresis
 - [ ] not seen on the car yet: deploy roadsense and the car computer from the `v2-l19` branches, then one drive with the recorder (`tools/view_replay.py`, the car repo's `tools/scene_feed_replay.py`)
-- [ ] `view.road`: merge the fused road geometry (lane L20)
+- [x] `view.road`: the fused road geometry, the junction and the lanes merged into the display channel (lane L22, below)
 
 ## Ego lane, junctions on the display (lane L20, 2026-11-18; docs/lanes/L20-ego-lane-junctions.md)
 - [x] where the junction chain broke on the recorded drives (44 labelled junctions, no roundabout in any recording): no position at all at 21 of them (car side: the head-unit GNSS started on 17 Nov afternoon; since 17 Nov 22:07 the feeder sends only `fix: none` and no CAN); a matcher that trusted an optimistic receiver; the MFD's junction schematic off by default and a strict trust gate. Drawn on the MFD: 5 -> 15 (replay of the same drives)
@@ -126,4 +126,17 @@ The ncnn/Vulkan fp16-packed backend misses the original accuracy gate only at th
 - [x] api: ego-lane filter (`egolane.py`) in `fused.lanes`: probabilities per lane, "unknown" instead of a guess; held out on the car's camera: wrong and confident 21.4 -> 11.1 %, with the real map 17.6 -> 1.2 %
 - [x] tools: `tools/map_replay.py`, `tools/egolane_replay.py`; car repo `tools/mfd_chain_replay.py`
 - [ ] the car's position input since 17 Nov 22:07 (feeder connected, no CAN, no fix) and the weak head-unit receiver: to check on the car
-- [ ] a drive through a roundabout with a fix; `turn:lanes` and speed cameras in the pack
+- [ ] a drive through a roundabout with a fix
+- [x] `turn:lanes` and speed cameras in the pack (lane L22, below)
+
+## roadsense 2.0: one line, one display contract (lane L22, 2026-11-18; docs/lanes/L22-v2-integration.md)
+- [x] branches `v2` (roadsense, car computer): L19 and L20 merged; api version 2 (`/v2/...`, `/v1` aliases, `__version__` 2.0.0); migration notes in docs/ARCHITECTURE.md ("roadsense 2.0: what changed since 1.x")
+- [x] `view.road` (`roadview.py`): geometry (camera near, map beyond, side roads, ring), the junction view with arms, lanes with per-lane probabilities and the lit / likely lane, turn arrows; `approximate` and provenance per part; trust hysteresis and distance carrying moved from the consumer into roadsense; the topic `roadgeom` is gone
+- [x] ego lane: lane changes read as a pattern on the tracked lines, a changed lane count opens the estimate, turn arrows say the side; wrong and confident: night expressway 3.8 -> 1.5 %, city 7.7 -> 4.6 %, the car's camera 11.1 -> 5.3 %
+- [x] lane lines on the display: smoothing that grows with the distance in `view`, lines moved with their own rate between messages on the MFD: drawn steps over 0.3 m at 30 m on the day drive 56 -> 6 (before L19: 15); ego-motion compensation measured and left off
+- [x] map pack format 2: turn lanes (75,813 edges in Poland), speed cameras on the road (117); mapd reads formats 1 and 2; Poland pack rebuilt on the dev box (263.4 MB, +1.1 MB)
+- [x] session 20261118-095209 (parked, no lane line or lead): the scene (a lawn and a hedge), not a fault
+- [x] tools: `tools/replay_lib.py` (the api's derived topics offline, shared by the replay tools and the car's), `tools/view_replay.py --map`
+- [ ] nothing of 2.0 has run on the phone or the car: deployment order and what a drive has to show are in the lane report
+- [ ] `/v1/...` aliases: remove once no consumer uses them
+- [ ] speed cameras mapped beside the road (526 of 643 in Poland) need a point layer in the pack

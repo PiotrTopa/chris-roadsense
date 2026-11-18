@@ -62,6 +62,13 @@ touched. Old packs are deleted by hand. `install --dry-run` prints the commands 
   motorroad, link, dual carriageway (tagged, or a one-way major road), toll, restricted access, parking
   aisle, layer, surface, lanes (total, forward, backward), `maxspeed` per direction with its qualifier
   (from a sign, implicit zone value, variable), built-up flag and whether a tag states it, forest flag.
+* **Turn lanes** (format 2): `turn:lanes` of a one-way way, `turn:lanes:forward` / `turn:lanes:backward` of a
+  two-way one, per direction of travel, lanes from the left separated by `|`, the arrows of a lane by `;`
+  (`left`, `slight_left`, `sharp_left`, `through`, `right`, `slight_right`, `sharp_right`, `reverse`,
+  `merge_to_left`, `merge_to_right`; `none` = no arrow painted). A plain `turn:lanes` on a two-way way is
+  ambiguous and left out, as are values with more than 12 lanes or without any arrow. Where the lane count is
+  not tagged, the arrows count the lanes of their direction. In the Poland extract of 2026-11-14: 67,779 ways
+  (13 % of tertiary and above), 75,813 of the 5.5 million edges of the pack.
 * **Built-up area.** From tags on the way when they exist (`maxspeed` / `zone:traffic` / `zone:maxspeed`
   / `maxspeed:type` / `source:maxspeed` = `PL:urban`, `PL:rural`); otherwise **inferred**: the way is
   sampled every 40 m against a raster (1/2048 degree, about 54 m x 33 m) of `landuse` = residential,
@@ -73,19 +80,20 @@ touched. Old packs are deleted by hand. `install --dry-run` prints the commands 
   runs in the gap between two forest polygons).
 * **Point features** on the roads: traffic signals, pedestrian crossings (with and without signals),
   railway and tram level crossings, stop and give-way signs, mini roundabouts, speed bumps, toll booths,
-  motorway junctions, each with the direction it applies to when tagged.
-* **Not in a pack:** turn restrictions, lane-level geometry and turn lanes, traffic-sign nodes
-  (`traffic_sign=city_limit` etc.), speed cameras, fuel stations and other POIs, elevation. Lane L20 measured the coverage
-  of `turn:lanes` and speed cameras in the Poland extract (docs/lanes/L20-ego-lane-junctions.md, "Map data")
-  and left them out for now: a format change, a 27-minute rebuild and a new pack on the device.
+  motorway junctions, and (format 2) speed cameras (`highway=speed_camera`) where the node is part of the
+  road: 117 of the 643 in the extract; a camera mapped beside the road is not in the pack. Each with the
+  direction it applies to when tagged.
+* **Not in a pack:** turn restrictions, lane-level geometry, `destination` signs, traffic-sign nodes
+  (`traffic_sign=city_limit` etc.), speed cameras that are not a node of the road, fuel stations and other
+  POIs, elevation.
 
-## Format (`.rsmap`, version 1)
+## Format (`.rsmap`, version 2; version 1 is still read)
 
 Reference implementation: `mapd/roadsense_mapd/rsmap.py` (writer `build_pack`, reader `Pack`).
 Little-endian.
 
 ```
-header   64 bytes   "RSMAP001", u32 version = 1, u32 manifest_len, u64 manifest_off, u64 index_off, u64 index_count
+header   64 bytes   "RSMAP001", u32 version = 2, u32 manifest_len, u64 manifest_off, u64 index_off, u64 index_count
 manifest            UTF-8 JSON: region, source, osm_timestamp, built, attribution, licence, counts, enum tables
 tiles               one zlib-compressed blob per non-empty tile
 index               index_count x {u32 key, u64 offset, u32 compressed_len, u32 raw_len}, sorted by key
@@ -100,9 +108,11 @@ header     10 x u32: strings_bytes, nodes, adjacency, edges, points, features, f
 strings    u16 length + UTF-8, repeated (names and refs; index 0 = none), padded to 4 bytes
 nodes      {i32 x, i32 y, u32 adj_start, u16 adj_count, u16 flags}        graph nodes inside this tile
 adjacency  {u32 tile, u16 edge, u16 end}                                  edges at a node; end 0 = the node is the edge's start
-edges      44 bytes each: start node (tile, index), end node (tile, index), point range, feature range,
+edges      48 bytes each: start node (tile, index), end node (tile, index), point range, feature range,
            length (dm), flags u16, name, ref, class, flags2, maxspeed forward / backward (km/h, 0 = none,
-           255 = "none"), lanes total / forward / backward, layer, surface
+           255 = "none"), lanes total / forward / backward, layer, surface, a pad byte, and (version 2) the turn
+           lanes forward / backward as u16 indices into the tile's strings (0 = none). Version 1: 44 bytes,
+           the same record without the last two fields
 points     {i32 dx, i32 dy} micro-degrees: an edge's first point relative to the tile's south-west corner,
            the following ones relative to their predecessor
 features   {u16 point index, u8 kind, u8 direction (0 both, 1 forward, 2 backward)}
@@ -114,4 +124,8 @@ grid       257 x u32 starts + u16 items: per 1/512 degree cell the edges touchin
 An edge lives in the tile of its first point; a spatial query reads the grid cells around a point and
 follows foreign references, so an edge is found from every tile it crosses. The enum tables (classes,
 surfaces, features, flag bits) are in `rsmap.py` and in the manifest; they are part of the format.
-A reader refuses any other version.
+**Versions.** 2 (2026-11-18, roadsense 2.0): turn lanes per edge, the feature kind `speed_camera`. 1: without
+them. The reader of roadsense 2.0 reads both (`Pack.version`; a version 1 pack simply has no turn lanes, and
+`map.pack.format` says which is loaded) and refuses any other version with an error that names it; mapd then
+logs it and runs without a map layer (`reason: "no_pack"`). The reader of roadsense 1.x refuses a version 2
+pack the same way, so on a device roadsense is updated before the pack.

@@ -449,9 +449,10 @@ class Fusion:
         if m:
             r, a = m["road"], m.get("ahead") or {}
             out["road"] = {k: r.get(k) for k in ("class", "name", "ref", "oneway", "bridge", "lit", "surface",
-                                                 "roundabout", "link", "motorroad", "expressway", "dual_carriageway", "toll")}
+                                                 "roundabout", "link", "motorroad", "expressway", "dual_carriageway", "toll",
+                                                 "turn_lanes")}
             out["ahead"] = {k: a.get(k) for k in ("horizon_m", "path_confidence", "features", "junctions", "curves",
-                                                  "speed_limit_changes", "built_up_change", "road_change")}
+                                                  "speed_limit_changes", "built_up_change", "road_change", "turn_lanes")}
             pos = m.get("position") or {}
             out["position"] = {k: pos.get(k) for k in ("lat", "lon", "heading_deg", "speed_mps", "hacc_m",
                                                        "confidence", "source")}

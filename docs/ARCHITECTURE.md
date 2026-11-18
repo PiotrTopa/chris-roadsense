@@ -681,7 +681,7 @@ where the road is split into edges at a side road (median while moving on the re
 ```
 "api": 1,
 "state": "good", "available": true, "reason": null,
-"pack": {"region":"poland","osm_timestamp":"2026-11-14T21:20:41Z","built":"...","format":1},      // null without a pack
+"pack": {"region":"poland","osm_timestamp":"2026-11-14T21:20:41Z","built":"...","format":2},      // null without a pack; format 1 packs have no turn lanes
 "input": {"gnss": {"source":"headunit","fix":"3d","age_s":0.4,"hacc_m":4.0,"sats":14,"hdop":0.8,
                    "used":812,"ignored":0,"rejected":2,"resets":0,
                    "hacc_scale":1.0},                                                    // since L20: factor on the receiver's hacc                                // null before the first gnss message
@@ -698,6 +698,7 @@ where the road is split into edges at a side road (median while moving on the re
 "road": {"class":"primary",               // motorway, motorway_link, trunk, trunk_link, primary .. tertiary(_link), unclassified, residential, living_street, service
          "name":"Wrocławska","ref":"DK46","oneway":false,
          "lanes":{"total":2,"forward":1,"backward":1,"source":"tagged|tagged_total|assumed"},     // forward = the car's direction
+         "turn_lanes":[["left"],["through"],["through","right"]],   // painted arrows of the own direction, lane by lane from the left ([] = a lane without one); null = not tagged (pack format 2, below)
          "tunnel":false,"bridge":false,"covered":false,"lit":true,                                 // lit: true / false / null (not tagged)
          "surface":"asphalt","roundabout":false,"link":false,"motorroad":false,"expressway":false,"dual_carriageway":false,
          "access_restricted":false,"toll":false,"parking":false,"forest":false,"layer":0,
@@ -707,7 +708,7 @@ where the road is split into edges at a side road (median while moving on the re
                 "detail":"tagged|sign|zone" /* maxspeed */ or "built_up:tagged|landuse|class" /* implicit */,
                 "confidence":0.9,"variable":false},
 "ahead": {"horizon_m":1500.0,"path_confidence":0.62,                                               // along the most likely path
-          "features":[{"kind":"traffic_signals","dist_m":230.0,"confidence":0.9}],                 // also crossing, crossing_signals, level_crossing, tram_crossing, stop, give_way, mini_roundabout, speed_bump, toll_booth, motorway_junction
+          "features":[{"kind":"traffic_signals","dist_m":230.0,"confidence":0.9}],                 // also crossing, crossing_signals, level_crossing, tram_crossing, stop, give_way, mini_roundabout, speed_bump, toll_booth, motorway_junction, speed_camera (format 2 packs)
           "junctions":[{"dist_m":412.0,"kind":"junction|roundabout|roundabout_exit|dead_end|no_way_on","branches":3,
                         "turn_deg":-2.0,           // turn of the most likely path there, positive = right
                         "minor":false,             // every side branch is a service road
@@ -718,6 +719,7 @@ where the road is split into edges at a side road (median while moving on the re
           "road_change":{"dist_m":1210.0,"class":"secondary","name":null,"ref":"414"},
           "shape":{"s":[0,20,..600],"x":[..],"y":[..],"curvature":[..]},   // road ahead beyond camera range; x forward, y right (modeld's frame), origin at the matched position; curvature 1/m, positive = bending right
           "curves":[{"start_m":300.0,"apex_m":380.0,"end_m":480.0,"min_radius_m":150.0,"direction":"left","angle_deg":-88.0}],   // radius below 500 m, at most 4
+          "turn_lanes":{...},              // the first stretch with painted turn arrows within 400 m on the path, or null (below)
           "junction_view":{...},           // the first major junction or roundabout within 400 m on the path, or null (below)
           "geometry":{...}},               // the path, its side roads and the first roundabout as geometry (below)
 "proc": {"step_ms":0.9,"cpu_pct":0.8,"feeders":1,"tile_loads":14}
@@ -733,7 +735,8 @@ branch that is not a service road; junction nodes within 35 m of each other alon
 {"kind": "junction",
  "dist_m": 171.0, "confidence": 0.58,            // along the path to the (first) junction node; path confidence past it
  "control": "signals|give_way|stop" | null,      // from the point features on the path 60 m before .. 35 m behind the node
- "approach": {"class":"secondary","name":"..","ref":null,"lanes":2,"lanes_source":"tagged","oneway":true},
+ "approach": {"class":"secondary","name":"..","ref":null,"lanes":2,"lanes_source":"tagged","oneway":true,
+              "turn_lanes":[["left"],["through","right"]]},   // of the edge that enters the junction; null = not tagged
  "arms": [ {"angle_deg": -91.0,                  // direction of the arm, measured 25 m out, relative to the direction of travel into the junction: 0 = straight on, positive = right
             "class":"secondary","name":"1 Maja","ref":null,
             "exit": true,                        // can be driven into (false: a one-way street towards the junction)
@@ -754,15 +757,31 @@ The carriageways of one road that meet the ring within 45 degrees are one arm. W
 the view announced before the entry is repeated unchanged (`dist_m` 0, `on_ring` true, `car_angle_deg` = the
 car's place on the ring in the same angles), so a picture does not turn under the driver; a position that is
 first found on a ring gets a view with the car at 180 and no path exit. The view is a property of the most
-likely path: with `confidence` near 0.5 the path, and therefore the highlighted arm, is a guess. Turn lanes
-and turn restrictions are not in the pack. Cost: `look_ahead` with the view 0.53 ms on the laptop (Poland pack,
+likely path: with `confidence` near 0.5 the path, and therefore the highlighted arm, is a guess. Turn
+restrictions are not in the pack. Cost: `look_ahead` with the view 0.53 ms on the laptop (Poland pack,
 Opole centre, 660 positions); not yet measured on the phone.
+
+**Turn lanes** (`road.turn_lanes`, `ahead.turn_lanes`, lane L22; pack format 2, `docs/MAPS.md`): the painted
+arrows of OpenStreetMap's `turn:lanes`, per direction of travel. `road.turn_lanes` is the matched edge's own
+(the car is on the stretch). `ahead.turn_lanes` announces the first stretch on the most likely path:
+
+```
+{"dist_m": 250.0,            // where the stretch begins (0: the car is on it)
+ "junction_m": 400.0,        // where it ends: the junction the arrows belong to
+ "lanes": [["left"], ["through"], ["through","right"]], "count": 3,
+ "path": [false, true, true],   // the lanes that lead where the most likely path goes (from its turn at that junction); null when the arrows do not say
+ "turn_deg": -2.0, "source": "tagged", "confidence": 0.62}
+```
+Arrow words: `left`, `slight_left`, `sharp_left`, `through`, `right`, `slight_right`, `sharp_right`,
+`reverse`, `merge_to_left`, `merge_to_right`. Turn lanes whose number contradicts the tagged lane count of the
+edge are withheld (neither can then be trusted lane by lane). The arrows also count lanes: where `lanes` /
+`lanes:forward` are not tagged, `road.lanes.forward` is the number of arrows (`source: "tagged"`).
 
 **Road geometry** (`ahead.geometry`, lane L17; `context.geometry`): the road around the most likely path as
 polylines, for a consumer that draws it. Frame of `shape`: x forward along the matched bearing, y right, metres,
 origin at the matched position. The pack has no lane-level geometry: a road is its centre line and a lane
-count. The api turns this into the car's frame and joins it with the camera (topic `roadgeom`, below); a
-consumer should read that topic, not this object.
+count. The api turns this into the car's frame and joins it with the camera (`view.road`, below); a consumer
+that draws should read that, not this object.
 
 ```
 {"path": {"s":[0,4,..200,220,..600], "x":[..], "y":[..]},     // the most likely path: every 4 m up to 200 m, every 20 m up to 600 m
@@ -820,34 +839,47 @@ tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsens
 
 | Endpoint | Content |
 |---|---|
-| `GET /v1/road` | latest `road` message |
-| `GET /v1/signs` | latest `signs` message plus the currently live tracks (`live_tracks`) and the flagged ones (`suppressed_tracks`, with `reason`) |
-| `GET /v1/signs/history?limit=100` | ended tracks, newest first |
-| `GET /v1/env` | latest `env` message (place / weather / light with scores and confidence) |
-| `GET /v1/speed_limit` | current speed limit derived by the api (topic `speed_limit`, below) plus `recent_changes` and `ignored` sign tracks |
-| `GET /v1/lights` | latest `lights` message with the api's ego-lane annotation (`ego`, per light `dist_m`, `lateral_m`, `relevance`) |
-| `GET /v1/rules` | rules in effect for the car derived by the api (topic `rules`, below: `in_effect`, `recent`, `ahead`) plus `pending`, `recent_changes` and `ignored` sign tracks |
-| `GET /v1/map` | latest `map` message of mapd (position state, matched road, map speed limit, look-ahead); 503 while mapd is not running |
-| `GET /v1/fused` | map and camera combined per fact with provenance (topic `fused`, below) |
-| `GET /v1/lanes` | the tracked road geometry (topic `lanes`, below): four lane lines and two road edges with a presence that has hysteresis and a filtered geometry; 503 before the first `road` message |
-| `GET /v1/lead` | the tracked lead vehicle (topic `lead`, below): distance, relative speed, time gap, standing flag, `departed` cue, with the raw vision value alongside; 503 before the first `road` message |
-| `GET /v1/view` | the display channel (topic `view`, below): smoothed objects and lines with ids, velocities and fades for a consumer that draws; 503 before the first `road` message |
-| `GET /v1/vehicle` | the car as the host describes it: mapd's `vehicle` message (every signal with age, quality and source, description, calibration estimates, feeders) plus the last scan of every range sensor (`objects`); 503 while mapd is not running. `docs/VEHICLE_API.md` 8 |
-| `POST /v1/vehicle`, `POST /v1/position` | vehicle input API over HTTP (body: one message, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
-| `GET /v1/camera` | latest `camera` message + ring header fields |
-| `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
-| `GET /v1/frame.jpg` | current preview JPEG |
+| `GET /v2/road` | latest `road` message |
+| `GET /v2/signs` | latest `signs` message plus the currently live tracks (`live_tracks`) and the flagged ones (`suppressed_tracks`, with `reason`) |
+| `GET /v2/signs/history?limit=100` | ended tracks, newest first |
+| `GET /v2/env` | latest `env` message (place / weather / light with scores and confidence) |
+| `GET /v2/speed_limit` | current speed limit derived by the api (topic `speed_limit`, below) plus `recent_changes` and `ignored` sign tracks |
+| `GET /v2/lights` | latest `lights` message with the api's ego-lane annotation (`ego`, per light `dist_m`, `lateral_m`, `relevance`) |
+| `GET /v2/rules` | rules in effect for the car derived by the api (topic `rules`, below: `in_effect`, `recent`, `ahead`) plus `pending`, `recent_changes` and `ignored` sign tracks |
+| `GET /v2/map` | latest `map` message of mapd (position state, matched road, map speed limit, look-ahead); 503 while mapd is not running |
+| `GET /v2/fused` | map and camera combined per fact with provenance (topic `fused`, below) |
+| `GET /v2/lanes` | the tracked road geometry (topic `lanes`, below): four lane lines and two road edges with a presence that has hysteresis and a filtered geometry; 503 before the first `road` message |
+| `GET /v2/lead` | the tracked lead vehicle (topic `lead`, below): distance, relative speed, time gap, standing flag, `departed` cue, with the raw vision value alongside; 503 before the first `road` message |
+| `GET /v2/view` | the display channel (topic `view`, below): smoothed objects and lines with ids, velocities and fades, and the road picture `view.road`, for a consumer that draws; 503 before the first `road` message |
+| `GET /v2/version` | `{"name":"roadsense-api","version":"2.0.0","api":2,"topics":[...]}`; `/v2/health` carries the same as `api: {"major": 2, "version": "2.0.0"}` |
+| `GET /v2/vehicle` | the car as the host describes it: mapd's `vehicle` message (every signal with age, quality and source, description, calibration estimates, feeders) plus the last scan of every range sensor (`objects`); 503 while mapd is not running. `docs/VEHICLE_API.md` 8 |
+| `POST /v2/vehicle`, `POST /v2/position` | vehicle input API over HTTP (body: one message, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
+| `GET /v2/camera` | latest `camera` message + ring header fields |
+| `GET /v2/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
+| `GET /v2/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
-| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `lead`, `lanes`, `roadgeom` and `view`; mapd's `ego` (the car's motion, while a feeder sends it), `vehicle` and `objects` pass through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,roadgeom,view,ego,vehicle,objects` filters. Per road frame the order is `road`, `lead`, `lanes`, `roadgeom`, `view`: a consumer that needs one frame complete waits for `view` |
+| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `lead`, `lanes` and `view`; mapd's `ego` (the car's motion, while a feeder sends it), `vehicle` and `objects` pass through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,view,ego,vehicle,objects` filters. Per road frame the order is `road`, `lead`, `lanes`, `view`: a consumer that needs one frame complete waits for `view` |
+
+
+Paths: `/v2/...` since roadsense 2.0. Every `/v1/...` path of api 1 still answers, from the same handler and
+with the content of api 2 (an alias for the transition, to be removed); `/v1/roadgeom` and `/v2/roadgeom`
+answer 410 with a pointer to `view`. `/ws`, `/preview` and `/` have no version in their path.
 
 api never touches the camera or the models; it is a fan-out and overlay layer, plus the derived
-topics below (`speed_limit`, `rules`, `fused`, `lead`, `lanes`, `roadgeom`, `view`) and an optional drive recorder.
+topics below (`speed_limit`, `rules`, `fused`, `lead`, `lanes`, `view`) and an optional drive recorder.
 
 **Measurement topics and the display channel (roadsense 2.0).** Every topic except `view` is measurement-grade:
 it says what was measured for its frame, adds no display latency, invents no value, and marks a held or
 predicted value as such (`coast`, `held`, `meas_age_s`) with a time-out. A consumer that decides anything
 (an alert, a future driving function) reads those. `view` is derived from them for consumers that draw:
 smoothed, identity-keeping, with fades and velocities; it never feeds back into the measurement topics.
+
+The split is also one of latency (owner's ruling, 2026-11-18). On the measurement topics latency matters and
+nothing is smoothed for looks: they stay as fresh as the model's frame. On the display channel milliseconds do
+not matter: where smoothness and lag conflict, `view` chooses smoothness (a few hundred milliseconds of display
+lag are accepted), and no CPU or bandwidth is spent to cut display latency. Display policy (trust hysteresis,
+holding a picture over a drop-out, fades, the "approximate" mark, which lane is lit) lives in `view` only; a
+consumer that draws needs no thresholds of its own, and a consumer that decides must not read `view`.
 
 ### api-derived topic: `{"type":"speed_limit", ...}`
 `api/roadsense_api/speedlimit.py` turns the documented `signs` contract (only `detections[]`
@@ -985,7 +1017,7 @@ Rules:
   flag -> forest_road; built-up -> city_street or residential by class; parking aisle -> parking_lot or
   underground_parking; bridge x3) and renormalised. Without envd the map label alone is served (`map`).
 * **Lanes** (since lane L20). The ego lane comes from the ego-lane filter (`egolane.py`, below) whenever it
-  ran with the matched road's tagged count: its answer, or `ego_index: null` when no lane holds 0.75 of the
+  ran with the matched road's tagged count: its answer, or `ego_index: null` when no lane holds 0.8 of the
   probability ("unknown" is a valid answer, a wrong confident one is not). Otherwise, and before L20, the rule
   below.
 * **Lanes, rule** (before L20 and as a fallback). Counts from the map (`road.lanes`, source marked: tagged per direction, tagged total, assumed).
@@ -1148,31 +1180,52 @@ Constants: `DEFAULT_CFG` in `lanes.py`, overridable per key in `<config dir>/lan
 measurement on recorded `road` lines: `tools/lanes_replay.py ROAD.jsonl[.gz] [--every N] [--lanes-total N
 --lanes-forward N] [--out LANES.jsonl]`.
 
-### Ego lane (`api/roadsense_api/egolane.py`, lane L20; inside `fused.lanes`)
+### Ego lane (`api/roadsense_api/egolane.py`, lanes L20 and L22; inside `fused.lanes`)
 A discrete Bayes filter (an HMM) over k, the number of own-direction lanes to the right of the car, run on
 every `lanes` message (10-14 per second). Index from the left is `forward - 1 - k` once the map gives the own
-lane count. Evidence per frame, read at 8-20 m: the right road edge's distance from the ego lane's right line
-(one-sided: an edge well inside the k-th lane rules k out, one beyond k lanes says little, a shoulder or verge
-lies there; the model places edges nearer than the lane geometry, 2.5 m + about 1.8 m per lane on the labelled
-rides); the far-right line one lane width out (seen in 70 % of the frames when a lane is there, 0-13 % when
-not; its absence counts only weakly); the same on the left, where the lanes are `forward - 1 - k` own plus
-the oncoming ones of a two-way road; the map's tagged lane count (`map.road.lanes`, match >= 0.5) as the
-support of k; a jump of the raw ego-lane centre by about one lane width between two frames (the network
-relabels its lines when the car crosses one) as a lane change, made more likely by `ego.turn_signal` in its
-direction. Consecutive frames see the same road, so their evidence counts as one observation per 0.5 s; the
-distribution diffuses by 1 % per second (a change nobody saw). `ego_index` only when one lane holds 0.75.
-Constants: `DEFAULT_CFG` in `egolane.py`, overridable per key in `<config dir>/egolane.json`. Cost 0.05 ms per
-frame on the laptop (the `lanes` tracker: 0.38 ms). Replay and score against hand labels:
-`tools/egolane_replay.py ROAD_OR_SESSION --labels LANES.csv [--clock ride|session] [--map-count label|recorded|none]`
-(numbers in docs/lanes/L20-ego-lane-junctions.md).
+lane count. Evidence per frame, read at 8-20 m:
 
-### api-derived topic: `{"type":"roadgeom", ...}`
-`api/roadsense_api/roadgeom.py` joins everything that is known about the shape of the road ahead into one
-geometry in the car's frame (x forward from the camera, y right, metres): the camera's lane as far as the
-camera knows it, the map's road beyond, the side roads of the junctions ahead and a roundabout as a ring. One
-message per `lanes` message (10-14 per second), 1-4 kB; `/v1/roadgeom`. Added 2026-11-17
-(docs/lanes/L17-road-geometry.md). It is for a consumer that draws the road; `lanes` stays the camera's own
-result and `map` the map's.
+* the right road edge's distance from the ego lane's right line (one-sided: an edge well inside the k-th lane
+  rules k out, one beyond k lanes says little, a shoulder or verge lies there; the model places edges nearer
+  than the lane geometry, 2.5 m + about 1.8 m per lane on the labelled rides);
+* the far-right line one lane width out (seen in 70 % of the frames when a lane is there, 0-13 % when not).
+  Its absence counts only weakly (`absence_trust` 0.2 since L22, 0.4 before: on the car's wide lens and in
+  town an unseen far line is common beside a real lane);
+* the same on the left, where the lanes are `forward - 1 - k` own plus the oncoming ones of a two-way road;
+* the map's tagged lane count (`map.road.lanes`, match >= 0.5) as the support of k;
+* **lane changes** (L22): the centre of the tracked ego lane moves to one side and comes back on the other
+  within 1.2 s by at least 0.38 lane widths (the car nears a line, the network relabels its lines). The
+  direction is the side the centre was on before: lines moving right = the car goes left. `ego.turn_signal` in
+  that direction makes the change more likely. (Until L22 a one-frame jump of the raw centre was looked for; on
+  the labelled rides no real lane change produced one, and its direction was inverted.)
+* **a change of the map's lane count** (L22): the lane was added or removed on the right or on the left; the
+  count does not say which, so the estimate is split half and half (k moves with a lane on the right, stays
+  with one on the left) and the following seconds of camera evidence settle it. With painted turn arrows on
+  the new stretch (`map.road.turn_lanes`) the side is known when the new lanes at one edge only turn (a turn
+  pocket, an exit lane): 0.85 to that side. A count that is unknown for up to 10 s in between (a junction, a
+  doubtful match) does not hide the change. Before L22 the lane was always taken to be added on the left, so
+  an exit lane opening on the right of an expressway left the estimate confidently wrong for seconds.
+
+Consecutive frames see the same road, so their evidence counts as one observation per 0.5 s; the distribution
+diffuses by 1 % per second (a change nobody saw). `ego_index` only when one lane holds 0.8 (`commit_p`; 0.75
+until L22): "unknown" is a valid answer, a wrong confident one is not. Constants: `DEFAULT_CFG` in
+`egolane.py`, overridable per key in `<config dir>/egolane.json`. Cost 0.05 ms per frame on the laptop (the
+`lanes` tracker: 0.38 ms). Replay and score against hand labels:
+`tools/egolane_replay.py ROAD_OR_SESSION --labels LANES.csv [--clock ride|session] [--map-count label|recorded|none]`.
+Wrong-and-confident share on the labelled frames (the map count as a tagged map would give it; before L20 /
+L20 / L22): night motorway 1.4 / 0.9 / 0.3 %, night expressway with tunnels 1.5 / 3.8 / 1.5 %, city arterials
+19.1 / 7.7 / 4.6 %, the car's camera (6 sessions) 21.4 / 11.1 / 5.3 %; right share of all frames on the car's
+camera 72.6 / 78.2 / 79.7 % (docs/lanes/L20-ego-lane-junctions.md, docs/lanes/L22-v2-integration.md).
+
+### Road geometry (`api/roadsense_api/roadgeom.py`; the geometry fields of `view.road`)
+Until roadsense 2.0 this was a topic of its own (`roadgeom`, `/v1/roadgeom`). It is display content (the
+camera and the map joined by a low-passed fit, shown after a second of agreement), so since 2.0 it exists only
+inside the display channel: the fields below are fields of `view.road` (next section), computed per road frame.
+
+`roadgeom.py` joins everything that is known about the shape of the road ahead into one geometry in the car's
+frame (x forward from the camera, y right, metres): the camera's lane as far as the camera knows it, the map's
+road beyond, the side roads of the junctions ahead and a roundabout as a ring (lane L17,
+docs/lanes/L17-road-geometry.md). `lanes` stays the camera's own result and `map` the map's.
 
 ```
 "source": "vision" | "vision+map",
@@ -1193,12 +1246,12 @@ result and `map` the map's.
 "branches": [ {"dist_m": 71.0, "pts": [[71.2,-1.7],..], "class": "tertiary", "minor": false, "exit": true, "entry": true,
                "lanes": 2, "ring": false, "side": "left|right", "way": false} ],     // way: chosen by the driver's turn signal
 "ring": {"centre": [44.1,-1.6], "radius_m": 14.1, "lanes": null, "on_ring": false, "entry_m": 30.2, "exit_m": 74.3},
-"junction": {"kind": "roundabout", "dist_m": 30.2, "control": "give_way", "confidence": 1.0},   // head of map.ahead.junction_view, distance advanced
 "way": {"source": "map", "confidence": 0.58} | {"source": "intent", "turn": "right", "branch": 1},
 "intent": null | {"turn": "right", "source": "turn_signal", "at_m": 33.4}
 ```
-`seq`, `ts_mono_ns`, `ts_real_ns` are those of the `road` message. Without a usable map the message carries
-the camera's part alone (`source: "vision"`, `map.used: false` and the reason, no branches, no ring).
+Without a usable map the object carries the camera's part alone (`source: "vision"`, `map.used: false` and the
+reason, no branches, no ring). (`junction` is no longer a four-field head here: `view.road.junction` is the
+whole junction view.)
 
 * **Camera part.** The centre of the ego lane: the middle of the two tracked inner lines (`lanes`), one line
   and the lane width, or the model's planned path (`road.plan`) when no line is present. It is used as far as
@@ -1230,15 +1283,17 @@ the camera's part alone (`source: "vision"`, `map.used: false` and the reason, n
   map's path takes, reached on round the ring (a convention of how drivers signal, not a rule). Without the
   signal nothing changes.
 
-Cost on the laptop: 0.09 ms per message without a map, 0.36 ms with one, plus 0.17 ms per `map` message; on the phone: see
+Cost on the laptop: 0.09 ms per frame without a map, 0.36 ms with one, plus 0.17 ms per `map` message; on the phone: see
 docs/lanes/L17-road-geometry.md. Constants: `DEFAULT_CFG` in `roadgeom.py`, overridable per key in
 `<config dir>/roadgeom.json`. Tools: `tools/roadgeom_replay.py SESSION.jsonl.gz` (a recorded drive through the
 tracker and the fusion), `tools/roadgeom_drive.py --network tour [--turn T0:T1:left|right] [--out REC]` (a
-synthetic drive over a made-up network or a pack with a synthetic camera, compared with the truth).
+synthetic drive over a made-up network or a pack with a synthetic camera, compared with the truth; the
+recording carries `view` messages).
 
 ### api-derived topic: `{"type":"view", ...}` (display channel, roadsense 2.0)
-`api/roadsense_api/view.py`: one message per road frame (10-14 per second), after `lead`, `lanes` and `roadgeom`
-of that frame; about 1.5 kB; `/v1/view`. Added 2026-11-18 (docs/lanes/L19-view-channel.md). For any consumer
+`api/roadsense_api/view.py` (objects, lines) and `roadview.py` (`road`): one message per road frame (10-14 per
+second), after `lead` and `lanes` of that frame; 1.5 kB without a map, 3-4 kB with the road picture; `/v2/view`.
+Added 2026-11-18 (docs/lanes/L19-view-channel.md; `road`: docs/lanes/L22-v2-integration.md). For any consumer
 that draws (a car display, a HUD, a dashboard): objects that keep their identity, move smoothly between two
 detections, fade in and out, and carry a velocity so the consumer can extrapolate to its own render time.
 Derived from the measurement topics, never fed back into them; nothing in it belongs to one display.
@@ -1267,7 +1322,7 @@ Derived from the measurement topics, never fed back into them; nothing in it bel
             "phase": "appear|steady|coast|shift|leave",   // shift: blending to a restarted track (other marking)
             "alpha": 1.0} ],
 "path": {"y": [..]},                                      // the model's planned path at x, as measured
-"road": null                                              // reserved: the fused road geometry (`roadgeom`, lane L20)
+"road": {...}                                             // the road as one picture (below)
 ```
 `seq`, `ts_mono_ns`, `ts_real_ns` are those of the `road` message; every position refers to that frame time.
 
@@ -1275,19 +1330,110 @@ Derived from the measurement topics, never fed back into them; nothing in it bel
 |---|---|---|
 | traffic lights, signs | one Kalman filter per track in the car's frame, carried between detections by the car's own motion (`ego` speed and yaw rate when a host feeds them, else the model's) and corrected by each detection with its real uncertainty (light distance from the housing size: 25 % at 1 sigma, lateral 0.4 m + 3 %; sign distance from a 0.7 m sign: 30 %); a detection beyond 3 sigma is down-weighted; the drawn position eases to the filter's over 0.25 s at most 1 m/s + 10 % of the distance per second. `lights.lateral_m` (offset from the planned path) is turned back into the car's frame with the path. A light the provider only coasts is not a measurement. Leaves 1 s after its last detection (fade 0.3 s) or when it passes the camera | the drawn distance trusts odometry between detections; a biased housing-size distance is corrected over seconds, not frames |
 | lead | the `lead` topic's track: carried by its relative speed, corrections eased over 0.1 s + 0.01 s per metre (0.15 s at 5 m, 0.5 s at 40 m); fade in 0.3 s, fade out 0.4 s at its extrapolated place after the track ends | drawn distance trails the tracker by up to the ease time at long range; `attrs.dist_m` is the tracker's value |
-| lines | the `lanes` topic's geometry, two first-order stages of 0.1 s; a restart of the track on another marking (the near part moves by more than 0.8 m in one frame) is blended linearly over 0.4 s; fade 0.3 s when a line comes or goes; `reach_m` where the tracker's sigma passes 1 m | about one frame (75 ms) behind `lanes` |
+| lines | the `lanes` topic's geometry, two first-order stages whose time constant grows with the distance (`line_tau_s` + `line_tau_rel` x: 0.1 s at the car, 0.16 s at 10 m, 0.28 s at 30 m); a restart of the track on another marking (the near part moves by more than 0.8 m in one frame) is blended linearly over 0.4 s; fade 0.3 s when a line comes or goes; `reach_m` where the tracker's sigma passes 1 m; `dy` the rate of each point | two to three frames behind `lanes` at 10 m, about five (0.4 s) at 30 m: smoothness is chosen over lag on the display channel. Carrying the lines by the car's own motion (slide, turn) is implemented and off (`line_motion`): on the recorded drives it predicts the next frame no better than "the line stays where it is in the car's frame" (a line at 30 m: 0.280 m rms against 0.286 m in turns, 0.137 against 0.136 m elsewhere), and with the uncalibrated camera it adds a bias of 0.03 m per frame |
 
 On the 2026-11-17 day drive (29 min, `tools/view_replay.py`): the ego light's drawn distance step per frame after
 the car's own motion 1.96 -> 0.12 m rms, steps over 2 m 129 -> 0, lateral 0.32 -> 0.07 m; lane lines and edges
-that pop on or off without a fade 106 -> 2; the lead's step per frame after its relative speed 0.27 -> 0.09 m rms.
-Cost: 0.15-0.18 ms per frame on the laptop.
+that pop on or off without a fade 106 -> 2; the lead's step per frame after its relative speed 0.27 -> 0.09 m rms;
+a lane line's step per frame at 30 m 0.089 -> 0.068 m rms, steps over 0.3 m 119 -> 72 (the reference consumer,
+which moves the lines with their own rate between two messages, draws 6 such steps on that drive).
+Cost: 0.15-0.18 ms per frame on the laptop without the road picture.
+
+**`view.road`: the road as one picture** (`api/roadsense_api/roadview.py`). Everything a consumer needs to
+draw the road and what lies ahead on it, from one message of one frame; each part says where it comes from
+(`provenance`, `source`, `centre.src`), how sure it is, and whether it rests on a weak position
+(`approximate`). Until 2.0 a consumer combined `roadgeom` (geometry), `map.ahead.junction_view` (junction) and
+`fused.lanes` (lane boxes) and applied its own trust thresholds.
+
+```
+"road": {
+  "source": "vision" | "vision+map",
+  "position": {"state": "good|dead_reckoning|...", "available": true, "reason": null,   // null without mapd
+               "hacc_m": 6.1, "match_confidence": 0.62, "match_confidence_smoothed": 0.58,
+               "trusted": true,          // the map layer may be drawn (below); false: only the camera's part is given
+               "held": false,            // the map dropped out for a moment: the last trusted message is shown
+               "approximate": false, "why": [],     // why: dead_reckoning, position_accuracy, held
+               "synthetic": false,       // the position is made up (map.input.synthetic): a consumer in a car must not draw the map parts
+               "age_s": 0.21},
+  // the geometry (previous section): the ego lane's centre from the camera near the car, the map beyond
+  "lane_width_m": 3.4, "vision": {...}, "map": {"used": true, "why": null, ...},
+  "centre": {"s","x","y","conf","src","vision_to_m","end"},
+  "branches": [ {..., "approximate": false} ], "ring": {..., "approximate": false} | null,
+  "way": {...}, "intent": null | {...},
+  // the junction or roundabout ahead: mapd's junction view (kind, control, approach, arms, ring; "mapd" above)
+  "junction": {"kind": "junction|roundabout", "dist_m": 171.0,       // carried to this frame by the distance driven
+               "confidence": 0.58, "control": "signals", "approach": {...}, "arms": [...], "ring": null,
+               "provenance": "map", "approximate": false, "why": []} | null,
+  "lanes": {"count": 4, "forward": 3, "backward": 1, "count_source": "map:tagged",    // null without a trusted map
+            "ego_index": 1,              // the lane to light, from the left; null = not known
+            "likely_index": null,        // with ego_index null: the most likely lane when it holds 0.45
+            "ego_from_right": 1, "probs": [0.05, 0.9, 0.05], "probs_from": "left|right", "confidence": 0.9,
+            "oncoming_left": false, "provenance": ["vision", "map:tagged", "lane_change"], "approximate": false,
+            "turn": {"lanes": [["left"], ["through"], ["through","right"]],   // painted arrows (map.ahead.turn_lanes)
+                     "arrows": ["l", "t", "tr"],     // the same as letters per lane: l left, t through, r right, u turn back, m merge
+                     "count": 3, "dist_m": 0.0, "junction_m": 60.0,
+                     "path": [false, true, true],    // lanes that lead where the most likely path goes; null = not known
+                     "here": true,                   // the car is on the stretch and the arrows are for the lanes counted above
+                     "provenance": "map:turn_lanes", "confidence": 0.62} | null}}
+```
+
+| part | where it comes from | display policy applied here |
+|---|---|---|
+| `position.trusted` | `map.match.confidence`, `map.available` | the match confidence is low-passed over about 2 s of `map` messages; trusted from 0.55, until it falls under 0.40 (`trust_on`, `trust_off`); a map that drops out (off the road for a message, a doubtful match in a junction) is held for 2.5 s and marked `held` |
+| `centre`, `branches`, `ring`, `way` | camera lines / planned path, `map.ahead.geometry` | the join of the previous section (fit, 1 s of agreement, withheld on disagreement); branches and ring carry `approximate` from the position |
+| `junction` | `map.ahead.junction_view` | given when the path up to it is likely (0.5; always on a ring) and the position error allows it: `hacc_m` within 20 m, or within 40 % of the distance. `approximate` when dead-reckoned, held, `hacc_m` over 20 m, or over 15 % of the distance: draw it as "about there", without an exact distance. The distance is carried by the distance driven between two `map` messages |
+| `lanes` count | `map.road.lanes` of the trusted match | none; `count_source` says tagged or assumed |
+| `lanes.ego_index` | the ego-lane filter (`fused.lanes`, measurement) | the committed lane stays lit until another lane is committed or its own probability falls under 0.6 (`lane_release_p`): no flicker at the commit threshold. `likely_index` from 0.45 |
+| `lanes.turn` | `map.ahead.turn_lanes` | carried by the distance driven; `here` when the boxes and the arrows count the same lanes |
+
+Without mapd, without a pack or without a position `road` still carries the camera's part (`source: "vision"`,
+`position` null or untrusted, `junction` null, lane counts null, the filter's `probs` from the right).
+"Unknown" is a value here: a part that cannot be trusted is null, never a guess drawn as a fact. Constants:
+`<config dir>/view.json` (keys of `view.DEFAULT_CFG`; the key `road` holds overrides of
+`roadview.DEFAULT_CFG`). Replay: `tools/view_replay.py SESSION [--map MAP.jsonl]` prints how often each part is
+given on a recorded drive.
+
+## roadsense 2.0: what changed since 1.x
+
+2.0 (2026-11-18, lanes L19-L22) is a breaking release of the consumer contract. A 1.x consumer has to change
+where the first column says "breaking"; everything else is additive.
+
+| | where | 1.x | 2.0 |
+|---|---|---|---|
+| breaking | topic `lead`, `fused.lead`: `mode` | `track`, `hold`, `coast`, `none`; in `hold` (both standing) `dist_m` was frozen | `hold` no longer exists: `track` with `standing: true`, the value stays live (it shows the network's slow wander of a few decimetres: a display that rounds to metres needs a hysteresis of about 0.3 m). `standing`, `departed`, `gap_changed`, `coast` unchanged |
+| breaking | topic `roadgeom`, `GET /v1/roadgeom`, `?topics=roadgeom` | the fused road geometry, one message per frame | gone (the path answers 410). The same fields are in `view.road`; its four-field `junction` head is replaced by the whole junction view in `view.road.junction` |
+| breaking | `fused.lanes.ego_index` | a rule; never a middle lane; a guess when unsure | the ego-lane filter's answer; `null` = unknown, and more often than before; commit threshold 0.8 |
+| breaking | `map.match.confidence` | the winner's share among all candidate edges (dipped at every side road) | the confidence of the matched **road**: pieces of the same road are not rivals (median while moving 0.45 -> 0.55). Thresholds tuned to the old meaning should be revisited |
+| breaking | `map.position.hacc_m` | followed the receiver's claim | scaled by what the receiver's own fixes show (up to 6 x the claim; `map.input.gnss.hacc_scale`) |
+| breaking | map pack | format 1 | format 2 (turn lanes, speed cameras). mapd 2.0 reads 1 and 2; mapd 1.x refuses 2: update roadsense first, then the pack |
+| breaking | recorder | `roadgeom` at 2 Hz (`roadgeom_hz`) | `view` at 2 Hz (`view_hz`) |
+| new | topic `view`, `GET /v2/view` | - | the display channel: objects (lead, lights, signs), lines, path, and the road picture `view.road` |
+| new | `view.road` | - | geometry, junction, lanes with probabilities, turn arrows; `approximate` / `provenance` per part; trust hysteresis done by roadsense |
+| new | `fused.lanes` | - | `ego_from_right`, `probs`, `probs_from`, `estimator` (`confidence`, `provenance`, `last_change`, `evidence`) |
+| new | `map.road.turn_lanes`, `map.ahead.turn_lanes`, `junction_view.approach.turn_lanes`, `fused.road.turn_lanes`, `fused.ahead.turn_lanes` | - | painted turn arrows (pack format 2); null on a format 1 pack |
+| new | `map.ahead.features[].kind` | - | `speed_camera` (format 2 packs; cameras that are a node of the road) |
+| new | `map.road.lanes` | forward lanes only from `lanes` / both of `lanes:forward` + `lanes:backward` | also from `lanes:forward` alone and from the number of turn arrows (`source: "tagged"`) |
+| new | `map.pack.format` | 1 | 1 or 2: the format of the loaded pack |
+| new | HTTP paths | `/v1/...` | `/v2/...`; `/v1/...` kept as aliases with the content of 2.0; `/v2/version`; `health.api` |
+| new | `/ws` order per road frame | `road`, `lead`, `lanes`, `roadgeom` | `road`, `lead`, `lanes`, `view`: a consumer that needs one frame complete waits for `view` |
+| config | `<config dir>/view.json` | - | `view.DEFAULT_CFG` keys; `road`: `roadview.DEFAULT_CFG` keys |
+| config | `<config dir>/egolane.json` | - | `egolane.DEFAULT_CFG` keys (`commit_p` 0.8, `absence_trust` 0.2, `change_*`, `count_change_right`, `turn_lanes_side_p`) |
+| config | `<config dir>/lead.json` | `stand_*` keys of the hold | the standing model's keys (`stand_tau_s`, ...): `lead.DEFAULT_CFG` |
+| config | `mapd.json` | - | `gnss_adaptive`, `gnss_scale_n`, `gnss_scale_max`, `matcher.class_speed`, `matcher.class_speed_mps`, `matcher.parking_prior`, `matcher.road_confidence` |
+| config | `recorder.json` | `roadgeom_hz` | `view_hz` |
+| unchanged | vehicle input API (`position.sock`, `POST /v2/vehicle`) | 1.1 | 1.1 (`"api": 1` in `map` / `ego` / `vehicle` messages is that API's version, not this one's) |
+
+Which topic for what: decisions (alerts, anything that acts) read the measurement topics (`lead`, `lanes`,
+`lights`, `signs`, `speed_limit`, `rules`, `fused`, `map`); pictures read `view`. The reference consumer (the
+car's display, `cyberpunk_computer`) draws its whole road scene from `view` and keeps its alerts on the
+measurement topics.
 
 ### Drive recorder (optional)
 `api/roadsense_api/recorder.py`, off unless `<config dir>/recorder.json` names a directory
 (`{"dir": "/var/lib/roadsense/rec", "max_mb": 4000}`). Every api start opens a session
 `<dir>/<YYYYmmdd-HHMMSS>/` with `messages.jsonl.gz` (the topics as they went out: `road` reduced to lane
 lines, road edges, `leads[0]`, plan x / y / z, speed and pose; `lights`, `signs`, `env`, `speed_limit`,
-`rules`, `fused`, `map`, `ego` at 10 Hz, `vehicle`, `objects` at 10 Hz, `roadgeom` at 2 Hz, `calib`, one
+`rules`, `fused`, `map`, `ego` at 10 Hz, `vehicle`, `objects` at 10 Hz, `view` at 2 Hz, `calib`, one
 `camera` message a second) and `frames/<seq>.jpg`,
 camerad's preview JPEG once a second (copied, not re-encoded). About 30 kB/s of messages plus the JPEGs
 (0.2-0.5 GB per hour); the oldest sessions are deleted above `max_mb`; a write error stops the recording, not
