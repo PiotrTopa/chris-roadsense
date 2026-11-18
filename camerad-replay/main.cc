@@ -35,6 +35,7 @@
 
 #include <jpeglib.h>
 
+#include "governor.h"
 #include "jsonsock.h"
 #include "ring.h"
 
@@ -304,6 +305,21 @@ private:
     jpeg_decompress_struct cinfo_{};
     JpegErr err_{};
     std::vector<uint8_t> cb_, cr_;
+};
+
+
+// Preview pacing: every Nth frame as configured, slowed or stopped by the load governor's `preview_hz` cap.
+struct PreviewGate {
+    roadsense::GovernorReader gov;
+    int64_t last_ns = 0;
+    bool pass(uint64_t seq, int every, int64_t now_ns) {
+        if (every <= 0 || seq % uint64_t(every) != 0) return false;
+        const double cap = gov.cap("preview_hz");
+        if (cap == 0) return false;
+        if (cap > 0 && last_ns && double(now_ns - last_ns) < 1e9 / cap) return false;
+        last_ns = now_ns;
+        return true;
+    }
 };
 
 bool write_preview(const std::string &path, const uint8_t *jpg, size_t n) {
@@ -707,7 +723,7 @@ private:
                 }
                 ++st_n, st_dec += dec_ms, st_dec_max = std::max(st_dec_max, dec_ms);
                 server_.publish(message(t_frame, t_frame + rt_off, fps, dec_ms, jlen));
-                if (!opt_.no_preview && cfg_.preview_every > 0 && seq_ % uint64_t(cfg_.preview_every) == 0)
+                if (!opt_.no_preview && preview_gate_.pass(seq_, cfg_.preview_every, t_frame))
                     write_preview(rd_ + "/preview.jpg", jpg, jlen);
                 if (opt_.frames && total_ >= opt_.frames) g_run = 0;
             } else {
@@ -752,6 +768,7 @@ private:
     Decoder dec_;
     std::unique_ptr<Ride> ride_;
     Config cfg_;
+    PreviewGate preview_gate_;
     int W_ = 0, H_ = 0;
     size_t n_ = 0, idx_ = 0, end_idx_ = 0;
     int64_t period_ = 50000000, deadline_ = 0, fps_t0_ = 0;

@@ -93,6 +93,7 @@ class Recorder:
         self.dir = None
         self.fh = None
         self.failed = False
+        self.frames_enabled = True      # the load governor switches the pictures off under heat (governor.py)
         self.written = {"messages": 0, "frames": 0, "bytes_in": 0}
         self._last = {}             # topic -> clock of the last written message (rate caps)
         self._flush_t = 0.0
@@ -184,7 +185,7 @@ class Recorder:
 
     def _frame(self, now, camera_line):
         every = self.cfg["frame_every_s"]
-        if not every or not self.preview_path or now - self._frame_t < every - 0.05:
+        if not every or not self.frames_enabled or not self.preview_path or now - self._frame_t < every - 0.05:
             return
         self._frame_t = now
         try:
@@ -229,4 +230,4 @@ class Recorder:
             sizes[d] = 0
 
     def status(self):
-        return {"dir": self.dir, "failed": self.failed, **self.written}
+        return {"dir": self.dir, "failed": self.failed, "frames_enabled": self.frames_enabled, **self.written}

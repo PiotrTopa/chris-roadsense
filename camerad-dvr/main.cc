@@ -42,6 +42,7 @@
 
 #include <jpeglib.h>
 
+#include "governor.h"
 #include "jsonsock.h"
 #include "ring.h"
 
@@ -578,6 +579,21 @@ size_t jpeg_length(const uint8_t *d, size_t n) {
     return 0;
 }
 
+
+// Preview pacing: every Nth frame as configured, slowed or stopped by the load governor's `preview_hz` cap.
+struct PreviewGate {
+    roadsense::GovernorReader gov;
+    int64_t last_ns = 0;
+    bool pass(uint64_t seq, int every, int64_t now_ns) {
+        if (every <= 0 || seq % uint64_t(every) != 0) return false;
+        const double cap = gov.cap("preview_hz");
+        if (cap == 0) return false;
+        if (cap > 0 && last_ns && double(now_ns - last_ns) < 1e9 / cap) return false;
+        last_ns = now_ns;
+        return true;
+    }
+};
+
 bool write_preview(const std::string &path, const uint8_t *jpg, size_t n) {
     static const uint8_t eoi[2] = {0xFF, 0xD9};
     size_t len = jpeg_length(jpg, n);
@@ -624,6 +640,7 @@ int run(const Options &opt, const Config &cfg) {
     RingWriter ring;
     JsonLineServer server;
     const std::string rd = rundir(), preview_path = rd + "/preview.jpg";
+    PreviewGate preview_gate;
     bool ring_ready = false;
 
     uint64_t seq = 0, gaps = 0, rejected = 0, decode_fail = 0, warnings_total = 0, reconnects = 0, polls = 0;
@@ -773,7 +790,7 @@ int run(const Options &opt, const Config &cfg) {
                          seq, t_seen, t_seen + rt_off, fps, gaps, dec_ms, h.vseq, h.vsize, read_ms, rejected,
                          decode_fail, warnings_total, (h.flags & 0x4000) ? "true" : "false", reconnects - 1);
                 server.publish(line);
-                if (!opt.no_preview && cfg.preview_every > 0 && seq % uint64_t(cfg.preview_every) == 0)
+                if (!opt.no_preview && preview_gate.pass(seq, cfg.preview_every, t_seen))
                     write_preview(preview_path, f, h.vsize);
                 if (opt.frames && seq >= opt.frames) g_run = 0;
             } else {

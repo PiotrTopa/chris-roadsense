@@ -44,6 +44,7 @@
 #include <libcamera/libcamera.h>
 
 #include "jpeg_nv12.h"
+#include "governor.h"
 #include "jsonsock.h"
 #include "nv12.h"
 #include "ring.h"
@@ -344,6 +345,20 @@ private:
 };
 
 // ------------------------------------------------------------- preview ---
+
+// Preview pacing: every Nth frame as configured, slowed or stopped by the load governor's `preview_hz` cap.
+struct PreviewGate {
+    roadsense::GovernorReader gov;
+    int64_t last_ns = 0;
+    bool pass(uint64_t seq, int every, int64_t now_ns) {
+        if (every <= 0 || seq % uint64_t(every) != 0) return false;
+        const double cap = gov.cap("preview_hz");
+        if (cap == 0) return false;
+        if (cap > 0 && last_ns && double(now_ns - last_ns) < 1e9 / cap) return false;
+        last_ns = now_ns;
+        return true;
+    }
+};
 
 class PreviewWriter {
 public:
@@ -748,7 +763,7 @@ private:
         server_.publish(line);
 
         // Preview from the slot just written (it stays intact for 5 more frames).
-        if (preview_ && seq % uint64_t(cfg_.preview_every) == 0 && !preview_->busy())
+        if (preview_ && preview_gate_.pass(seq, cfg_.preview_every, ts) && !preview_->busy())
             *down_ms = preview_->submit(dst, dst_uv);
     }
 
@@ -757,6 +772,7 @@ private:
     RingWriter ring_;
     JsonLineServer server_;
     std::unique_ptr<PreviewWriter> preview_;
+    PreviewGate preview_gate_;
     std::unique_ptr<ConvertPool> pool_;
 
     std::unique_ptr<libcamera::CameraManager> cm_;

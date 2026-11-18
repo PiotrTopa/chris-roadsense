@@ -9,6 +9,7 @@ import weakref
 
 from aiohttp import WSCloseCode, WSMsgType, web
 
+from . import governor as governor_mod
 from . import overlay
 from . import recorder as recorder_mod
 from .sockets import start_clients
@@ -290,6 +291,51 @@ async def h_health(req):
     return _json(h)
 
 
+async def h_governor(req):
+    """GET: the load governor's state (the `governor` object of health). POST {"force": N | null}: hold shed
+    level N by hand (measurements, tests), null gives the governor back to its policy."""
+    st = req.app["state"]
+    if req.method == "POST":
+        try:
+            body = await req.json()
+            force = body["force"]
+            if force is not None and (isinstance(force, bool) or not isinstance(force, int)):
+                raise ValueError
+        except Exception:
+            return _json({"error": 'body must be {"force": level or null}'}, 400)
+        st.governor.force(force)
+        governor_mod.write_caps(os.path.join(st.rundir, "governor"), st.governor.file_line())
+    return _json(st._governor_health())
+
+
+async def governor_task(app):
+    """One probe reading and one policy step a period; the caps file is rewritten on every change and at least
+    every 2 s (the daemons ignore a stale file)."""
+    st = app["state"]
+    gov = st.governor
+    try:
+        probe = governor_mod.make_probe(gov.cfg)
+    except Exception:
+        logging.getLogger("roadsense_api.governor").exception("governor probe not available, governor off")
+        return
+    path = os.path.join(st.rundir, "governor")
+    last_line_caps, last_write = None, 0.0
+    while True:
+        try:
+            gov.step(probe.read())
+            caps = (gov.level, gov.limited)
+            now = time.monotonic()
+            if caps != last_line_caps or now - last_write >= 2.0:
+                governor_mod.write_caps(path, gov.file_line())
+                last_line_caps, last_write = caps, now
+            rec = app.get("recorder")
+            if rec is not None:
+                rec.frames_enabled = gov.caps().get("record_frames", -1) != 0
+        except Exception:
+            logging.getLogger("roadsense_api.governor").exception("governor step failed")
+        await asyncio.sleep(float(gov.cfg["period_s"]))
+
+
 async def h_frame(req):
     try:
         with open(req.app["preview_path"], "rb") as f:
@@ -376,10 +422,12 @@ async def _cors(req, resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
 
 
-def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", record="config"):
+def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", record="config", governor=None):
     """`record`: a recorder config dict, None for no recording, or "config" to read `<config dir>/recorder.json`
     (recorder.py; without that file nothing is recorded)."""
     state = State(rundir, datadir=datadir, ring_path=ring_path, rules=rules)
+    if governor is None:          # the governor runs with the daemons; an app without them (tests) has none
+        governor = connect
     app = web.Application()
     app["state"] = state
     app["preview_path"] = os.path.join(rundir, "preview.jpg")
@@ -394,6 +442,8 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
     async def startup(app):
         app["renderer"] = PreviewRenderer(state, app["preview_path"])
         app["tasks"] = [asyncio.create_task(app["renderer"].run())]
+        if governor:
+            app["tasks"].append(asyncio.create_task(governor_task(app)))
         if connect:
             app["tasks"] += start_clients(state, rundir, DAEMONS)
 
@@ -435,6 +485,8 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
             ("POST", "vehicle", h_position),
             ("GET", "camera", h_camera),
             ("GET", "health", h_health),
+            ("GET", "governor", h_governor),
+            ("POST", "governor", h_governor),
             ("GET", "frame.jpg", h_frame),
             ("GET", "version", h_version),
     ):

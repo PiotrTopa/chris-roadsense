@@ -122,9 +122,11 @@ struct RoadMeta {
     double pair_dt_ms = 0;  // time between the two frames of the pair
     float v_ego = 0, steer_delay = 0;
     uint64_t frames_skipped = 0;  // selected frames the model did not run on (cumulative)
-    double thermal_c = -1;        // hottest thermal zone (C), < 0 = unknown (null)
-    double effective_hz = 0;      // current run-rate cap (max_hz, halved while thermally throttled)
-    bool rate_limited = false;    // true while the thermal guard has halved the rate
+    double effective_hz = 0;      // current run-rate cap (max_hz, lowered by the load governor's road_hz)
+    bool rate_limited = false;    // true while the load governor holds the cap below max_hz
+    double rate_hz = 0;           // measured runs a second over the last 2 s
+    int governor_level = -1;      // the load governor's shed level (0 = nothing shed), -1 = no governor
+    bool limited = false;         // the platform limiter is cutting clocks (as the governor's probe sees it)
 };
 std::string road_json(const RoadOutputs &o, const RoadMeta &m);
 

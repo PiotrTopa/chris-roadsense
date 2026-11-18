@@ -22,6 +22,7 @@
 #include <string>
 #include <thread>
 
+#include "camerad/governor.h"
 #include "camerad/ring.h"
 #include "modeld/json_server.h"
 #include "output.h"
@@ -41,7 +42,6 @@ struct Options {
     std::string cpus = "0-3";
     int nice = 5;
     double max_hz = 1;
-    int pause_mc = 92000;  // hottest thermal zone above which frames are skipped (0 = never)
     uint64_t max_frames = 0;
     double stats_s = 30;
     bool frame_scores = true;
@@ -113,23 +113,6 @@ bool parse_cpus(const std::string &s, cpu_set_t *set) {
     return n > 0;
 }
 
-int hottest_zone_mc() {
-    int best = -1;
-    for (int i = 0; i < 64; ++i) {
-        char path[64];
-        snprintf(path, sizeof path, "/sys/class/thermal/thermal_zone%d/temp", i);
-        FILE *f = fopen(path, "r");
-        if (!f) {
-            if (i > 0 && errno == ENOENT) break;
-            continue;
-        }
-        int v;
-        if (fscanf(f, "%d", &v) == 1 && v > best && v < 200000) best = v;
-        fclose(f);
-    }
-    return best;
-}
-
 void usage() {
     fprintf(stderr,
             "usage: envd [options]\n"
@@ -145,14 +128,15 @@ void usage() {
             "  --hysteresis X    smoothed-score margin needed to change a label (default 0.10)\n"
             "  --min-hold S      no label change within S s of the previous one (default 3)\n"
             "  --ignore-bottom N ignore the bottom N frame rows (burned-in overlays; default 0)\n"
-            "  --pause-temp MC   skip frames while the hottest zone is above MC millidegrees (default 92000, 0 = never)\n"
+            "                    (the load governor's `env_hz` cap in <rundir>/governor slows or pauses envd under heat;\n"
+            "                    --pause-temp is accepted and ignored)\n"
             "  --no-frame-scores omit per-frame scores from the message (smoothed scores stay)\n"
             "  --ncnn-fp32 / --ncnn-no-flushall   ncnn precision / turnip workaround (as in modeld)\n"
             "  --frames N        exit after N processed frames (testing)\n"
             "  --stats S         stderr stats interval in s (default 30, 0 = off)\n"
             "  --verbose\n"
             "config: $ROADSENSE_CONFIG_DIR (default /etc/roadsense)/envd.json, keys backend, model, classes, threads, cpus,\n"
-            "        nice, max_hz, window, hysteresis, min_hold, ignore_bottom, pause_temp, frame_scores (CLI wins)\n"
+            "        nice, max_hz, window, hysteresis, min_hold, ignore_bottom, frame_scores (CLI wins)\n"
             "env: ROADSENSE_RUNDIR (default /run/roadsense), ROADSENSE_RING (default /dev/shm/roadsense-frames)\n");
 }
 
@@ -172,7 +156,6 @@ void load_config(Options &o) {
     if (json_number(s, "hysteresis", &v)) o.pc.hysteresis = v;
     if (json_number(s, "min_hold", &v)) o.pc.min_hold_s = v;
     if (json_number(s, "ignore_bottom", &v)) o.pc.ignore_bottom = int(v);
-    if (json_number(s, "pause_temp", &v)) o.pause_mc = int(v);
     if (json_number(s, "frame_scores", &v)) o.frame_scores = v != 0;
 }
 
@@ -201,7 +184,7 @@ int main(int argc, char **argv) {
         else if (a == "--hysteresis") opt.pc.hysteresis = atof(val().c_str());
         else if (a == "--min-hold") opt.pc.min_hold_s = atof(val().c_str());
         else if (a == "--ignore-bottom") opt.pc.ignore_bottom = atoi(val().c_str());
-        else if (a == "--pause-temp") opt.pause_mc = atoi(val().c_str());
+        else if (a == "--pause-temp") val(), fprintf(stderr, "envd: --pause-temp is ignored (the load governor decides)\n");
         else if (a == "--no-frame-scores") opt.frame_scores = false;
         else if (a == "--ncnn-fp32") opt.pc.enc.ncnn_fp16 = false;
         else if (a == "--ncnn-no-flushall") opt.pc.enc.ncnn_flushall = false;
@@ -272,10 +255,8 @@ int main(int argc, char **argv) {
     auto stats_t0 = Clock::now();
     uint64_t stats_n = 0;
     double stats_ms = 0, stats_enc = 0;
-    const double period_s = opt.max_hz > 0 ? 1.0 / opt.max_hz : 1.0;
     auto next_allowed = Clock::now();
-    auto next_temp = Clock::now();
-    int temp_mc = -1;
+    GovernorReader gov(rundir + "/governor");
     bool pausing = false;
 
     while (g_run) {
@@ -291,21 +272,19 @@ int main(int argc, char **argv) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             continue;
         }
-        if (opt.pause_mc > 0 && now >= next_temp) {
-            next_temp = now + std::chrono::seconds(2);
-            temp_mc = hottest_zone_mc();
-        }
-        if (opt.pause_mc > 0 && temp_mc > opt.pause_mc) {
-            if (!pausing) fprintf(stderr, "envd: hottest zone %.1f C > %.1f C, pausing\n", temp_mc / 1000.0, opt.pause_mc / 1000.0);
+        // The load governor's `env_hz` cap: scenery is among the first things shed under heat (0 = paused).
+        const double gov_hz = gov.limit("env_hz", opt.max_hz > 0 ? opt.max_hz : 1.0);
+        if (gov_hz <= 0) {
+            if (!pausing) fprintf(stderr, "envd: paused by the load governor\n");
             pausing = true;
             ++paused;
-            next_allowed = now + std::chrono::milliseconds(int64_t(period_s * 1000));
+            next_allowed = now + std::chrono::milliseconds(500);
             continue;
         }
-        if (pausing) fprintf(stderr, "envd: hottest zone %.1f C, resuming\n", temp_mc / 1000.0);
+        if (pausing) fprintf(stderr, "envd: resumed by the load governor\n");
         pausing = false;
         if (!rr.next(fv, 200)) continue;  // newest frame
-        next_allowed = Clock::now() + std::chrono::microseconds(int64_t(period_s * 1e6));
+        next_allowed = Clock::now() + std::chrono::microseconds(int64_t(1e6 / gov_hz));
         if (fv.format != kFormatNV12 || (fv.width & 1) || (fv.height & 1)) {
             fprintf(stderr, "envd: unsupported frame %ux%u format %u\n", fv.width, fv.height, fv.format);
             std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -351,9 +330,9 @@ int main(int argc, char **argv) {
         if (opt.stats_s > 0 && el >= opt.stats_s) {
             std::string s;
             for (const GroupResult &g : res.groups) s += " " + g.group->name + "=" + g.group->classes[size_t(g.label)];
-            fprintf(stderr, "envd: %.2f fps, env_ms %.1f (encode %.1f), paused %llu, clients %zu, temp %.1f C,%s\n",
-                    stats_n / el, stats_ms / stats_n, stats_enc / stats_n, (unsigned long long)paused, srv.client_count(),
-                    temp_mc / 1000.0, s.c_str());
+            fprintf(stderr, "envd: %.2f fps, env_ms %.1f (encode %.1f), paused %llu, clients %zu, governor %d,%s\n",
+                    stats_n / el, stats_n ? stats_ms / stats_n : 0.0, stats_n ? stats_enc / stats_n : 0.0,
+                    (unsigned long long)paused, srv.client_count(), gov.level(), s.c_str());
             stats_t0 = Clock::now();
             stats_n = 0;
             stats_ms = stats_enc = 0;

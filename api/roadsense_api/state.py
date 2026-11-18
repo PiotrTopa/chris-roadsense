@@ -6,6 +6,7 @@ import os
 import struct
 import time
 
+from . import governor as governor_mod
 from . import lights as lights_mod
 from . import signctx
 from .fusion import Fusion
@@ -160,6 +161,16 @@ class State:
         self.egolane = EgoLaneEstimator(load_egolane_config())  # ego lane over time, into `fused.lanes` (egolane.py)
         self.ego_light = lights_mod.EgoLightSelector()     # the ego traffic light over time (lights.py)
         self.ego_light.lane_assign = bool(load_lights_config().get("lane_assign", True))
+        self.governor = governor_mod.Governor(governor_mod.load_config())   # load shedding under heat (governor.py)
+        self._view_ts = None                               # frame time of the last `view` built (view_hz cap)
+        self._road_lat_ms = None                           # camera -> api latency of the last road message
+
+    def _rate(self, topic, msg):
+        """The marker a measurement topic carries: measured rate, latency from the frame's camera time, and
+        whether (and why) it is below what the consumer was promised (governor.py topic_status)."""
+        ts = msg.get("ts_real_ns")
+        lat = (time.time_ns() - ts) / 1e6 if isinstance(ts, int) and ts > 0 else None
+        return self.governor.topic_status(topic, self.fps(topic) or None, lat)
 
     # ---- ingestion -------------------------------------------------------
     def on_message(self, daemon, msg, line):
@@ -171,6 +182,7 @@ class State:
         if mtype == "lights":      # add ego-lane relevance from the road plan (lights.py), forward the result
             try:
                 self.ego_light.annotate(msg, self.latest.get("road"), self.latest.get("calib"), self.intrinsics())
+                msg["rate"] = self._rate("lights", msg)
                 line = json.dumps(msg, separators=(",", ":"))
             except Exception:
                 import logging
@@ -179,12 +191,16 @@ class State:
             try:
                 self.signctx.annotate(msg, self.latest.get("road"), self.latest.get("lights"), self.latest.get("calib"),
                                       self.intrinsics())
+                msg["rate"] = self._rate("signs", msg)
                 line = json.dumps(msg, separators=(",", ":"))
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("sign context failed")
         if mtype == "camera":
             self._on_camera(msg)
+        if mtype == "road":
+            ts = msg.get("ts_real_ns")
+            self._road_lat_ms = (time.time_ns() - ts) / 1e6 if isinstance(ts, int) and ts > 0 else None
         if mtype == "ego":         # the vehicle's own motion, relayed by mapd: input of the lead tracker
             self.view.on_ego(msg)
             self.lead.on_ego(msg)
@@ -222,6 +238,7 @@ class State:
             try:
                 out = self.lead.on_road(msg)
                 if out is not None:
+                    out["rate"] = self._rate("lead", msg)
                     self._emit("lead", out, now)
             except Exception:                 # a malformed road message must not stop the fan-out
                 import logging
@@ -231,6 +248,7 @@ class State:
                 out = lanes_out = self.lanes.on_road(msg)
                 if out is not None:
                     self.ego_light.on_lanes(out)      # the lane lines the ego light is assigned by
+                    out["rate"] = self._rate("lanes", msg)
                     self._emit("lanes", out, now)
                     self.latest["egolane"] = self.egolane.on_lanes(out, msg)
                     geom = self.roadgeom.on_lanes(out, msg)    # no topic of its own since 2.0: part of `view.road`
@@ -238,7 +256,12 @@ class State:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("road-geometry tracker failed")
             try:                              # the display channel, last: derived from the topics above
-                out = self.view.on_frame(msg, self.latest.get("lead"), lanes_out, geom, self.latest.get("egolane"))
+                out = None
+                cap, ts = self.governor.caps().get("view_hz", -1), msg.get("ts_mono_ns")
+                if (cap < 0 or self._view_ts is None or not isinstance(ts, int) or ts < self._view_ts
+                        or (cap > 0 and ts - self._view_ts >= (1.0 / cap - 0.01) * 1e9)):
+                    self._view_ts = ts
+                    out = self.view.on_frame(msg, self.latest.get("lead"), lanes_out, geom, self.latest.get("egolane"))
                 if out is not None:
                     self._emit("view", out, now)
             except Exception:
@@ -402,6 +425,20 @@ class State:
                 "limit_kmh": lim.get("limit_kmh"), "limit_source": lim.get("source"),
                 "cpu_pct": (m.get("proc") or {}).get("cpu_pct")}
 
+    def _governor_health(self):
+        """The load governor's state plus what each measurement topic is delivering right now."""
+        g = self.governor.state()
+        topics = {}
+        for t in ("road", "lead", "lanes", "lights", "signs"):
+            m = self.latest.get(t) or {}
+            if t == "road":             # modeld's own line is forwarded untouched: the marker is built here
+                topics[t] = self.governor.topic_status(t, self.fps(t) or None, self._road_lat_ms)
+            else:
+                r = m.get("rate")
+                topics[t] = self.governor.topic_status(t, self.fps(t) or None, (r or {}).get("latency_ms"))
+        g["topics"] = topics
+        return g
+
     def health(self):
         now = time.monotonic()
         daemons = {}
@@ -437,5 +474,6 @@ class State:
             "vehicle": self.vehicle_summary(),
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
+            "governor": self._governor_health(),
             "battery": battery(),
         }

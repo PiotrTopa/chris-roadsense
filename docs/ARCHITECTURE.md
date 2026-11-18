@@ -856,7 +856,8 @@ tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsens
 | `GET /v2/vehicle` | the car as the host describes it: mapd's `vehicle` message (every signal with age, quality and source, description, calibration estimates, feeders) plus the last scan of every range sensor (`objects`); 503 while mapd is not running. `docs/VEHICLE_API.md` 8 |
 | `POST /v2/vehicle`, `POST /v2/position` | vehicle input API over HTTP (body: one message, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
 | `GET /v2/camera` | latest `camera` message + ring header fields |
-| `GET /v2/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
+| `GET /v2/governor`, `POST /v2/governor` | the load governor (below, "Load governor"): state, and holding a shed level by hand |
+| `GET /v2/health` | `governor` (shed level, what is shed, headroom, per-topic rate / latency / degraded marker); per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
 | `GET /v2/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
 | `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `lead`, `lanes` and `view`; mapd's `ego` (the car's motion, while a feeder sends it), `vehicle` and `objects` pass through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,view,ego,vehicle,objects` filters. Per road frame the order is `road`, `lead`, `lanes`, `view`: a consumer that needs one frame complete waits for `view` |
@@ -1394,6 +1395,88 @@ Without mapd, without a pack or without a position `road` still carries the came
 `roadview.DEFAULT_CFG`). Replay: `tools/view_replay.py SESSION [--map MAP.jsonl]` prints how often each part is
 given on a recorded drive.
 
+## Load governor (`<rundir>/governor`, roadsense 2.0)
+
+One policy decides what roadsense gives up when the platform runs out of thermal headroom
+(`api/roadsense_api/governor.py`, lane L24). Before it, modeld halved its own rate at a temperature
+(`--throttle-temp`) and envd paused itself above 92 C: the road model, the most important output, was the
+first thing cut. Both are gone (the flags are accepted and ignored).
+
+**Contract under heat.**
+
+* `road`, `lead` and `lanes` keep their full rate and latency at any temperature the platform's limiter
+  allows. They are the last thing the governor touches, and it touches them only by a clean rate cap, never
+  by letting them queue.
+* Everything else is shed first, one step at a time, in this order of rising importance:
+
+  | level | step (`shed[]` name) | cap written | what a consumer sees |
+  |---|---|---|---|
+  | 1 | `preview` | `preview_hz` 1 | `/preview` and `preview.jpg` one picture a second |
+  | 2 | `recorder_frames` | `record_frames` 0, `preview_hz` 0 | the recorder keeps messages, no pictures; `/preview` stops |
+  | 3 | `scenery` | `env_hz` 0.2 | `env` once in 5 s (its labels are smoothed over 10 s) |
+  | 4 | `view` | `view_hz` 5 | the display channel at 5 messages a second |
+  | 5 | `signs` | `signs_hz` 2.5 | sign detector at half rate (the GPU time goes to the road model) |
+  | 6 | `lights` | `lights_hz` 2.5 | light detector at half rate |
+  | 7 | `detectors_floor` | `env_hz` 0, `signs_hz` 1.25, `lights_hz` 1.25 | scenery paused, detectors at a quarter |
+  | 8 | `road` | `road_hz` 10 | the road model at half rate (`road.rate_limited`) |
+
+* Every step and every restore is reported, and every measurement topic says what it is delivering (below):
+  a consumer never has to guess whether it is getting the full stream.
+
+**Policy.** Once a second the governor reads the platform through a probe: every thermal zone with its limit
+(the temperature at which the platform starts to cut clocks) and the state of the platform's limiter. Per zone
+the temperature is averaged (4 s time constant: the zones swing with every inference burst); the headroom is
+the smallest `limit - average` over the zones. Below 4 K of headroom it sheds one step and gives that step 8 s
+to show; below 1.5 K, or while the limiter is active, a step every 3 s. Above 9 K for 30 s it gives one step
+back; a step that had to be shed again within 90 s is held twice as long the next time (up to 10 min). All of
+it is configuration (`<config dir>/governor.json`, keys of `governor.DEFAULT_CFG`: `shed_at_k`, `urgent_k`,
+`restore_at_k`, `shed_dwell_s`, `restore_hold_s`, `max_level` (7 = never touch the road model), `steps`,
+`floors`, `enabled`).
+
+**Probe.** roadsense knows no device. The default probe (`"probe": "sysfs"`) reads the generic Linux thermal
+sysfs: `/sys/class/thermal/thermal_zone*` (a zone's limit is its lowest `passive` trip point, else its lowest
+`hot` one; zones without either are ignored unless `limit_c` is set) and `cooling_device*` (any device with
+`cur_state` > 0 means the limiter is cutting). A host with other sensors writes a reading file
+(`"probe": "file:/path.json"`: `{"zones":[{"name","temp_c","limit_c"}],"limiter":[{"name","state","max"}]}`)
+or names its own class (`"probe": "package.module:Class"`, one method `read()` returning `governor.Reading`).
+
+**Caps file.** The governor runs inside the api and writes `<rundir>/governor`, one flat JSON object, on every
+change and at least every 2 s:
+
+```
+{"v":1,"ts_mono_ns":...,"valid_s":10,"level":3,"limited":0,"headroom_k":3.4,
+ "preview_hz":0,"record_frames":0,"env_hz":0.2,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"road_hz":-1}
+```
+
+A cap of -1 leaves the stage at its configured rate, 0 pauses it, any other value is an upper bound. Every
+daemon reads its key through `camerad/governor.h` (`GovernorReader`, header-only): the camera daemons
+`preview_hz`, envd `env_hz`, a sign / light provider `signs_hz` / `lights_hz`, modeld `road_hz`; the api itself
+applies `view_hz` and `record_frames`. A file older than `valid_s` is ignored: without the api (or with
+`"enabled": false`) every daemon runs as configured and the platform's limiter is the only guard. A provider
+that does not read the file is simply never shed.
+
+**What a consumer is told.**
+
+* `GET /v2/health` -> `governor`: `level`, `shed` (names of the steps in force), `caps`, `headroom_k`,
+  `hottest` (`zone`, `temp_c`, `limit_c`), `limited` and `limiter` (the active cooling devices), `events` (the
+  last 32 steps: `action` shed / restore, `what`, `level`, `headroom_k`, `why`, `ts_real_ns`), `shed_count`,
+  `restore_count`, and `topics`: for `road`, `lead`, `lanes`, `lights`, `signs` the marker below.
+  `GET /v2/governor` returns the same object; `POST /v2/governor {"force": N}` holds level N by hand
+  (measurements, tests), `{"force": null}` gives it back to the policy.
+* The api-built and api-annotated measurement topics (`lead`, `lanes`, `lights`, `signs`) carry
+  `"rate": {"hz": 13.8, "latency_ms": 109.2, "degraded": false, "why": [], "level": 0}`: the measured message
+  rate over the last 2 s, the latency from the frame's camera time to the api, the governor's level, and
+  `degraded` with its reasons: `shed` (the governor has capped this topic's stage), `slow` / `late` (under the
+  floor of `governor.json` `floors`: by default 10 messages a second and 250 ms for `road` / `lead` / `lanes`,
+  3 a second and 400 ms for `lights` / `signs`), `limited` (the platform limiter is cutting clocks; on its own
+  it does not make a topic degraded).
+* `road` is forwarded as modeld wrote it and carries modeld's own fields: `rate_hz` (measured runs a second
+  over 2 s), `effective_hz` (the cap in force), `rate_limited` (the governor holds the cap below `--max-hz`),
+  `governor_level` (null without a governor), `limited`. The former `thermal_c` is gone (`health.governor.hottest`).
+
+Measured on the reference phone (what each step saves, and the proof that the road outputs hold at the limit
+while the lower steps are shed): docs/lanes/L24-quality-max.md.
+
 ## roadsense 2.0: what changed since 1.x
 
 2.0 (2026-11-18, lanes L19-L22) is a breaking release of the consumer contract. A 1.x consumer has to change
@@ -1422,6 +1505,9 @@ where the first column says "breaking"; everything else is additive.
 | config | `<config dir>/lead.json` | `stand_*` keys of the hold | the standing model's keys (`stand_tau_s`, ...): `lead.DEFAULT_CFG` |
 | config | `mapd.json` | - | `gnss_adaptive`, `gnss_scale_n`, `gnss_scale_max`, `matcher.class_speed`, `matcher.class_speed_mps`, `matcher.parking_prior`, `matcher.road_confidence` |
 | config | `recorder.json` | `roadgeom_hz` | `view_hz` |
+| breaking | `road.thermal_c`; modeld `--throttle-temp`, envd `--pause-temp` / `pause_temp` | modeld halved its rate and envd paused at a temperature of their own | gone: one load governor sheds in a fixed order with the road model last ("Load governor"); `road.rate_hz`, `road.governor_level`, `road.limited` are new, `effective_hz` / `rate_limited` now reflect the governor |
+| new | `health.governor`, `GET/POST /v2/governor`, `rate` in `lead` / `lanes` / `lights` / `signs` | - | what is shed under heat and what each measurement topic is delivering (rate, latency, `degraded` + reasons) |
+| config | `<config dir>/governor.json` | - | `governor.DEFAULT_CFG` keys |
 | unchanged | vehicle input API (`position.sock`, `POST /v2/vehicle`) | 1.1 | 1.1 (`"api": 1` in `map` / `ego` / `vehicle` messages is that API's version, not this one's) |
 
 Which topic for what: decisions (alerts, anything that acts) read the measurement topics (`lead`, `lanes`,

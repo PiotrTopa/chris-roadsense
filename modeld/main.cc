@@ -25,6 +25,7 @@
 #include <thread>
 #include <vector>
 
+#include "camerad/governor.h"
 #include "camerad/gpusched.h"
 #include "camerad/ring.h"
 #include "json_server.h"
@@ -48,7 +49,6 @@ struct Options {
     Options() { sc.allow_spinning = false; }  // spinning keeps 4 big cores busy between rate-capped runs (+10 C)
     uint64_t max_runs = 0;
     double max_hz = 20;              // cap on model runs per second (pairs stay 50 ms apart; extra pairs skipped)
-    int throttle_mc = 80000;         // hottest thermal zone (millidegrees C) above which the rate is halved
     double stats_s = 10;
     bool verbose = false;
     std::string gpu_sched = "auto";  // <rundir>/gpu.sched; "none" = off (docs/ARCHITECTURE.md, GPU schedule)
@@ -81,7 +81,7 @@ bool parse_cpus(const std::string &s, cpu_set_t *set) {
 void usage() {
     fprintf(stderr,
             "usage: modeld [--backend ort|ncnn] [--model PATH] [--threads N] [--cpus LIST|none] [--prep-cpus LIST] [--rhd]\n"
-            "              [--steer-delay S] [--max-hz N] [--throttle-temp MC] [--spin] [--ncnn-fp32] [--ncnn-no-flushall] [--runs N] [--stats S]\n"
+            "              [--steer-delay S] [--max-hz N] [--spin] [--ncnn-fp32] [--ncnn-no-flushall] [--runs N] [--stats S]\n"
             "              [--gpu-sched PATH|none] [--gpu-yield MS] [--verbose]\n"
             "  --backend B    ort: ONNX Runtime on the CPU (default); ncnn: ncnn on the GPU through Vulkan (if built in)\n"
             "  --model PATH   ort: fp32 supercombo v0.9.7 (default /var/lib/roadsense/models/supercombo-fp32.onnx)\n"
@@ -94,8 +94,8 @@ void usage() {
             "  --rhd          left-hand traffic (right-hand-drive car); default right-hand traffic\n"
             "  --steer-delay  lateral_control_params[1] in s (default 0.4 = 0.2 actuator + 0.2)\n"
             "  --max-hz N     max model runs per second (default 20); pairs stay 50 ms apart, extra pairs are skipped\n"
-            "  --throttle-temp MC  hottest thermal zone (millidegrees C, 5 s average) above which the rate is halved,\n"
-            "                 restored below MC - 5000 (default 80000)\n"
+            "                 The load governor's `road_hz` cap (<rundir>/governor, docs/ARCHITECTURE.md) lowers it\n"
+            "                 under heat; modeld has no thermal guard of its own (--throttle-temp is accepted and ignored)\n"
             "  --spin         let ORT intra-op threads spin between runs (default off: much cooler, ~+15 ms/run)\n"
             "  --ncnn-fp32    ncnn: disable fp16 packing (fp32 storage on the GPU; ~5x slower on the Adreno 630)\n"
             "  --ncnn-no-flushall  ncnn: do not add TU_DEBUG=flushall (turnip needs it for correct results)\n"
@@ -112,7 +112,7 @@ void usage() {
             "  --gpu-lead MS  with --gpu-yield: start the next run MS ms before the detector is expected to end\n"
             "                 (its published det_ms), so modeld's CPU preamble overlaps it (default 0)\n"
             "config: $ROADSENSE_CONFIG_DIR (default /etc/roadsense)/modeld.json keys backend, model, threads, cpus, prep_cpus, rhd,\n"
-            "        steer_delay, max_hz, throttle_temp (CLI wins); calibration from calib.json there (pitch, yaw, roll rad; height_m)\n"
+            "        steer_delay, max_hz (CLI wins); calibration from calib.json there (pitch, yaw, roll rad; height_m)\n"
             "env: ROADSENSE_RUNDIR (default /run/roadsense), ROADSENSE_RING (default /dev/shm/roadsense-frames)\n");
 }
 
@@ -149,24 +149,6 @@ private:
     bool has_ = false;
     uint64_t skipped_ = 0;
 };
-
-// Hottest /sys/class/thermal/thermal_zone*/temp in millidegrees C, -1 if none readable.
-int hottest_zone_mc() {
-    int best = -1;
-    for (int i = 0; i < 64; ++i) {
-        char path[64];
-        snprintf(path, sizeof path, "/sys/class/thermal/thermal_zone%d/temp", i);
-        FILE *f = fopen(path, "r");
-        if (!f) {
-            if (i > 0 && errno == ENOENT) break;
-            continue;
-        }
-        int v;
-        if (fscanf(f, "%d", &v) == 1 && v > best && v < 200000) best = v;
-        fclose(f);
-    }
-    return best;
-}
 
 time_t file_mtime(const std::string &p) {
     struct stat st;
@@ -365,7 +347,6 @@ int main(int argc, char **argv) {
             if (json_number(s, "rhd", &v)) opt.sc.rhd = v != 0;
             if (json_number(s, "steer_delay", &v)) opt.sc.steer_delay = float(v);
             if (json_number(s, "max_hz", &v)) opt.max_hz = v;
-            if (json_number(s, "throttle_temp", &v)) opt.throttle_mc = int(v);
             if (json_string(s, "gpu_sched", &str)) opt.gpu_sched = str;
             if (json_number(s, "gpu_yield_ms", &v)) opt.gpu_yield_ms = int(v);
             if (json_number(s, "gpu_lead_ms", &v)) opt.gpu_lead_ms = v;
@@ -394,7 +375,7 @@ int main(int argc, char **argv) {
         else if (a == "--spin") opt.sc.allow_spinning = true;
         else if (a == "--no-spin") opt.sc.allow_spinning = false;
         else if (a == "--max-hz") opt.max_hz = atof(val().c_str());
-        else if (a == "--throttle-temp") opt.throttle_mc = atoi(val().c_str());
+        else if (a == "--throttle-temp") val(), fprintf(stderr, "modeld: --throttle-temp is ignored (the load governor decides)\n");
         else if (a == "--runs") opt.max_runs = strtoull(val().c_str(), nullptr, 10);
         else if (a == "--stats") opt.stats_s = atof(val().c_str());
         else if (a == "--gpu-sched") opt.gpu_sched = val();
@@ -506,35 +487,22 @@ int main(int argc, char **argv) {
     int64_t turn_since_ns = 0;
     auto win_t0 = std::chrono::steady_clock::now();
     uint64_t win_skipped0 = 0;
-    // Rate cap + thermal guard: the next run may start at next_run; pairs arriving earlier are
-    // overwritten by newer ones in Shared (counted as skipped), so pair spacing never stretches.
+    // Rate cap: the next run may start at next_run; pairs arriving earlier are overwritten by newer
+    // ones in Shared (counted as skipped), so pair spacing never stretches. The cap is --max-hz,
+    // lowered by the load governor's `road_hz` (the last thing it sheds under heat; modeld reads no
+    // temperature itself).
     const double max_hz = opt.max_hz > 0 ? opt.max_hz : 20;
-    // The hottest zone reads ~20 C higher during an inference burst than between runs, so the guard
-    // works on a smoothed value: sampled every 250 ms, exponential average with a 5 s time constant.
-    bool throttled = false;
-    int raw_mc = hottest_zone_mc();
-    double temp_mc = raw_mc;
-    auto next_temp = std::chrono::steady_clock::now();
-    auto next_run = next_temp;
+    GovernorReader gov(opt.rundir + "/governor");
+    std::vector<std::chrono::steady_clock::time_point> recent_runs;  // run ends of the last 2 s -> rate_hz
+    auto next_run = std::chrono::steady_clock::now();
     Pair p;
     int run_failures = 0;
     while (g_run) {
         srv.service();
         auto now = std::chrono::steady_clock::now();
-        if (now >= next_temp) {
-            next_temp = now + std::chrono::milliseconds(250);
-            raw_mc = hottest_zone_mc();
-            if (raw_mc >= 0) temp_mc = temp_mc < 0 ? raw_mc : temp_mc + 0.05 * (raw_mc - temp_mc);
-            if (!throttled && temp_mc >= opt.throttle_mc) {
-                throttled = true;
-                fprintf(stderr, "modeld: thermal %.1f C >= %.1f C, halving the model rate\n", temp_mc / 1000.0,
-                        opt.throttle_mc / 1000.0);
-            } else if (throttled && temp_mc >= 0 && temp_mc < opt.throttle_mc - 5000) {
-                throttled = false;
-                fprintf(stderr, "modeld: thermal %.1f C, rate restored\n", temp_mc / 1000.0);
-            }
-        }
-        const double eff_hz = throttled ? max_hz / 2 : max_hz;
+        double eff_hz = gov.limit("road_hz", max_hz);
+        if (eff_hz <= 0) eff_hz = 1;  // the road model is never paused
+        const bool throttled = eff_hz < max_hz;
         if (now < next_run) {
             std::this_thread::sleep_for(std::min(std::chrono::duration<double>(next_run - now),
                                                  std::chrono::duration<double>(0.02)));
@@ -609,9 +577,17 @@ int main(int argc, char **argv) {
         m.v_ego = model->v_ego();
         m.steer_delay = model->steer_delay();
         m.frames_skipped = sh.skipped();
-        m.thermal_c = temp_mc >= 0 ? temp_mc / 1000.0 : -1;
         m.effective_hz = eff_hz;
         m.rate_limited = throttled;
+        m.governor_level = gov.level();
+        m.limited = gov.limited();
+        {
+            const auto tn = std::chrono::steady_clock::now();
+            recent_runs.push_back(tn);
+            while (recent_runs.size() > 1 && tn - recent_runs.front() > std::chrono::seconds(2)) recent_runs.erase(recent_runs.begin());
+            const double span = std::chrono::duration<double>(tn - recent_runs.front()).count();
+            m.rate_hz = recent_runs.size() > 1 && span > 0 ? double(recent_runs.size() - 1) / span : 0;
+        }
         srv.publish(road_json(model->outputs(), m));
         last_run_end = std::chrono::steady_clock::now();
         win_post += std::chrono::duration<double, std::milli>(last_run_end - t1).count();
@@ -627,10 +603,10 @@ int main(int argc, char **argv) {
             const double p50 = win_ms[win_ms.size() / 2], p90 = win_ms[std::min(win_ms.size() - 1, win_ms.size() * 9 / 10)];
             fprintf(stderr,
                     "modeld: %.1f runs/s, model %.1f ms avg %.1f max, prep %.1f ms, pair dt %.0f ms, stream %.1f ms, "
-                    "skipped %llu, clients %zu, thermal_c %.1f, effective_hz %.1f, p50 %.1f p90 %.1f, post %.1f ms, "
+                    "skipped %llu, clients %zu, governor %d, effective_hz %.1f, p50 %.1f p90 %.1f, post %.1f ms, "
                     "gap %.1f ms, gpu turns %llu yield %.1f ms, rec %.1f ms rerec %llu\n",
                     win_runs / el, win_model / win_runs, win_model_max, win_prep / win_runs, m.pair_dt_ms,
-                    p.stream_dt_ms, (unsigned long long)(m.frames_skipped - win_skipped0), srv.client_count(), m.thermal_c, eff_hz,
+                    p.stream_dt_ms, (unsigned long long)(m.frames_skipped - win_skipped0), srv.client_count(), m.governor_level, eff_hz,
                     p50, p90, win_post / win_runs, win_gap / win_runs,
                     (unsigned long long)win_granted, win_granted ? win_yield / win_granted : 0.0, win_rec / win_runs, (unsigned long long)win_rerec);
             win_t0 = std::chrono::steady_clock::now();

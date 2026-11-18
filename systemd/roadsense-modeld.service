@@ -27,7 +27,8 @@ ExecStopPost=-/bin/sh -c 'cut -d" " -f1 /sys/class/devfreq/5000000.gpu/available
 # GPU backend (ncnn/Vulkan, needs a build with -DROADSENSE_NCNN=ON). Accuracy vs ORT fp32 over a 119-run
 # replay: lane y mean 0.018 m, max 0.10 m within 100 m; leads within 0.8 m (p95). See docs/ROADMAP.md.
 # Model thread on the gold cores (model_ms 83 -> 78 vs the silver cores; signd and envd share them),
-# frame prep on the silver cores. The thermal guard halves the rate only at 95 C (the lane safety stop).
+# frame prep on the silver cores. No thermal guard here: the load governor (api, docs/ARCHITECTURE.md "Load
+# governor") lowers the run rate through <rundir>/governor, and only after everything else has been shed.
 # GPU turn-taking with signd (docs/ARCHITECTURE.md "GPU schedule", docs/lanes/L4-gpu-sched.md): runs are
 # pipelined (the next run's vision stage is recorded during the current run and submitted the moment it
 # ends; default on), signd's detector gets the GPU between two runs on request (--gpu-yield, at most 80 ms;
@@ -35,9 +36,9 @@ ExecStopPost=-/bin/sh -c 'cut -d" " -f1 /sys/class/devfreq/5000000.gpu/available
 # keeps the cores out of their deep idle state between GPU submits. Replay ride, 2026-10-27: road 13.0 ->
 # 14.05 runs/s (15 min), model p90 107 -> 55 ms, road latency p90 168 -> 126 ms, signs 5.0/s.
 # Without signd (or with an older one) the schedule file is simply unused.
-ExecStart=/usr/local/bin/modeld --backend ncnn --cpus 4-7 --prep-cpus 0-3 --max-hz 20 --throttle-temp 95000 --gpu-yield 80 --gpu-lead 2 --cpu-latency-us 0 --stats 10
+ExecStart=/usr/local/bin/modeld --backend ncnn --cpus 4-7 --prep-cpus 0-3 --max-hz 20 --gpu-yield 80 --gpu-lead 2 --cpu-latency-us 0 --stats 10
 # CPU fallback (ONNX Runtime fp32, exact but ~5 Hz and 90 C on this phone):
-# ExecStart=/usr/local/bin/modeld --backend ort --model /var/lib/roadsense/models/supercombo-fp32.onnx --cpus 4-7 --prep-cpus 0-3 --max-hz 5 --throttle-temp 75000 --stats 10
+# ExecStart=/usr/local/bin/modeld --backend ort --model /var/lib/roadsense/models/supercombo-fp32.onnx --cpus 4-7 --prep-cpus 0-3 --max-hz 5 --stats 10
 Restart=always
 RestartSec=2
 Nice=-5
