@@ -29,6 +29,26 @@ def flips(vals):
     return sum(1 for a, b in zip(r, r[1:]) if a != b)
 
 
+def flips_hyst(vals, h=0.3):
+    """The same with a display hysteresis of h m (the number changes when the value is 0.5 + h from it)."""
+    shown, n = math.floor(vals[0] + 0.5), 0
+    for v in vals[1:]:
+        if abs(v - shown) > 0.5 + h:
+            shown, n = math.floor(v + 0.5), n + 1
+    return n
+
+
+def longest_constant(rows):
+    """Longest time the published distance stays exactly the same (a frozen read-out), s."""
+    best, t0, last = 0.0, None, None
+    for t, _, _, o in rows:
+        d = o["dist_m"]
+        if d != last:
+            t0, last = t, d
+        best = max(best, t - t0)
+    return best
+
+
 class Scene:
     """Truth (ego and lead speeds over time) -> noisy `road` messages and vehicle `ego` messages."""
 
@@ -118,31 +138,36 @@ class Standstill(unittest.TestCase):
         s.run(3.0)                                             # settle
         return s, s.run(60.0)
 
-    def test_with_vehicle_motion_the_distance_holds(self):
+    def test_with_vehicle_motion_the_distance_is_steady_and_live(self):
+        """Since roadsense 2.0 (L19) the value is never frozen: it is filtered, and a display with a small
+        hysteresis on its whole metres shows one number."""
         for seed in (3, 4, 5):
             s, rows = self.jam(True, seed=seed)
             raw, trk = [r[2] for r in rows], tracked(rows)
             self.assertEqual(len(trk), len(rows))
             self.assertGreater(flips(raw), 30)                 # the raw value at x.5 m flips all the time
-            self.assertEqual(flips(trk), 0)
-            self.assertLess(max(trk) - min(trk), 0.05)
-            self.assertLess(abs(trk[-1] - s.gap), 0.3)
+            self.assertLessEqual(flips(trk), max(2, flips(raw) // 10))
+            self.assertEqual(flips_hyst(trk), 0)
+            self.assertLess(longest_constant(rows), 1.0)       # live: it moves with every frame
+            self.assertLess(max(abs(d - s.gap) for d in trk), 0.3)
             last = rows[-1][3]
-            self.assertEqual((last["mode"], last["standing"], last["source"]), ("hold", True, "vision+ego"))
-            self.assertEqual((last["v_rel_mps"], last["ego"]["standstill"], last["departed"]), (0.0, True, False))
+            self.assertEqual((last["mode"], last["standing"], last["source"]), ("track", True, "vision+ego"))
+            self.assertLess(abs(last["v_rel_mps"]), 0.05)
+            self.assertEqual((last["ego"]["standstill"], last["departed"], last["meas_age_s"]), (True, False, 0.0))
             self.assertIsNone(last["time_gap_s"])
             self.assertFalse(any(o["departed"] for _, _, _, o in rows))
 
-    def test_vision_only_holds_too(self):
+    def test_vision_only_is_steady_too(self):
         for seed in (3, 4, 5):
             s, rows = self.jam(False, seed=seed)
             raw, trk = [r[2] for r in rows], tracked(rows)
             self.assertGreater(flips(raw), 30)
-            self.assertLessEqual(flips(trk), 1)
-            self.assertLess(max(trk) - min(trk), 0.35)
+            self.assertLessEqual(flips(trk), max(2, flips(raw) // 10))
+            self.assertEqual(flips_hyst(trk), 0)
+            self.assertLess(longest_constant(rows), 1.0)
             self.assertLess(abs(trk[-1] - s.gap), 0.3)
-            self.assertEqual((rows[-1][3]["mode"], rows[-1][3]["source"]), ("hold", "vision"))
-            self.assertGreater(sum(1 for r in rows if r[3]["mode"] == "hold") / len(rows), 0.95)
+            self.assertEqual((rows[-1][3]["mode"], rows[-1][3]["source"]), ("track", "vision"))
+            self.assertGreater(sum(1 for r in rows if r[3]["standing"]) / len(rows), 0.95)
             self.assertFalse(any(o["departed"] for _, _, _, o in rows))
 
     def test_never_worse_than_the_raw_value_at_standstill(self):
@@ -184,16 +209,16 @@ class Standstill(unittest.TestCase):
         self.assertFalse(rows[-1][3]["departed"])
         self.assertIsNone(rows[-1][3]["departure"])
 
-    def test_ego_creeping_forward_leaves_the_hold_at_once(self):
+    def test_ego_creeping_forward_leaves_standing_at_once(self):
         s, _ = self.jam(True, gap=4.0)
         s.ae = 0.8
         rows = s.run(1.0)                                      # ego rolls 0.4 m towards the standing lead
-        self.assertEqual(rows[0][3]["mode"], "track")          # first frame with a wheel turning
+        self.assertFalse(rows[0][3]["standing"])               # first frame with a wheel turning
         s.ae, s.ve = 0.0, 0.0                                  # (a jam shuffle: stop again)
         rows += s.run(3.0)
         for t, g, _, o in rows:
             self.assertLess(abs(o["dist_m"] - g), 0.35)
-        self.assertEqual(rows[-1][3]["mode"], "hold")
+        self.assertTrue(rows[-1][3]["standing"])
         self.assertLess(abs(rows[-1][3]["dist_m"] - s.gap), 0.3)
         self.assertFalse(any(o["departed"] for _, _, _, o in rows))
 
@@ -206,12 +231,13 @@ class Standstill(unittest.TestCase):
         rows = s.run(5.0)
         self.assertLess(abs(rows[-1][3]["dist_m"] - s.gap), 0.4)
 
-    def test_lead_lost_while_holding(self):
+    def test_lead_lost_while_standing(self):
         s, _ = self.jam(True, gap=3.0)
         s.prob = 0.05
         rows = s.run(1.0)
-        self.assertTrue(rows[-1][3]["present"])                # e.g. a pedestrian crossing in front: kept
-        self.assertEqual(rows[-1][3]["mode"], "hold")
+        self.assertTrue(rows[-1][3]["present"])                # e.g. a pedestrian crossing in front: kept, marked
+        self.assertEqual(rows[-1][3]["mode"], "coast")
+        self.assertGreater(rows[-1][3]["meas_age_s"], 0.9)
         rows = s.run(3.0)
         self.assertFalse(rows[-1][3]["present"])
         self.assertEqual(rows[-1][3]["event"]["kind"], "lost")
@@ -362,11 +388,11 @@ class Inputs(unittest.TestCase):
             return f
         s.road = creeping(s.road)
         rows = s.run(10.0)
-        self.assertEqual(rows[-1][3]["mode"], "hold")
+        self.assertTrue(rows[-1][3]["standing"])
         self.assertEqual(rows[-1][3]["ego"]["speed_mps"], 0.0)
         s2 = Scene(3.0, 0.0, 0.0, ego_feed=False).attach(LeadTracker())
         s2.road = creeping(s2.road)
-        self.assertEqual(s2.run(10.0)[-1][3]["mode"], "track")  # vision only cannot know: no hold, still filtered
+        self.assertFalse(s2.run(10.0)[-1][3]["standing"])     # vision only cannot know: not standing, still filtered
 
     def test_malformed_input_is_survived(self):
         tr = LeadTracker()
@@ -564,15 +590,22 @@ class RealSpans(unittest.TestCase):
         return rows
 
     def check(self, name, t_stop, t_go, t_dep, min_raw_flips):
-        """t_stop: 3.5 s after the car stopped (the hold has begun and settled, tracker constants hold_*)."""
+        """t_stop: 3.5 s after the car stopped (standing has begun, tracker constants hold_* / stand_*)."""
         for every in (1, 2):                                   # 20 Hz as replayed, and every second frame (10 Hz)
             for sur in (False, True):
                 rows = self.replay(name, every, sur)
                 span = [(t, x, o) for t, x, o in rows if t_stop <= t <= t_go]
                 raw, trk = [x for _, x, _ in span], [o["dist_m"] for _, _, o in span]
                 self.assertGreaterEqual(flips(raw), min_raw_flips // every)
-                self.assertEqual(flips(trk), 0, "%s every %d surrogate %s" % (name, every, sur))
-                self.assertLess(max(trk) - min(trk), 0.1)
+                self.assertEqual(flips_hyst(trk), 0, "%s every %d surrogate %s" % (name, every, sur))
+                self.assertLessEqual(flips(trk), max(3, flips(raw) // 8))
+                rms = lambda v: math.sqrt(sum(x * x for x in v) / len(v))      # noqa: E731
+                steps = [abs(b - a) for a, b in zip(trk, trk[1:])]
+                # jitter (frame-to-frame step) far below the raw value's; the slow wander of the network's distance
+                # (a few decimetres over seconds) is what a live value shows, by design
+                self.assertLess(rms(steps), 0.25 * rms([b - a for a, b in zip(raw, raw[1:])]))
+                self.assertLess(max(steps), 0.1)               # no visible step from one frame to the next
+                self.assertLess(longest_constant([(t, None, None, o) for t, _, o in span]), 1.5)   # live (the hold froze)
                 self.assertFalse(any(o["departed"] for _, _, o in span))
                 dep = [t for t, _, o in rows if o["departed"]]
                 self.assertTrue(dep, "departure missed: %s every %d surrogate %s" % (name, every, sur))

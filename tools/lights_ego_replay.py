@@ -20,6 +20,7 @@ ego light's distance distribution.
 import argparse
 import gzip
 import json
+import zlib
 import os
 import sys
 

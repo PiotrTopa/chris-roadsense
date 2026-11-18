@@ -21,12 +21,16 @@ and while the gap closes fast (lag); the `departed` events with their delay; the
 import argparse
 import gzip
 import json
+import zlib
 import math
 import os
 import statistics
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
+_API = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api")
+if "--api" in sys.argv:                          # measure another checkout's tracker on the same data (before / after)
+    _API = sys.argv[sys.argv.index("--api") + 1]
+sys.path.insert(0, _API)
 
 from roadsense_api.lead import LeadTracker      # noqa: E402
 
@@ -43,7 +47,7 @@ def read_lines(path):
                         yield json.loads(line)
                     except ValueError:
                         continue
-    except (EOFError, OSError) as e:                 # a capture cut in the middle of a gzip stream
+    except (EOFError, OSError, zlib.error) as e:     # a capture cut in the middle of a gzip stream
         print("note: %s: %s" % (path, e), file=sys.stderr)
 
 
@@ -119,6 +123,41 @@ def flips(vals):
     return sum(1 for a, b in zip(r, r[1:]) if a != b)
 
 
+def flips_hyst(vals, h=0.3):
+    """Changes of a whole-metre read-out with a display hysteresis: the shown number changes only when the value
+    is more than 0.5 + h m away from it (what a consumer that draws metres should do with any live value)."""
+    if not vals:
+        return 0
+    shown, n = math.floor(vals[0] + 0.5), 0
+    for v in vals[1:]:
+        if abs(v - shown) > 0.5 + h:
+            shown, n = math.floor(v + 0.5), n + 1
+    return n
+
+
+def longest_constant(ts, vals):
+    """Longest time (s) the value stays exactly the same: a frozen read-out."""
+    best, i = 0.0, 0
+    for j in range(1, len(vals) + 1):
+        if j == len(vals) or vals[j] != vals[i]:
+            best = max(best, ts[j - 1] - ts[i])
+            i = j
+    return best
+
+
+def centred_mean(ts, vals, half_s):
+    out, lo, hi, acc = [], 0, 0, 0.0
+    for i in range(len(vals)):
+        while hi < len(vals) and ts[hi] <= ts[i] + half_s:
+            acc += vals[hi]
+            hi += 1
+        while ts[lo] < ts[i] - half_s:
+            acc -= vals[lo]
+            lo += 1
+        out.append(acc / (hi - lo))
+    return out
+
+
 def standstills(rows, min_s=3.0):
     """Stops behind a standing lead, cut where the lead starts to move (raw v) so they are constant-gap spans."""
     ts = [r["t"] for r in rows]
@@ -130,15 +169,25 @@ def standstills(rows, min_s=3.0):
     res = []
     for i, j in segments(mask, ts, min_s):
         k = i + next((n for n in range(j - i) if ts[i + n] - ts[i] >= 1.0), 0)     # skip the first second (settling)
+        idx = [n for n in range(k, j) if rows[n]["out"]["present"]]
         raw = [rows[n]["x"] for n in range(k, j)]
-        trk = [rows[n]["out"]["dist_m"] for n in range(k, j) if rows[n]["out"]["present"]]
-        if len(trk) < 0.9 * len(raw) or len(raw) < 10:
+        if len(idx) < 0.9 * len(raw) or len(raw) < 10:
             continue
+        trk = [rows[n]["out"]["dist_m"] for n in idx]
+        tt = [ts[n] for n in idx]
+        # how far the read-out is from what the camera says over 2 s (a frozen value drifts away from it)
+        ref = centred_mean(tt, [rows[n]["x"] for n in idx], 1.0)
+        dev = [abs(a - b) for a, b in zip(trk, ref)]
+        step = [abs(b - a) for a, b in zip(trk, trk[1:])]
         res.append({"t0": ts[k], "t1": ts[j - 1], "n": len(raw), "raw_med": statistics.median(raw),
                     "raw_sd": statistics.pstdev(raw), "raw_min": min(raw), "raw_max": max(raw), "raw_flips": flips(raw),
+                    "raw_hflips": flips_hyst(raw),
                     "trk_med": statistics.median(trk), "trk_sd": statistics.pstdev(trk), "trk_flips": flips(trk),
-                    "trk_range": max(trk) - min(trk),
-                    "hold_share": sum(1 for n in range(k, j) if rows[n]["out"]["mode"] == "hold") / (j - k)})
+                    "trk_hflips": flips_hyst(trk), "trk_range": max(trk) - min(trk),
+                    "trk_step_rms": math.sqrt(sum(x * x for x in step) / len(step)) if step else 0.0,
+                    "raw_step_rms": math.sqrt(sum((b - a) ** 2 for a, b in zip(raw, raw[1:])) / max(1, len(raw) - 1)),
+                    "frozen_s": longest_constant(tt, trk), "dev_max": max(dev), "dev_rms": math.sqrt(sum(x * x for x in dev) / len(dev)),
+                    "stand_share": sum(1 for n in range(k, j) if rows[n]["out"].get("standing")) / (j - k)})
     return res
 
 
@@ -217,6 +266,7 @@ def main():
     ap.add_argument("--csv")
     ap.add_argument("--events", action="store_true")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="tracker config override")
+    ap.add_argument("--api", help="api directory to import the tracker from (default: this checkout)")
     a = ap.parse_args()
     cfg = {k: json.loads(v) for k, v in (s.split("=", 1) for s in a.set)}
     rows = run(a.road, a.ego, a.every, a.fps, cfg)
@@ -224,22 +274,28 @@ def main():
         raise SystemExit("no road messages in %s" % a.road)
     dur = rows[-1]["t"] - rows[0]["t"]
     present = sum(1 for r in rows if r["out"]["present"])
-    print("%s: %d road messages, %.0f s (%.1f Hz), ego %s; lead present %.0f %%, in hold %.0f %%" % (
+    print("%s: %d road messages, %.0f s (%.1f Hz), ego %s; lead present %.0f %%, standing %.0f %%" % (
         os.path.basename(a.road), len(rows), dur, (len(rows) - 1) / dur if dur else 0.0, a.ego,
-        100.0 * present / len(rows), 100.0 * sum(1 for r in rows if r["out"]["mode"] == "hold") / len(rows)))
+        100.0 * present / len(rows), 100.0 * sum(1 for r in rows if r["out"].get("standing")) / len(rows)))
     st = standstills(rows)
     print("standstill behind a standing lead: %d spans, %.0f s" % (len(st), sum(s["t1"] - s["t0"] for s in st)))
     for s in st:
-        print("  %7.1f-%7.1f s  raw %5.2f m sd %.3f range %.2f flips %3d | tracked %5.2f m sd %.3f range %.2f flips %d  hold %.0f %%"
+        print("  %7.1f-%7.1f s  raw %5.2f m sd %.3f range %.2f flips %3d | tracked %5.2f m sd %.3f range %.2f flips %d"
+              " (hyst %d) step %.3f frozen %.1f s dev max %.2f m  standing %.0f %%"
               % (s["t0"], s["t1"], s["raw_med"], s["raw_sd"], s["raw_max"] - s["raw_min"], s["raw_flips"],
-                 s["trk_med"], s["trk_sd"], s["trk_range"], s["trk_flips"], 100 * s["hold_share"]))
+                 s["trk_med"], s["trk_sd"], s["trk_range"], s["trk_flips"], s["trk_hflips"], s["trk_step_rms"],
+                 s["frozen_s"], s["dev_max"], 100 * s["stand_share"]))
     if st:
         T = sum(s["t1"] - s["t0"] for s in st)
-        print("  total: raw sd %.3f m (rms over spans), %d flips (%.1f / min) | tracked sd %.3f m, %d flips (%.1f / min)" % (
-            math.sqrt(sum(s["raw_sd"] ** 2 * s["n"] for s in st) / sum(s["n"] for s in st)),
-            sum(s["raw_flips"] for s in st), 60.0 * sum(s["raw_flips"] for s in st) / T,
-            math.sqrt(sum(s["trk_sd"] ** 2 * s["n"] for s in st) / sum(s["n"] for s in st)),
-            sum(s["trk_flips"] for s in st), 60.0 * sum(s["trk_flips"] for s in st) / T))
+        N = sum(s["n"] for s in st)
+        w = lambda key: math.sqrt(sum(s[key] ** 2 * s["n"] for s in st) / N)      # noqa: E731
+        print("  total %.0f s: raw sd %.3f m (rms over spans), step rms %.3f m, %d flips (%.1f / min), with 0.3 m display "
+              "hysteresis %d" % (T, w("raw_sd"), w("raw_step_rms"), sum(s["raw_flips"] for s in st),
+                                 60.0 * sum(s["raw_flips"] for s in st) / T, sum(s["raw_hflips"] for s in st)))
+        print("              tracked sd %.3f m, step rms %.3f m, %d flips (%.1f / min), with hysteresis %d; longest frozen "
+              "%.1f s; off the camera's 2 s mean: rms %.3f m, max %.2f m" % (
+                  w("trk_sd"), w("trk_step_rms"), sum(s["trk_flips"] for s in st), 60.0 * sum(s["trk_flips"] for s in st) / T,
+                  sum(s["trk_hflips"] for s in st), max(s["frozen_s"] for s in st), w("dev_rms"), max(s["dev_max"] for s in st)))
     acc, lags = accuracy(rows)
     print("against the zero-phase reference (centred 1 s median of the raw distance):")
     for b in acc:

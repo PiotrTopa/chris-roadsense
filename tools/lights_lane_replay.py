@@ -20,6 +20,7 @@ import argparse
 import copy
 import gzip
 import json
+import zlib
 import os
 import sys
 import time

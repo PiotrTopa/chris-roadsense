@@ -23,10 +23,16 @@ Modes (`mode` in the message):
             dynamics cannot produce) is not averaged in: the track coasts and a candidate collects the new
             hypothesis; when it persists the track is replaced (a nearer one fast: cut-in; a farther one
             slower), otherwise it was an outlier.
-    hold    ego stands and the lead stands: the true gap is constant, so the estimate is frozen and a change
-            detector (two-sided CUSUM on the lead speed, plus a slow check of the distance) watches for
-            consistent evidence that it moved. Lead moving away while ego still stands = the `departed` cue.
-    coast   no usable measurement for a short time (probability dropped): prediction only.
+            Standing (`standing: true`): ego stands and the lead stands. The estimate stays live (one update per
+            frame, never frozen); what changes is the process model: the ego speed is exactly zero, the lead's
+            speed is measured with the model's own (very good) standstill speed output, and the distance is a
+            random walk scaled so that the filter averages the network's jitter over about `stand_tau_s`;
+            frames far from the estimate are down-weighted (Huber), so a wiper pass does not move it. A
+            change detector (two-sided CUSUM on the lead speed) ends the standing regime at once when the
+            lead moves; moving away while ego still stands = the `departed` cue. Until 2026-11-18 (roadsense
+            2.0) this was a `hold` mode that froze the value, which the owner did not want.
+    coast   no usable measurement for a short time (probability dropped): prediction only, marked `coast`, with
+            `meas_age_s`; it times out (`coast_s`, `stand_coast_s` while standing) and the track is lost.
 
 Range sensors (`radar_fusion`, off by default). A host with a radar or lidar sends its object lists over the
 vehicle input API; mapd relays them as `objects` with positions in the camera's frame. The tracker associates
@@ -51,7 +57,6 @@ DEFAULT_CFG = dict(
     drop_prob=0.3,               # below this the frame carries no lead
     acquire_frames=2,            # consecutive frames needed to start a track
     coast_s=0.6,                 # a track survives this long without a usable measurement
-    hold_coast_s=2.5,            # ... while standing behind a standing lead
     max_gap_s=1.0,               # road messages further apart than this restart the tracker
     # measurement noise (sigma per frame), from the replayed rides (docs/lanes/L14-lead.md):
     #   distance        max(hypot(rx_floor, rx_rel * d), rx_scale * the model's x_std)
@@ -76,19 +81,18 @@ DEFAULT_CFG = dict(
     vision_stop_speed=0.15,      # vision only: the model's v_ego below this ...
     vision_stop_confirm_s=1.0,   # ... for this long = ego stands
     vision_go_speed=0.8,         # ... and above this it moves at once (between the two: leaky)
-    # hold mode
+    # standing regime (ego and lead stand; the estimate stays live, docs/lanes/L19-view-channel.md)
     hold_lead_speed=0.35,        # |v_lead| estimate below this and its measurement below hold_v_sigma = the lead stands
-    hold_enter_s=0.5,            # both stand for this long -> hold
-    hold_min_age_s=1.0,          # track age needed before a hold
-    hold_v_sigma=0.12, hold_v_scale=0.5,              # sigma of the lead speed while holding: max(floor, scale * v_std)
+    hold_enter_s=0.5,            # both stand for this long -> standing
+    hold_min_age_s=1.0,          # track age needed before standing
+    hold_v_sigma=0.12, hold_v_scale=0.5,              # sigma of the lead speed while standing: max(floor, scale * v_std)
     cusum_v_k=1.0, cusum_v_h=3.5, cusum_clip=3.0,     # lead-speed CUSUM in sigmas per 0.1 s: slack, threshold, clip
-    hold_fast_tau_s=1.5, hold_break_m=0.6, hold_break_xstd=1.3,   # distance backup: 1.5 s mean of the residual
-                                 # beyond max(hold_break_m, hold_break_xstd * the model's x_std)
-    hold_mean_tau_s=4.0,         # the held value's slow mean
-    hold_sigma_floor_m=0.15,     # per-frame clip of that mean, in sigmas of the distance (floor)
-    hold_settle_s=2.0,           # the published value follows the mean this long after the hold began ...
-    hold_relatch_m=0.3, hold_relatch_xstd=0.6,        # ... afterwards only when they differ by max(m, xstd * x_std)
-    departed_keep_s=8.0,         # `departed` stays up this long at most (or until ego moves / a new hold)
+    stand_jerk_psd=0.05,         # (m/s3)^2 s while standing: the lead's speed stays where its measurement puts it
+    stand_tau_s=3.0,             # the distance averages the per-frame jitter over about this long (random walk of
+                                 # the distance with variance rx^2 dt / tau^2 per step: a live value, never frozen)
+    stand_huber=2.5,             # a frame more than this many sigmas off counts with a weight falling as 1 / residual
+    stand_coast_s=2.5,           # a track survives this long without a usable measurement while standing
+    departed_keep_s=8.0,         # `departed` stays up this long at most (or until ego moves / standing again)
     # derived values
     time_gap_min_speed=1.0,      # m/s; below it time_gap_s is null
     ttc_min_closing=0.5,         # m/s closing speed needed for ttc_s
@@ -178,7 +182,8 @@ class LeadTracker:
         self.acq = 0
         self.miss_s = 0.0
         self.cand = None              # pending other hypothesis: {"x","v","y","t0","ts","n","closer"}
-        self.hold = None              # hold state
+        self.stand = None             # standing regime: {"t0", "vup", "vdn"} (CUSUM statistics), else None
+        self.last_meas = None         # frame time of the last measurement that went into the track
         self.both_stand_s = 0.0
         self.vis_stop_s = 0.0
         self.departed = None          # {"ts", "dist_at_stop_m"}
@@ -358,8 +363,9 @@ class LeadTracker:
         self.t0 = ts
         self.miss_s = 0.0
         self.cand = None
-        self.hold = None
+        self.stand = None
         self.both_stand_s = 0.0
+        self.last_meas = ts
         self.sx_bias = z["sx"]
         self.track_id += 1
         self.version += 1
@@ -369,29 +375,11 @@ class LeadTracker:
         self.kf = None
         self.mode = "none"
         self.cand = None
-        self.hold = None
+        self.stand = None
         self.acq = 0
         self.both_stand_s = 0.0
         self.version += 1
         self.event = {"kind": kind, "ts_mono_ns": ts, "track_id": self.track_id}
-
-    def _leave_hold(self, z, v_ego, ts, moved):
-        """Back to the filter. `moved`: +1 the lead went away, -1 it came nearer, 0 ego started to move."""
-        h = self.hold
-        self.hold = None
-        self.mode = "track"
-        self.both_stand_s = 0.0
-        kf = self.kf
-        if moved and z is not None:
-            rx, rv = self._noise(z)
-            vl = (z["v_rel"] + v_ego) if z["v_rel"] is not None else 0.0
-            # the residuals that tripped the detector are real motion: restart on the measurement, wide
-            kf.x = [z["x"], vl, 0.0]
-            kf.P = [[rx + 0.25, 0.0, 0.0], [0.0, rv + 1.0, 0.0], [0.0, 0.0, 2.0]]
-        else:
-            kf.x = [h["mean"], 0.0, 0.0]
-            kf.P = [[max(h["var"], 0.01), 0.0, 0.0], [0.0, 0.25, 0.0], [0.0, 0.0, 1.0]]
-        return h
 
     # ---- one road message ----------------------------------------------------------------------
     def on_road(self, road):
@@ -432,10 +420,7 @@ class LeadTracker:
             if strong and self.acq >= c["acquire_frames"]:
                 self._start(z, v_ego, ts, "acquired")
         elif dt is not None:
-            if self.mode == "hold":
-                self._step_hold(z if usable else None, v_ego, stands, src, ts, dt)
-            else:
-                self._step_track(z if usable else None, v_ego, stands, src, ts, dt)
+            self._step_track(z if usable else None, v_ego, stands, src, ts, dt)
         return self._message(road, zvis, v_ego, stands, src, ego_age, ego_tag)
 
     def _reset_keep_ego(self):
@@ -446,18 +431,35 @@ class LeadTracker:
     def _step_track(self, z, v_ego, stands, src, ts, dt):
         c = self.cfg
         kf = self.kf
+        if self.stand is not None and not stands:        # a wheel turns: back to the moving model at once
+            self.stand = None
+            kf.P[1][1] += 0.25
+        st = self.stand
         sig_ve = c["ego_speed_sigma_vehicle"] if src == "vehicle" else c["ego_speed_sigma_vision"]
-        kf.predict(dt, v_ego, c["jerk_psd"], c["accel_tau_s"], 0.0 if stands else sig_ve)
+        kf.predict(dt, v_ego, c["stand_jerk_psd"] if st is not None else c["jerk_psd"], c["accel_tau_s"],
+                   0.0 if stands else sig_ve)
         if kf.x[0] < 0.3:
             kf.x[0] = 0.3
         if z is None:
             self.miss_s += dt
             self.mode = "coast"
             self.both_stand_s = 0.0
-            if self.miss_s > c["coast_s"]:
+            if self.miss_s > (c["stand_coast_s"] if st is not None else c["coast_s"]):
                 self._lose(ts)
             return
         rx, rv = self._noise(z)
+        vl = None if z["v_rel"] is None else z["v_rel"] + v_ego
+        ended = False
+        if st is not None:
+            # the motion cue first, before any distance gate: a lead that rolls off makes the distance jump out of
+            # the narrow standing filter, and that frame must count as motion, not as an outlier
+            sv = max(c["hold_v_sigma"], c["hold_v_scale"] * z["sv"])
+            if vl is not None and self._cusum(st, vl / sv, dt, ts):
+                st = None                                # the filter is open again (P inflated) for this frame
+                ended = True
+            else:
+                # standing: the distance is a slow random walk (time constant stand_tau_s for the per-frame jitter)
+                kf.P[0][0] += rx * dt / (c["stand_tau_s"] ** 2)
         nu, s = kf.innovation(0, z["x"], rx)
         jump = abs(nu) > c["gate_sigma"] * math.sqrt(s) and abs(nu) > max(c["gate_min_m"], c["gate_rel"] * kf.x[0])
         if jump:
@@ -472,24 +474,56 @@ class LeadTracker:
         self.cand = None
         self.miss_s = 0.0
         self.mode = "track"
-        kf.update(0, z["x"], rx)
-        if z["v_rel"] is not None:
-            kf.update(1, z["v_rel"] + v_ego, rv)
-        self.y += min(1.0, dt / 0.25) * (z["y"] - self.y)
+        self.last_meas = ts
+        if st is not None:
+            # Huber: a frame far off (a wiper pass, a passing car confusing the network) counts less, not nothing
+            k = c["stand_huber"] * math.sqrt(s)
+            kf.update(0, z["x"], rx if abs(nu) <= k else rx * (abs(nu) / k) ** 2)
+            if vl is not None:
+                kf.update(1, vl, sv * sv)
+        else:
+            kf.update(0, z["x"], rx)
+            if vl is not None:
+                kf.update(1, vl, rv)
+        self.y += min(1.0, dt / (1.0 if st is not None else 0.25)) * (z["y"] - self.y)
         self.sx_bias += min(1.0, dt / 1.0) * (z["sx"] - self.sx_bias)
+        if st is not None or ended:
+            return                                       # standing, or it ended on this very frame
         # both stand?
-        lead_stands = abs(kf.x[1]) < c["hold_lead_speed"] and \
-            (z["v_rel"] is None or abs(z["v_rel"] + v_ego) < c["hold_v_sigma"])
+        lead_stands = abs(kf.x[1]) < c["hold_lead_speed"] and (vl is None or abs(vl) < c["hold_v_sigma"])
         if stands and lead_stands and (ts - self.t0) >= c["hold_min_age_s"] * NS:
             self.both_stand_s += dt
             if self.both_stand_s >= c["hold_enter_s"]:
-                self.mode = "hold"
-                self.hold = {"t0": ts, "mean": kf.x[0], "out": kf.x[0], "n": max(2.0, rx / max(kf.P[0][0], 1e-6)),
-                             "var": kf.P[0][0], "fast": 0.0, "vup": 0.0, "vdn": 0.0, "miss": 0.0}
-                kf.x[1] = kf.x[2] = 0.0
+                self.stand = {"t0": ts, "vup": 0.0, "vdn": 0.0}
                 self.departed = None
         else:
             self.both_stand_s = 0.0
+
+    def _cusum(self, st, rvn, dt, ts):
+        """Standing: two-sided CUSUM on the lead speed in sigmas (the model's own motion cue: it stays within a few
+        mm/s of zero behind a standing car while its distance wanders by decimetres). True when it fired: the
+        standing regime ends, the filter is opened up, and `departed` / `gap_changed` is raised."""
+        c = self.cfg
+        w = dt / 0.1                                     # statistics per 0.1 s, whatever the frame rate
+        rvn = max(-c["cusum_clip"], min(c["cusum_clip"], rvn))
+        st["vup"] = max(0.0, st["vup"] + (rvn - c["cusum_v_k"]) * w)
+        st["vdn"] = max(0.0, st["vdn"] + (-rvn - c["cusum_v_k"]) * w)
+        up, dn = st["vup"] > c["cusum_v_h"], st["vdn"] > c["cusum_v_h"]
+        if not (up or dn):
+            return False
+        kf = self.kf
+        self.stand = None
+        self.both_stand_s = 0.0
+        kf.P[0][0] += 0.05
+        kf.P[1][1] += 1.0
+        kf.P[2][2] += 1.0
+        self.version += 1
+        if up:
+            self.departed = {"ts": ts, "dist_at_stop_m": kf.x[0]}
+            self.event = {"kind": "departed", "ts_mono_ns": ts, "track_id": self.track_id}
+        else:
+            self.event = {"kind": "gap_changed", "ts_mono_ns": ts, "track_id": self.track_id}
+        return True
 
     def _candidate(self, z, v_ego, ts, nu):
         """A measurement that does not fit the track: collect it; replace the track when it persists."""
@@ -507,63 +541,6 @@ class LeadTracker:
         need = c["cut_in_confirm_s"] if cd["closer"] else c["change_confirm_s"]
         if cd["n"] >= 2 and (ts - cd["t0"]) >= need * NS:
             self._start(z, v_ego, ts, "cut_in" if cd["closer"] else "changed")
-
-    def _step_hold(self, z, v_ego, stands, src, ts, dt):
-        c = self.cfg
-        h = self.hold
-        if not stands:                                   # ego moves: the filter takes over from the held value
-            self._leave_hold(z, v_ego, ts, 0)
-            self._step_track(z, v_ego, stands, src, ts, dt)
-            return
-        if z is None:
-            h["miss"] += dt
-            if h["miss"] > c["hold_coast_s"]:
-                self._lose(ts)
-            return
-        h["miss"] = 0.0
-        w = dt / 0.1                                     # detector statistics are per 0.1 s, whatever the frame rate
-        # 1. the lead's speed (the model's own motion cue: it stays within a few mm/s of zero behind a standing
-        #    car while its distance wanders by decimetres): two-sided CUSUM in sigmas
-        vl = None if z["v_rel"] is None else z["v_rel"] + v_ego
-        if vl is not None:
-            sv = max(c["hold_v_sigma"], c["hold_v_scale"] * z["sv"])
-            rvn = max(-c["cusum_clip"], min(c["cusum_clip"], vl / sv))
-            h["vup"] = max(0.0, h["vup"] + (rvn - c["cusum_v_k"]) * w)
-            h["vdn"] = max(0.0, h["vdn"] + (-rvn - c["cusum_v_k"]) * w)
-        # 2. the distance itself, as a backup for motion the speed output does not show (a creep): a 0.7 s
-        #    mean of the residual, clipped per frame so that an outlier frame (a wiper pass) cannot trip it.
-        #    The threshold grows with the model's own x_std: behind a standing car the model's distance can
-        #    wander by more than a metre for seconds (a vehicle passing in the next lane, wipers) while its
-        #    speed output and its x_std say that nothing moved and that it is unsure.
-        r = z["x"] - h["out"]
-        brk = max(c["hold_break_m"], c["hold_break_xstd"] * self.sx_bias)
-        h["fast"] += min(1.0, dt / c["hold_fast_tau_s"]) * (max(-2.0 * brk, min(2.0 * brk, r)) - h["fast"])
-        up = h["vup"] > c["cusum_v_h"] or h["fast"] > brk
-        dn = h["vdn"] > c["cusum_v_h"] or h["fast"] < -brk
-        if up or dn:
-            held = h["out"]
-            by_speed = h["vup"] > c["cusum_v_h"] or h["vdn"] > c["cusum_v_h"]
-            self._leave_hold(z, v_ego, ts, 1 if up else -1)
-            self.version += 1
-            if up and (by_speed or (vl is not None and vl > c["hold_v_sigma"])):
-                self.departed = {"ts": ts, "dist_at_stop_m": held}
-                self.event = {"kind": "departed", "ts_mono_ns": ts, "track_id": self.track_id}
-            else:
-                self.event = {"kind": "gap_changed", "ts_mono_ns": ts, "track_id": self.track_id}
-            return
-        # 3. the gap is constant: a slow mean (1/n at first, then a time constant) absorbs the model's wander;
-        #    the published value follows it while settling, afterwards only when they differ by hold_relatch_m
-        h["n"] += 1.0
-        g = max(1.0 / h["n"], min(1.0, dt / c["hold_mean_tau_s"]))
-        sig = max(c["hold_sigma_floor_m"], math.sqrt(self._noise(z)[0]))
-        h["mean"] += g * max(-2.0 * sig, min(2.0 * sig, z["x"] - h["mean"]))
-        h["var"] = sig * sig * max(g, 0.02)
-        if (ts - h["t0"]) < c["hold_settle_s"] * NS or abs(h["mean"] - h["out"]) > max(c["hold_relatch_m"], c["hold_relatch_xstd"] * self.sx_bias):
-            h["fast"] += h["out"] - h["mean"]
-            h["out"] = h["mean"]
-        self.y += min(1.0, dt / 1.0) * (z["y"] - self.y)
-        self.sx_bias += min(1.0, dt / 1.0) * (z["sx"] - self.sx_bias)
-        self.kf.x = [h["mean"], 0.0, 0.0]
 
     # ---- output --------------------------------------------------------------------------------
     def _message(self, road, z, v_ego, stands, src, ego_age, ego_tag):
@@ -591,9 +568,6 @@ class LeadTracker:
         if self.kf is not None:
             d, vl, al = self.kf.x
             pd, pv = self.kf.P[0][0], self.kf.P[1][1]
-            if self.mode == "hold":
-                d, vl, al = self.hold["out"], 0.0, 0.0
-                pd, pv = self.hold["var"], 0.0
             v_rel = vl - v_ego
             gap = d - c["camera_to_front_m"] if c["camera_to_front_m"] is not None else None
             ref = gap if gap is not None else d
@@ -609,7 +583,8 @@ class LeadTracker:
                 v_lead_mps=round(vl, 2), a_lead_mps2=round(al, 2),
                 time_gap_s=round(max(ref, 0.0) / v_ego, 2) if v_ego >= c["time_gap_min_speed"] else None,
                 ttc_s=round(max(ref, 0.0) / -v_rel, 1) if v_rel <= -c["ttc_min_closing"] else None,
-                standing=self.mode == "hold",
+                standing=self.stand is not None,
+                meas_age_s=round((ts - self.last_meas) / NS, 3) if self.last_meas is not None else None,
                 pending_change=self.cand is not None,
                 prob=None if z is None else round(z["p"], 3))
             if gap is not None:
@@ -617,7 +592,7 @@ class LeadTracker:
         else:
             out.update(age_s=None, dist_m=None, dist_std_m=None, dist_filter_std_m=None, lateral_m=None,
                        v_rel_mps=None, v_rel_std_mps=None, v_lead_mps=None, a_lead_mps2=None, time_gap_s=None,
-                       ttc_s=None, standing=False, pending_change=False, prob=None if z is None else round(z["p"], 3))
+                       ttc_s=None, standing=False, meas_age_s=None, pending_change=False, prob=None if z is None else round(z["p"], 3))
         dep = self.departed
         out["departed"] = dep is not None
         out["departure"] = None if dep is None else {

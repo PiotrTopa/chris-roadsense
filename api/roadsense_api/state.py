@@ -12,12 +12,13 @@ from .fusion import Fusion
 from .lanes import RoadGeometryTracker
 from .lead import LeadTracker
 from .roadgeom import RoadGeometryFusion
+from .view import ViewBuilder
 from .rules import RulesInEffect
 from .speedlimit import load_rules
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd", "mapd")
 TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead", "lanes", "roadgeom",
-          "vehicle", "objects")
+          "vehicle", "objects", "view")
 FUSED_PERIOD_S = 0.45
 SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
@@ -141,6 +142,7 @@ class State:
         self.lead = LeadTracker(load_lead_config())        # derived topic `lead` (lead.py)
         self.lanes = RoadGeometryTracker(load_lanes_config())   # derived topic `lanes` (lanes.py)
         self.roadgeom = RoadGeometryFusion(load_roadgeom_config())   # derived topic `roadgeom` (roadgeom.py)
+        self.view = ViewBuilder()                          # derived display channel `view` (view.py)
         self.ego_light = lights_mod.EgoLightSelector()     # the ego traffic light over time (lights.py)
         self.ego_light.lane_assign = bool(load_lights_config().get("lane_assign", True))
 
@@ -169,6 +171,7 @@ class State:
         if mtype == "camera":
             self._on_camera(msg)
         if mtype == "ego":         # the vehicle's own motion, relayed by mapd: input of the lead tracker
+            self.view.on_ego(msg)
             self.lead.on_ego(msg)
             self.lanes.on_ego(msg)
             self.roadgeom.on_ego(msg)
@@ -186,6 +189,15 @@ class State:
         self.version += 1
         if mtype == "signs":
             self._on_signs(msg, now)
+        if mtype in ("lights", "signs"):   # display channel: static objects (never feeds back into the topics)
+            try:
+                if mtype == "lights":
+                    self.view.on_lights(msg)
+                else:
+                    self.view.on_signs(msg, self.intrinsics())
+            except Exception:
+                import logging
+                logging.getLogger("roadsense_api.state").exception("view (%s) failed", mtype)
         for cb in list(self.subscribers):
             cb(mtype, line)
         if mtype == "road":
@@ -196,8 +208,9 @@ class State:
             except Exception:                 # a malformed road message must not stop the fan-out
                 import logging
                 logging.getLogger("roadsense_api.state").exception("lead tracker failed")
+            lanes_out = None
             try:
-                out = self.lanes.on_road(msg)
+                out = lanes_out = self.lanes.on_road(msg)
                 if out is not None:
                     self.ego_light.on_lanes(out)      # the lane lines the ego light is assigned by
                     self._emit("lanes", out, now)
@@ -207,6 +220,13 @@ class State:
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("road-geometry tracker failed")
+            try:                              # the display channel, last: derived from the topics above
+                out = self.view.on_frame(msg, self.latest.get("lead"), lanes_out)
+                if out is not None:
+                    self._emit("view", out, now)
+            except Exception:
+                import logging
+                logging.getLogger("roadsense_api.state").exception("view failed")
         if mtype in ("road", "signs", "env", "lights"):
             self._on_speed(msg, now)
         if now - self._fused_emit >= FUSED_PERIOD_S and mtype in ("map", "road", "env", "signs"):
@@ -241,6 +261,7 @@ class State:
         self.lead.reset()
         self.lanes.reset()
         self.roadgeom.reset()
+        self.view.reset()
         self.ego_light.reset()
 
     def _on_speed(self, msg, now):
@@ -393,6 +414,7 @@ class State:
             "lead": self.lead.summary(self.latest["lead"]) if "lead" in self.latest else None,
             "lanes": self.lanes.summary(self.latest["lanes"]) if "lanes" in self.latest else None,
             "roadgeom": self.roadgeom.summary(self.latest.get("roadgeom")),
+            "view": self.view.summary(self.latest.get("view")),
             "vehicle": self.vehicle_summary(),
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
