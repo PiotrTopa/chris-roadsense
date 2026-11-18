@@ -5,6 +5,14 @@ A robust in-car perception API on the reference phone (Poco F1): the USB DVR cam
 and calibrated, road + sign streams served and recorded, thermals stable with the user's fan.
 Kill criteria per lane are stated in its brief.
 
+## Guidelines (owner, 2026-11-18; apply to every lane)
+1. Quality first. Better output quality outranks power, heat and cost. The phone may run at its maximum, but quality must not suffer when it throttles: load is shed in a stated order, measurement outputs last, and every shed step is reported.
+2. Room for new features second. Where better quality is not feasible, anything that gives the same quality cheaper (GPU time, watts, big-core time) is wanted and adopted, also when no use for the freed budget is planned yet. Report the freed budget as a result of its own.
+3. "Same quality" is shown, not assumed: measured after the trackers (accuracy, flicker, far range). Measurement quality is never traded for speed or savings.
+4. Measurement topics and the display are separate. Latency and quality count on the measurement topics (future self-driving); they are never smoothed or delayed for a nicer picture. The display channel (`view`, MFD) is informational: smoothness and low cost win over lag there.
+5. "Unknown" beats a confident wrong answer; held or coasted values are marked.
+6. The API stays car-agnostic and consumer-agnostic; roadsense informs and never controls. Breaking changes are allowed at a major version as long as known consumers (the MFD) are kept connected.
+
 ## Record
 - Notebook: NOTEBOOK.md (numbered folds; roadmap, facts, lanes). docs/ROADMAP.md stays the public status page.
 - Lane reports: docs/lanes/<LANE>-<slug>.md (code lanes may also touch roadsense-signs).
