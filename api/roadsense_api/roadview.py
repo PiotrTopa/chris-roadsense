@@ -16,8 +16,12 @@ was good enough. Now this is the one place where that is decided, and the measur
 
 Display rules applied here (they are display policy and live only in `view`):
 
-* the map layer is `trusted` when the match confidence, low-passed over about four map messages (2 s), reaches
-  `trust_on` and until it falls under `trust_off`; a map that drops out for a moment is held for `hold_s`;
+* the map layer is `trusted` when the match confidence of the usable map messages (available, at least
+  `min_match`: the rule of `fused`), low-passed over about four of them (2 s), reaches `trust_on`. The match
+  confidence dips for a message or two wherever a side road branches off; such a message, like one that is off
+  the road, is not used and the last trusted one is held for `hold_s` (its distances carried by the distance
+  driven), marked approximate after `hold_approx_s`. After `hold_s` without a usable message the layer is gone
+  and trust is earned again;
 * a junction is given when the path up to it is likely (`junction_min_conf`) and the position is good enough
   for its distance: `hacc_m` within `max_hacc_m`, or within `hacc_share` of the distance. It is marked
   `approximate` when the position is dead-reckoned, weaker than `max_hacc_m`, or its error exceeds
@@ -35,8 +39,10 @@ NS = 1e9
 
 DEFAULT_CFG = dict(
     map_max_age_s=3.0,
-    trust_on=0.55, trust_off=0.40, trust_gain=0.25,
+    min_match=0.5,               # a map message counts from this match confidence (the rule of `fused`)
+    trust_on=0.55, trust_off=0.40, trust_gain=0.25,   # ... and the map layer is trusted on their low-passed value
     hold_s=2.5,                  # the last trusted map message is kept this long when the map drops out
+    hold_approx_s=1.0,           # ... and what rests on it is marked approximate after this long
     max_hacc_m=20.0,             # position accuracy up to which distances are exact
     hacc_share=0.4,              # a junction is still shown while the position error is at most this share of its distance
     approx_share=0.15,           # ... and marked approximate above this share
@@ -71,7 +77,7 @@ class RoadView:
         self.ts = None
         self.odo = 0.0
         self.v = 0.0
-        self.map = None              # (message, odometer at its frame, its time s)
+        self.map = None              # (message, odometer at its frame, its time s, usable)
         self.good = None             # the last trusted one, the same triple
         self.conf = None             # low-passed match confidence
         self.trusted = False
@@ -82,20 +88,19 @@ class RoadView:
             return
         c = self.cfg
         mc = (msg.get("match") or {}).get("confidence")
-        if msg.get("available") and _fin(mc):
+        usable = bool(msg.get("available")) and _fin(mc) and mc >= c["min_match"]
+        if usable:
             self.conf = mc if self.conf is None else self.conf + c["trust_gain"] * (mc - self.conf)
             if self.conf >= c["trust_on"]:
                 self.trusted = True
             elif self.conf < c["trust_off"]:
                 self.trusted = False
-        elif not msg.get("available"):
-            self.trusted = False
-            if msg.get("state") in ("no_source", "unknown"):
-                self.conf = None     # the position was lost: trust is earned again
+        elif msg.get("state") in ("no_source", "unknown"):
+            self.conf, self.trusted = None, False      # the position was lost: trust is earned again
         ts = msg["ts_mono_ns"] / NS
         lag = 0.0 if self.ts is None else max(-1.0, min(1.0, ts - self.ts))
-        self.map = (msg, self.odo + self.v * lag, ts)
-        if self.trusted and msg.get("available"):
+        self.map = (msg, self.odo + self.v * lag, ts, usable)
+        if self.trusted and usable:
             self.good = self.map
 
     def on_frame(self, ts_ns, speed_mps, geom, egolane):
@@ -113,10 +118,12 @@ class RoadView:
 
         cur = self.map if (self.map is not None and ts - self.map[2] <= c["map_max_age_s"]) else None
         use, held = None, False
-        if cur is not None and self.trusted and cur[0].get("available"):
+        if cur is not None and self.trusted and cur[3]:
             use = cur
         elif self.good is not None and ts - self.good[2] <= c["hold_s"] + 0.6:
             use, held = self.good, True                 # dropped out for a moment (a junction, a doubtful match)
+        elif self.good is not None:
+            self.good, self.conf, self.trusted = None, None, False    # gone for longer: trust is earned again
         position = self._position(cur, use, held, ts)
         g = geom if isinstance(geom, dict) else {}
         out = {"source": g.get("source") or "vision",
@@ -158,7 +165,7 @@ class RoadView:
             why.append("dead_reckoning")
         if hacc is not None and hacc > c["max_hacc_m"]:
             why.append("position_accuracy")
-        if held:
+        if held and ts - src[2] > c["hold_approx_s"]:
             why.append("held")
         return {"state": state, "available": bool(m.get("available")), "reason": m.get("reason"),
                 "hacc_m": hacc, "match_confidence": (m.get("match") or {}).get("confidence"),
