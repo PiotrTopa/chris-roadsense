@@ -5,6 +5,7 @@
 // is always (previous selected frame, current selected frame) even when the network itself
 // cannot keep up. The main thread runs the network on the newest pair and publishes on
 // <rundir>/modeld.sock. Pairs the network had no time for are skipped (newest wins).
+#include <pthread.h>
 #include <sched.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -173,6 +174,7 @@ time_t file_mtime(const std::string &p) {
 }
 
 void prep_thread(const Options *opt, Shared *sh) {
+    pthread_setname_np(pthread_self(), "md-prep");  // thread names: per-stage CPU accounting (tools/budget)
     if (!opt->prep_cpus.empty()) {
         cpu_set_t set;
         if (!parse_cpus(opt->prep_cpus, &set) || sched_setaffinity(0, sizeof(set), &set) != 0)
@@ -292,6 +294,7 @@ private:
     }
 
     void loop() {
+        pthread_setname_np(pthread_self(), "md-prefetch");
         while (true) {
             {
                 std::unique_lock<std::mutex> l(m_);
@@ -434,6 +437,7 @@ int main(int argc, char **argv) {
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     signal(SIGPIPE, SIG_IGN);
+    pthread_setname_np(pthread_self(), "md-main");  // the backend's own threads inherit it
 
     // PM QoS request: valid while the fd is open, dropped by the kernel when modeld exits.
     int qos_fd = -1;
