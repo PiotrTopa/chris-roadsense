@@ -99,8 +99,17 @@ power switched by relay, 20-30 s off between runs:
 | time sync once, 3-4 s after the camera appeared | 5 | 0 in the 75-110 s watched |
 | time sync every 5 s | 1 | 0 in 75 s |
 | camerad-dvr with the fix, started 13 s after power | 3 | 0 in 110 s, frames flowing |
+| udev service `roadsense-dvr-timesync@`, nothing reading the camera | 3 | 0 in 110 s (command sent 0.3 s after the disk appeared) |
 
-camerad-dvr now sends that one sector on the first valid info sector of every connection
+**Native support: `roadsense-dvr-timesync` (udev).** `systemd/60-roadsense-dvr.rules` starts the
+one-shot unit `roadsense-dvr-timesync@<disk>.service` for every 1902:3241 disk that appears; it runs
+`tools/dvr_timesync.py` (installed as `/usr/local/bin/roadsense-dvr-timesync`), which sends the
+command and exits. The camera is then handled at enumeration, whoever reads it afterwards
+(camerad-dvr, a host's preview reader, nobody during early camera power).
+`scripts/install-camerad-dvr.sh` installs all three files. Check: `journalctl -t roadsense-dvr-timesync`
+shows `time sync sent` a few seconds after each power-up.
+
+camerad-dvr also sends that one sector itself, as a fallback for installs without the udev rule, on the first valid info sector of every connection
 (`time sync sent` in its log). It writes only when the FAT shows `Android/data/com.fvision.camera/HWC`
 and the command sector (LBA 0x340 layout A, 0x2C0 layout B) lies inside that file; otherwise it logs
 `time sync not sent` and stays read-only, as with `--no-set-time`. The camera's clock is set to the

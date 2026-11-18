@@ -1,0 +1,4 @@
+# USB DVR camera (Huiying/Buildwin, 1902:3241): send the vendor app's time sync as soon as its
+# disk appears, so the camera does not leave the USB bus 28 s after power-up
+# (docs/PHONE_DVR_DEPLOY.md "USB drop-outs after power-up").
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", SUBSYSTEMS=="usb", ATTRS{idVendor}=="1902", ATTRS{idProduct}=="3241", TAG+="systemd", ENV{SYSTEMD_WANTS}+="roadsense-dvr-timesync@%k.service"

@@ -1,0 +1,12 @@
+[Unit]
+Description=roadsense: time sync for the USB DVR camera on /dev/%I (keeps it on the USB bus)
+Documentation=file:///usr/local/share/doc/roadsense/PHONE_DVR_DEPLOY.md
+# started by udev (60-roadsense-dvr.rules) for every 1902:3241 disk that appears
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/roadsense-dvr-timesync /dev/%I
+TimeoutStartSec=30
+Nice=5

@@ -26,6 +26,11 @@ install -m 755 "$BUILD/camerad-dvr/camerad-dvr" /usr/local/bin/
 mkdir -p /etc/roadsense
 [ -f /etc/roadsense/camera-dvr.json ] || install -m 644 config/camera-dvr.json /etc/roadsense/
 install -m 644 systemd/roadsense-camerad-dvr.service /etc/systemd/system/
+# native support for the camera: time sync on every enumeration (udev -> oneshot unit)
+install -m 755 tools/dvr_timesync.py /usr/local/bin/roadsense-dvr-timesync
+install -m 644 systemd/roadsense-dvr-timesync@.service /etc/systemd/system/
+install -m 644 systemd/60-roadsense-dvr.rules /etc/udev/rules.d/
+udevadm control --reload 2>/dev/null || true
 systemctl daemon-reload
 if [ "${1:-}" = --enable ]; then
     # roadsense.target and modeld Want camerad; a masked camerad is skipped, so only camerad-dvr runs.
