@@ -49,10 +49,12 @@ class GovernorTest(unittest.TestCase):
         g, clk = self.make()
         run(g, clk, 87.0, 1)                                         # headroom 3 K < 4 K
         self.assertEqual(g.shed(), ["preview"])
+        run(g, clk, 87.0, 2)                                         # the two steps that save little are quick
+        self.assertEqual(g.shed(), ["preview", "recorder_frames", "scenery"])
         run(g, clk, 87.0, 7)
-        self.assertEqual(g.level, 1)                                 # dwell 8 s not over
+        self.assertEqual(g.level, 3)                                 # dwell 8 s not over
         run(g, clk, 87.0, 1)
-        self.assertEqual(g.shed(), ["preview", "recorder_frames"])
+        self.assertEqual(g.shed()[-1], "view")
         run(g, clk, 87.0, 200)
         self.assertEqual(g.shed(), [s["what"] for s in G.DEFAULT_STEPS])
         self.assertEqual(g.shed()[-1], "road")                       # the road model is the last step
@@ -62,12 +64,32 @@ class GovernorTest(unittest.TestCase):
 
     def test_urgent_and_limiter_step_faster(self):
         g, clk = self.make()
-        run(g, clk, 89.5, 10)                                        # 0.5 K: a step every 3 s
-        self.assertEqual(g.level, 4)
+        run(g, clk, 89.5, 10)                                        # 0.5 K: quick steps, then one every 3 s
+        self.assertEqual(g.level, 5)
         g, clk = self.make()
-        run(g, clk, 80.0, 10, limiter=3)                             # limiter active although the average is cool
-        self.assertEqual(g.level, 4)
+        run(g, clk, 87.0, 10, limiter=3)                             # short headroom and the limiter cutting: every 3 s
+        self.assertEqual(g.level, 5)
         self.assertTrue(g.state()["limited"])
+
+    def test_limiter_alone_holds_the_level(self):
+        g, clk = self.make()
+        run(g, clk, 87.0, 3)
+        self.assertEqual(g.level, 3)
+        run(g, clk, 79.0, 200, limiter=2)                            # cool again, the limiter's states still linger:
+        self.assertEqual(g.level, 3)                                 # nothing more is shed, nothing is given back
+        run(g, clk, 79.0, 31)
+        self.assertEqual(g.level, 2)
+
+    def test_sheds_ahead_of_a_rising_temperature(self):
+        g, clk = self.make(tau_s=4.0)
+        run(g, clk, 70.0, 20)
+        t = 70.0
+        while g.level == 0 and t < 95:
+            t += 0.5                                                 # 0.5 K/s
+            clk.t += 1.0
+            g.step(reading(t))
+        self.assertLess(t, 86.0)                                     # shed before the 4 K margin was reached
+        self.assertLess(g.state()["headroom_ahead_k"], g.state()["headroom_k"])
 
     def test_max_level_keeps_the_road_model(self):
         g, clk = self.make(max_level=7)
@@ -77,7 +99,7 @@ class GovernorTest(unittest.TestCase):
 
     def test_restore_with_hysteresis(self):
         g, clk = self.make()
-        run(g, clk, 87.0, 20)
+        run(g, clk, 87.0, 3)
         self.assertEqual(g.level, 3)
         run(g, clk, 84.0, 300)                                       # 6 K: between the thresholds, nothing moves
         self.assertEqual(g.level, 3)
@@ -129,7 +151,7 @@ class GovernorTest(unittest.TestCase):
 
     def test_file_line_and_probe(self):
         g, clk = self.make()
-        run(g, clk, 87.0, 20)
+        run(g, clk, 87.0, 3)
         d = json.loads(g.file_line())
         self.assertEqual(d["level"], 3)
         self.assertEqual(d["env_hz"], 0.2)

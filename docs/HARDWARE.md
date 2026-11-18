@@ -118,6 +118,39 @@ method and every row in [docs/lanes/L21-budget-and-models.md](lanes/L21-budget-a
 * Per-process GPU time is in `/proc/<pid>/fdinfo/*` (`drm-engine-gpu`); the daemons name their threads
   (`md-prep`, `md-prefetch`, `md-main`, `sg-signs`, `sg-lights`), so `top -H` shows the stages.
 
+### Thermal headroom and the load governor (lane L24, 2026-11-18)
+
+Limits of this phone as the kernel exposes them: CPU and cluster zones trip `passive` at 90 C (cpufreq
+cooling starts to lower the clocks), `hot` at 95 C (where the hardware limiter holds the SoC), critical 110 C;
+GPU zones 85 / 90 / 110 C. Cooling devices: `cpufreq-cpu0` (17 states), `cpufreq-cpu4` (23), the GPU's devfreq
+(6). The governor's default probe reads exactly these (docs/ARCHITECTURE.md "Load governor"); nothing in
+roadsense names the phone.
+
+Path to the air, from the bench point "10.0 W at 94-95 C hottest zone in 22 C air, fan 100 %": about 7.3 K/W
+(linear model, hottest zone, fan at 100 %, the air at the phone taken as the cabin air). The governor starts to
+shed at 86 C (4 K under the passive trip, on a 4 s average), so the power that runs with nothing shed at an
+air temperature Ta is (86 - Ta) / 7.3 W:
+
+| air at the phone | 25 C | 30 C | 35 C | 40 C | 45 C | 50 C | 55 C |
+|---|---|---|---|---|---|---|---|
+| power with nothing shed, fan 100 % | 8.4 W | 7.7 W | 7.0 W | 6.3 W | 5.6 W | 4.9 W | 4.2 W |
+
+Against the stack's budget (7.0 W as proposed by L21; the per-step savings are estimates from L21's
+subtraction table until the on-phone runbook of docs/lanes/L24-quality-max.md has been run):
+
+| governor level | stack W (estimate) | nothing more shed up to | road / lead / lanes |
+|---|---|---|---|
+| 0: everything | 7.0 | 35 C | full |
+| 3: + scenery once in 5 s | 6.5 | 38 C | full |
+| 6: + signs and lights at half rate | 5.7 | 44 C | full |
+| 7: + scenery paused, detectors at a quarter | 5.1 | 49 C | full |
+| 8: + road model at 10 runs a second | 4.2 | 55 C | half rate, same latency |
+| above | - | - | the platform limiter cuts clocks; the topics say `limited`, `slow`, `late` |
+
+With a lower fan duty the path is longer and every temperature in the tables drops accordingly: the fan has to
+be at 100 % before the governor sheds anything (what the host's fan policy must do: full duty from 80 C on the
+hottest zone, or whenever `health.governor.level` > 0 or `health.governor.headroom_k` < 10).
+
 ## Camera
 
 | Item | Value |

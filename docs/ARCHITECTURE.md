@@ -1426,11 +1426,21 @@ first thing cut. Both are gone (the flags are accepted and ignored).
 **Policy.** Once a second the governor reads the platform through a probe: every thermal zone with its limit
 (the temperature at which the platform starts to cut clocks) and the state of the platform's limiter. Per zone
 the temperature is averaged (4 s time constant: the zones swing with every inference burst); the headroom is
-the smallest `limit - average` over the zones. Below 4 K of headroom it sheds one step and gives that step 8 s
-to show; below 1.5 K, or while the limiter is active, a step every 3 s. Above 9 K for 30 s it gives one step
-back; a step that had to be shed again within 90 s is held twice as long the next time (up to 10 min). All of
-it is configuration (`<config dir>/governor.json`, keys of `governor.DEFAULT_CFG`: `shed_at_k`, `urgent_k`,
-`restore_at_k`, `shed_dwell_s`, `restore_hold_s`, `max_level` (7 = never touch the road model), `steps`,
+the smallest `limit - average` over the zones. The shed decision looks ahead: it uses the headroom expected
+10 s on (the slope of the hottest average, itself averaged over 10 s, so one burst is not a trend); restoring
+uses the headroom as it is.
+
+* Shed: expected headroom under 4 K -> one step, then 8 s for it to show before the next; under 1.5 K, or
+  while the platform limiter is already cutting, 3 s; after a step that saves little (`quick`: preview,
+  recorder pictures) 1 s.
+* An active limiter alone sheds nothing more (its states linger while the temperature already falls); it
+  blocks restoring.
+* Restore: headroom above 9 K for 30 s and the limiter idle -> one step back. A step that had to be shed again
+  within 90 s is held twice as long the next time (up to 10 min).
+
+All of it is configuration (`<config dir>/governor.json`, keys of `governor.DEFAULT_CFG`: `shed_at_k`,
+`urgent_k`, `lookahead_s`, `restore_at_k`, `shed_dwell_s`, `restore_hold_s`, `max_level` (7 = never touch the
+road model), `steps` (the list above with its rates: a platform with other full rates sets its own),
 `floors`, `enabled`).
 
 **Probe.** roadsense knows no device. The default probe (`"probe": "sysfs"`) reads the generic Linux thermal
@@ -1457,7 +1467,7 @@ that does not read the file is simply never shed.
 
 **What a consumer is told.**
 
-* `GET /v2/health` -> `governor`: `level`, `shed` (names of the steps in force), `caps`, `headroom_k`,
+* `GET /v2/health` -> `governor`: `level`, `shed` (names of the steps in force), `caps`, `headroom_k`, `headroom_ahead_k`,
   `hottest` (`zone`, `temp_c`, `limit_c`), `limited` and `limiter` (the active cooling devices), `events` (the
   last 32 steps: `action` shed / restore, `what`, `level`, `headroom_k`, `why`, `ts_real_ns`), `shed_count`,
   `restore_count`, and `topics`: for `road`, `lead`, `lanes`, `lights`, `signs` the marker below.

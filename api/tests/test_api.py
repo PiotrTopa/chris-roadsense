@@ -39,9 +39,16 @@ class ApiTest(unittest.TestCase):
              "--ring", os.path.join(cls.rundir, "roadsense-frames"), "--host", "127.0.0.1", "--port", str(cls.port)],
             cwd=os.path.join(REPO, "api"))
         cls.start_fake()
-        cls.wait(lambda: all(d["connected"] for d in cls.get("/v1/health")["daemons"].values()), 15)
-        # one sign track lives 40 x 0.1 s; wait until it has ended
-        cls.wait(lambda: cls.get("/v1/signs/history")["count"] >= 1, 15)
+        try:
+            cls.wait(lambda: all(d["connected"] for d in cls.get("/v1/health")["daemons"].values()), 15)
+            # one sign track lives 40 x 0.1 s; wait until it has ended
+            cls.wait(lambda: cls.get("/v1/signs/history")["count"] >= 1, 15)
+        except BaseException:
+            # unittest does not call tearDownClass when setUpClass fails: without this the fake daemons stay
+            # behind (e.g. an interpreter without aiohttp: the api exits at once) and, holding the runner's
+            # stdout, make `... | tail` or any harness that waits for end-of-file hang for ever
+            cls.tearDownClass()
+            raise
 
     @classmethod
     def start_fake(cls):
@@ -65,7 +72,8 @@ class ApiTest(unittest.TestCase):
             except OSError:
                 pass
             time.sleep(0.2)
-        raise AssertionError("timed out waiting")
+        raise AssertionError("timed out waiting" + ("" if cls.api.poll() is None else
+                                                    ": the api process exited with %s (needs aiohttp)" % cls.api.returncode))
 
     @classmethod
     def fetch(cls, path):

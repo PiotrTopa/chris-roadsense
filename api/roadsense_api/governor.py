@@ -37,8 +37,9 @@ CAP_KEYS = ("preview_hz", "record_frames", "env_hz", "view_hz", "signs_hz", "lig
 # Shed order, rising importance. Each step adds caps to those of the steps before it (a later step may
 # tighten an earlier cap). `what` is the name reported in health and in the event list.
 DEFAULT_STEPS = (
-    {"what": "preview", "caps": {"preview_hz": 1}},                  # the camera picture for people: 1 a second
-    {"what": "recorder_frames", "caps": {"record_frames": 0, "preview_hz": 0}},   # recorder keeps messages, no pictures
+    # the first two save next to nothing on most platforms: `quick` lets the next step follow after quick_dwell_s
+    {"what": "preview", "caps": {"preview_hz": 1}, "quick": True},   # the camera picture for people: 1 a second
+    {"what": "recorder_frames", "caps": {"record_frames": 0, "preview_hz": 0}, "quick": True},   # recorder: messages, no pictures
     {"what": "scenery", "caps": {"env_hz": 0.2}},                    # place / weather / light: one look in 5 s
     {"what": "view", "caps": {"view_hz": 5}},                        # display channel
     {"what": "signs", "caps": {"signs_hz": 2.5}},                    # sign detector at half rate
@@ -55,7 +56,10 @@ DEFAULT_CFG = {
     "period_s": 1.0,
     "tau_s": 4.0,              # time constant of the per-zone average (the zones swing with every inference burst)
     "shed_at_k": 4.0,          # shed one step when the headroom to the limit falls below this
-    "urgent_k": 1.5,           # ... and without waiting the full dwell below this, or while the limiter is active
+    "urgent_k": 1.5,           # ... and without waiting the full dwell below this
+    "lookahead_s": 10.0,       # the shed decision uses the headroom expected this far ahead (slope of the average)
+    "quick_dwell_s": 1.0,      # dwell after a step marked `quick`
+    "slope_tau_s": 10.0,       # averaging of the slope (one hot burst must not look like a trend)
     "restore_at_k": 9.0,       # give one step back after the headroom stayed above this for restore_hold_s
     "shed_dwell_s": 8.0,       # time a step is given to show before the next one
     "urgent_dwell_s": 3.0,
@@ -207,6 +211,9 @@ class Governor:
         self._hold = {}                    # level -> restore hold in s (grows when a restore was regretted)
         self._restored_at = {}             # level -> time it was last given back
         self.headroom_k = None
+        self.headroom_ahead_k = None       # headroom_k extrapolated lookahead_s ahead (never above headroom_k)
+        self._slope = 0.0                  # K/s of the hottest zone's average, itself averaged
+        self._prev = None                  # (zone, average) of the previous step
         self.hottest = None
         self.limited = False
         self.limiter = []
@@ -239,10 +246,17 @@ class Governor:
         self.limiter = [{"name": n, "state": c, "max": m} for n, c, m in reading.limiter if c > 0]
         self.limited = bool(self.limiter)
         if best is None:
-            self.headroom_k, self.hottest = None, None
+            self.headroom_k, self.headroom_ahead_k, self.hottest, self._prev = None, None, None, None
         else:
+            if self._prev is not None and self._prev[0] == best[1]:
+                self._slope += min(1.0, dt / float(self.cfg["slope_tau_s"])) * ((best[2] - self._prev[1]) / dt - self._slope)
+            else:
+                self._slope = 0.0
+            self._prev = (best[1], best[2])
             self.headroom_k = round(best[0], 2)
-            self.hottest = {"zone": best[1], "temp_c": round(best[2], 1), "limit_c": best[3]}
+            self.headroom_ahead_k = round(best[0] - max(0.0, self._slope) * float(self.cfg["lookahead_s"]), 2)
+            self.hottest = {"zone": best[1], "temp_c": round(best[2], 1), "limit_c": best[3],
+                            "slope_k_s": round(self._slope, 3)}
 
     def _event(self, action, level, why):
         what = self.steps[level - 1]["what"] if action == "shed" else self.steps[level]["what"]
@@ -291,11 +305,20 @@ class Governor:
         if h is None:                      # no usable sensor: do nothing, say so (state()["headroom_k"] is None)
             return self.state()
         c = self.cfg
-        urgent = self.limited or h < c["urgent_k"]
-        if (h < c["shed_at_k"] or self.limited) and self.level < self.max_level:
-            dwell = c["urgent_dwell_s"] if urgent else c["shed_dwell_s"]
+        ha = self.headroom_ahead_k         # shed on where the temperature is going, restore on where it is
+        # An active limiter alone does not shed further (its states linger while the temperature already falls,
+        # and shedding on them would empty the whole list for one overshoot): it blocks restoring, and it makes
+        # the steps quick while the headroom is short.
+        if ha < c["shed_at_k"] and self.level < self.max_level:
+            if self.level and self.steps[self.level - 1].get("quick"):
+                dwell = c["quick_dwell_s"]
+            elif self.limited or ha < c["urgent_k"]:
+                dwell = c["urgent_dwell_s"]
+            else:
+                dwell = c["shed_dwell_s"]
             if now - self._t_shed >= dwell:
-                self._set_level(self.level + 1, now, "limiter active" if self.limited else "headroom %.1f K" % h)
+                self._set_level(self.level + 1, now, "headroom %.1f K, %.1f K in %.0f s%s" % (
+                    h, ha, c["lookahead_s"], ", limiter active" if self.limited else ""))
             self._above_since = None
         elif h > c["restore_at_k"] and not self.limited and self.level > 0:
             if self._above_since is None:
@@ -320,7 +343,8 @@ class Governor:
 
     def state(self):
         return {"enabled": bool(self.cfg["enabled"]), "level": self.level, "levels": len(self.steps),
-                "shed": self.shed(), "caps": self.caps(), "headroom_k": self.headroom_k, "hottest": self.hottest,
+                "shed": self.shed(), "caps": self.caps(), "headroom_k": self.headroom_k,
+                "headroom_ahead_k": self.headroom_ahead_k, "hottest": self.hottest,
                 "limited": self.limited, "limiter": self.limiter, "forced": self.forced,
                 "level_age_s": round(self.clock() - self._level_since, 1),
                 "shed_count": self.shed_count, "restore_count": self.restore_count, "events": list(self.events)}

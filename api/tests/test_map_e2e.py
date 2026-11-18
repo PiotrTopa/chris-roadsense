@@ -49,10 +49,14 @@ class MapE2E(unittest.TestCase):
                               "--ring", os.path.join(cls.rundir, "roadsense-frames"), "--host", "127.0.0.1",
                               "--port", str(cls.port)], cwd=os.path.join(REPO, "api")),
         ]
-        cls.wait(lambda: all(d["connected"] for d in cls.get("/v1/health")["daemons"].values()), 20)
-        cls.wait(lambda: cls.get("/v1/speed_limit") is not None
-                 and cls.get("/v1/fused")["speed_limit"]["vision"] is not None
-                 and cls.get("/v1/fused")["place"]["vision"] is not None, 10)
+        try:
+            cls.wait(lambda: all(d["connected"] for d in cls.get("/v1/health")["daemons"].values()), 20)
+            cls.wait(lambda: cls.get("/v1/speed_limit") is not None
+                     and cls.get("/v1/fused")["speed_limit"]["vision"] is not None
+                     and cls.get("/v1/fused")["place"]["vision"] is not None, 10)
+        except BaseException:      # tearDownClass is not called after a failed setUpClass: do not leave the daemons behind
+            cls.tearDownClass()
+            raise
 
     @classmethod
     def tearDownClass(cls):
