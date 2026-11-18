@@ -817,17 +817,24 @@ tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsens
 | `GET /v1/map` | latest `map` message of mapd (position state, matched road, map speed limit, look-ahead); 503 while mapd is not running |
 | `GET /v1/fused` | map and camera combined per fact with provenance (topic `fused`, below) |
 | `GET /v1/lanes` | the tracked road geometry (topic `lanes`, below): four lane lines and two road edges with a presence that has hysteresis and a filtered geometry; 503 before the first `road` message |
-| `GET /v1/lead` | the tracked lead vehicle (topic `lead`, below): distance, relative speed, time gap, standstill hold, `departed` cue, with the raw vision value alongside; 503 before the first `road` message |
+| `GET /v1/lead` | the tracked lead vehicle (topic `lead`, below): distance, relative speed, time gap, standing flag, `departed` cue, with the raw vision value alongside; 503 before the first `road` message |
+| `GET /v1/view` | the display channel (topic `view`, below): smoothed objects and lines with ids, velocities and fades for a consumer that draws; 503 before the first `road` message |
 | `GET /v1/vehicle` | the car as the host describes it: mapd's `vehicle` message (every signal with age, quality and source, description, calibration estimates, feeders) plus the last scan of every range sensor (`objects`); 503 while mapd is not running. `docs/VEHICLE_API.md` 8 |
 | `POST /v1/vehicle`, `POST /v1/position` | vehicle input API over HTTP (body: one message, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
 | `GET /v1/camera` | latest `camera` message + ring header fields |
 | `GET /v1/health` | per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
 | `GET /v1/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
-| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `lead` and `lanes`; mapd's `ego` (the car's motion, while a feeder sends it), `vehicle` and `objects` pass through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,roadgeom,ego,vehicle,objects` filters |
+| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `lead`, `lanes`, `roadgeom` and `view`; mapd's `ego` (the car's motion, while a feeder sends it), `vehicle` and `objects` pass through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,roadgeom,view,ego,vehicle,objects` filters. Per road frame the order is `road`, `lead`, `lanes`, `roadgeom`, `view`: a consumer that needs one frame complete waits for `view` |
 
-api never touches the camera or the models; it is a fan-out and overlay layer, plus the five derived
-topics below (`speed_limit`, `rules`, `fused`, `lead`, `lanes`) and an optional drive recorder.
+api never touches the camera or the models; it is a fan-out and overlay layer, plus the derived
+topics below (`speed_limit`, `rules`, `fused`, `lead`, `lanes`, `roadgeom`, `view`) and an optional drive recorder.
+
+**Measurement topics and the display channel (roadsense 2.0).** Every topic except `view` is measurement-grade:
+it says what was measured for its frame, adds no display latency, invents no value, and marks a held or
+predicted value as such (`coast`, `held`, `meas_age_s`) with a time-out. A consumer that decides anything
+(an alert, a future driving function) reads those. `view` is derived from them for consumers that draw:
+smoothed, identity-keeping, with fades and velocities; it never feeds back into the measurement topics.
 
 ### api-derived topic: `{"type":"speed_limit", ...}`
 `api/roadsense_api/speedlimit.py` turns the documented `signs` contract (only `detections[]`
@@ -986,7 +993,7 @@ message says `source: "vision"`: the tracker runs the same way on vision alone.
 
 ```
 "present": true,                 // a lead is tracked; false: every numeric field below is null
-"mode": "track|hold|coast|none", // see below
+"mode": "track|coast|none",      // see below (until roadsense 2.0 also "hold", which froze the value)
 "track_id": 12,                  // changes when the tracked vehicle is replaced (cut-in, lead change, lost and found)
 "age_s": 31.4,                   // of this track
 "source": "vision+ego|vision",   // vision+ego: the ego speed / standstill came from vehicle motion
@@ -1000,7 +1007,8 @@ message says `source: "vision"`: the tracker runs the same way on vision alone.
 "a_lead_mps2": 0.0,              // its acceleration: the derivative of v_lead within the filter, slow (about 1 s); a hint, not a measurement
 "time_gap_s": null,              // (gap_m or dist_m) / ego speed; null below 1 m/s
 "ttc_s": null,                   // (gap_m or dist_m) / closing speed; null unless closing faster than 0.5 m/s
-"standing": true,                // mode is hold: both stand
+"standing": true,                // both stand (standing regime of the filter; the value stays live)
+"meas_age_s": 0.0,               // since the last measurement went into the track (> 0 while coasting)
 "pending_change": false,         // the last frame(s) did not fit the track; a replacement is being considered
 "prob": 0.99,                    // road.leads[0].prob of this frame (null when the frame had no usable lead output)
 "departed": false,               // the lead moved off while ego still stands (below)
@@ -1026,19 +1034,22 @@ The model's `a[0]` is not used (it made the track lag). Modes:
 | mode | when | what |
 |---|---|---|
 | `track` | a lead with `prob` >= 0.5 for 2 frames | the filter. A frame whose distance is more than 4 sigma and more than max(0.6 m, 12 % of d) from the prediction is **not averaged in**: the track coasts and the frame starts a candidate. Frames that agree with the candidate replace the track after 0.15 s when it is nearer (`cut_in`) and after 0.5 s when it is farther (`changed`); a new `track_id` either way. A candidate that does not persist was an outlier or the model flickering between two vehicles: nothing between the two is ever reported |
-| `hold` | ego stands (vehicle: `standstill` for 0.3 s; vision only: the model's `v_ego` under 0.15 m/s for 1 s) and the lead stands (estimate under 0.35 m/s, measured under 0.12 m/s) for 0.5 s | the true gap is constant, so `dist_m` is **frozen**: it follows a slow mean (4 s) of the measurements for the first 2 s (the model is still settling after the stop) and afterwards moves only when that mean is max(0.3 m, 0.6 x_std) away from it. `v_rel_mps`, `v_lead_mps`, `a_lead_mps2` are 0. A change detector watches for consistent evidence of motion: a two-sided CUSUM on the model's lead speed (sigma 0.12 m/s, slack 1 sigma, 3.5 sigma-tenths-of-a-second: a lead rolling at 0.3 m/s is caught in about 0.25 s) and, for creeping the speed output does not show, a 1.5 s mean of the distance residual beyond max(0.6 m, 1.3 x_std) (event `gap_changed`, or `departed` when the lead speed agrees). The thresholds follow the model's own `x_std` because behind a standing car its distance can wander by more than a metre for seconds (a vehicle passing in the next lane, wipers) while its speed output stays at zero. Ego moving (a wheel turns) ends the hold on that frame and the filter continues from the held value |
-| `coast` | `prob` under 0.3 | prediction only, for 0.6 s (2.5 s in a hold); then `present: false`, event `lost` |
+| `track` with `standing: true` | ego stands (vehicle: `standstill` for 0.3 s; vision only: the model's `v_ego` under 0.15 m/s for 1 s) and the lead stands (estimate under 0.35 m/s, measured under 0.12 m/s) for 0.5 s | **the value stays live** (one update per frame; since roadsense 2.0, lane L19). The filter's model changes: the ego speed is exactly zero, the lead's speed is measured with the model's standstill speed output (sigma max(0.12, 0.5 v_std) m/s), the lead's jerk noise drops to 0.05, and the distance is a random walk scaled so the per-frame jitter is averaged over about 3 s (`stand_tau_s`); a frame more than 2.5 sigma off counts with a weight falling as 1 / residual (Huber: a wiper pass moves it little). A two-sided CUSUM on the model's lead speed (sigma as above, slack 1 sigma, 3.5 sigma-tenths-of-a-second: a lead rolling at 0.3 m/s is caught in about 0.25 s) runs before the distance gate and ends the regime at once (event `departed` when the lead moves away, `gap_changed` when it comes nearer); ego moving (a wheel turns) ends it on that frame. What a live value shows that the old hold hid: the network's slow wander of its close-range distance (a few decimetres over seconds behind a standing car); a display that rounds to metres should add a hysteresis (0.3 m is enough on the recorded drives) |
+| `coast` | `prob` under 0.3 | prediction only, `meas_age_s` counting, for 0.6 s (2.5 s while standing); then `present: false`, event `lost` |
 | `none` | no track | `vision` still carries the raw value |
 
-`departed`: the hold ended because the lead moved away while ego still stands; true from that frame until ego
-moves, the lead stands again (a new hold), or 8 s. `departure.moved_m` is how far it has gone. On the replayed
+`departed`: the standing regime ended because the lead moved away while ego still stands; true from that frame
+until ego moves, both stand again, or 8 s. `departure.moved_m` is how far it has gone. On the replayed
 rides it comes 0.25-0.95 s (median 0.45 s) after the lead starts to roll, when the raw distance has grown by about 0.3-0.8 m
 (docs/lanes/L14-lead.md). It is information for a "the car ahead is leaving" hint, not a go signal.
 
 Latency against smoothing: at short range the distance measurement is weighted heavily and the model's
 relative speed feeds the filter directly, so on the rides the tracked distance trails a zero-phase reference
 by about 10 ms under 40 m (135 ms beyond, where the model's speed is weighted little) while the gap closes faster than 2 m/s, with a third to a half less noise than the raw value; the
-standstill hold costs nothing while moving. Constants: `DEFAULT_CFG` in `lead.py`, overridable per key in
+standing regime costs nothing while moving. Standing, on the car's recorded drives (5,400 s behind a standing
+lead, docs/lanes/L19-view-channel.md): frame-to-frame jitter 0.009-0.021 m rms (raw 0.10-0.23 m), never constant
+for more than 1.2 s (the old hold: up to 32 min), within 0.02-0.10 m rms of the camera's 2 s mean (the old
+hold: 0.17-0.37 m). Constants: `DEFAULT_CFG` in `lead.py`, overridable per key in
 `<config dir>/lead.json` (e.g. `{"camera_to_front_m": 1.6}`).
 
 Range sensors (`{"radar_fusion": true}` in `lead.json`; **off by default**, built 2026-11-17 and tested on
@@ -1184,6 +1195,52 @@ docs/lanes/L17-road-geometry.md. Constants: `DEFAULT_CFG` in `roadgeom.py`, over
 `<config dir>/roadgeom.json`. Tools: `tools/roadgeom_replay.py SESSION.jsonl.gz` (a recorded drive through the
 tracker and the fusion), `tools/roadgeom_drive.py --network tour [--turn T0:T1:left|right] [--out REC]` (a
 synthetic drive over a made-up network or a pack with a synthetic camera, compared with the truth).
+
+### api-derived topic: `{"type":"view", ...}` (display channel, roadsense 2.0)
+`api/roadsense_api/view.py`: one message per road frame (10-14 per second), after `lead`, `lanes` and `roadgeom`
+of that frame; about 1.5 kB; `/v1/view`. Added 2026-11-18 (docs/lanes/L19-view-channel.md). For any consumer
+that draws (a car display, a HUD, a dashboard): objects that keep their identity, move smoothly between two
+detections, fade in and out, and carry a velocity so the consumer can extrapolate to its own render time.
+Derived from the measurement topics, never fed back into them; nothing in it belongs to one display.
+
+```
+"x": [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 100, 120],   // distances of every line, m
+"ego": {"speed_mps": 12.1, "yaw_rate_rps": 0.01, "source": "vehicle|vision"},   // yaw positive left
+"objects": [ {"id": "lead:12" | "light:7" | "sign:31",   // stable while the measurement track lives
+              "kind": "vehicle|traffic_light|sign", "role": "lead|ego|other",   // ego: the ego traffic light
+              "x": 34.2, "y": 1.9,                        // car frame (x forward from the camera, y right), m
+              "vx": -12.1, "vy": 0.0,                     // m/s relative to the car: x(t) = x + vx (t - ts)
+              "sx": 2.1, "sy": 0.5,                       // 1 sigma of the drawn position (null: not known)
+              "age_s": 4.2,                               // since the object appeared
+              "meas_age_s": 0.12,                         // since its last measurement (> 0: predicted)
+              "phase": "appear|steady|coast|leave",       // coast: no measurement for 0.5 s; leave: fading out
+              "alpha": 1.0,                               // suggested opacity of the fade, 0..1
+              "attrs": {...},                             // light: state, flashing, relevance, ego_state, held, amb, alt,
+                                                          //   conf, agree, dist_m (the measured one); sign: cls, score;
+                                                          //   lead: dist_m, dist_std_m, v_rel_mps, a_lead_mps2, time_gap_s,
+                                                          //   ttc_s, standing, departed, mode (the `lead` topic's values)
+              "box": [x0, y0, x1, y1]} ],                 // last image box (frame pixels) for lights and signs, else null
+"lines": [ {"id": "lane:0".."lane:3" | "edge:0" | "edge:1", "kind": "lane_line|road_edge",
+            "y": [..],                                    // at x, right positive; null beyond reach_m
+            "dy": [..],                                   // lateral rate m/s per point
+            "reach_m": 80.0, "conf": 0.83, "age_s": 12.3,
+            "phase": "appear|steady|coast|shift|leave",   // shift: blending to a restarted track (other marking)
+            "alpha": 1.0} ],
+"path": {"y": [..]},                                      // the model's planned path at x, as measured
+"road": null                                              // reserved: the fused road geometry (`roadgeom`, lane L20)
+```
+`seq`, `ts_mono_ns`, `ts_real_ns` are those of the `road` message; every position refers to that frame time.
+
+| element | display filtering | price |
+|---|---|---|
+| traffic lights, signs | one Kalman filter per track in the car's frame, carried between detections by the car's own motion (`ego` speed and yaw rate when a host feeds them, else the model's) and corrected by each detection with its real uncertainty (light distance from the housing size: 25 % at 1 sigma, lateral 0.4 m + 3 %; sign distance from a 0.7 m sign: 30 %); a detection beyond 3 sigma is down-weighted; the drawn position eases to the filter's over 0.25 s at most 1 m/s + 10 % of the distance per second. `lights.lateral_m` (offset from the planned path) is turned back into the car's frame with the path. A light the provider only coasts is not a measurement. Leaves 1 s after its last detection (fade 0.3 s) or when it passes the camera | the drawn distance trusts odometry between detections; a biased housing-size distance is corrected over seconds, not frames |
+| lead | the `lead` topic's track: carried by its relative speed, corrections eased over 0.1 s + 0.01 s per metre (0.15 s at 5 m, 0.5 s at 40 m); fade in 0.3 s, fade out 0.4 s at its extrapolated place after the track ends | drawn distance trails the tracker by up to the ease time at long range; `attrs.dist_m` is the tracker's value |
+| lines | the `lanes` topic's geometry, two first-order stages of 0.1 s; a restart of the track on another marking (the near part moves by more than 0.8 m in one frame) is blended linearly over 0.4 s; fade 0.3 s when a line comes or goes; `reach_m` where the tracker's sigma passes 1 m | about one frame (75 ms) behind `lanes` |
+
+On the 2026-11-17 day drive (29 min, `tools/view_replay.py`): the ego light's drawn distance step per frame after
+the car's own motion 1.96 -> 0.12 m rms, steps over 2 m 129 -> 0, lateral 0.32 -> 0.07 m; lane lines and edges
+that pop on or off without a fade 106 -> 2; the lead's step per frame after its relative speed 0.27 -> 0.09 m rms.
+Cost: 0.15-0.18 ms per frame on the laptop.
 
 ### Drive recorder (optional)
 `api/roadsense_api/recorder.py`, off unless `<config dir>/recorder.json` names a directory

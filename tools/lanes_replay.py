@@ -22,6 +22,7 @@ Printed per line, raw against tracked, only while the car moves (v_ego > 2 m/s):
 import argparse
 import gzip
 import json
+import zlib
 import math
 import os
 import sys
@@ -47,7 +48,7 @@ def read_lines(path):
                         yield json.loads(line)
                     except ValueError:
                         continue
-    except (EOFError, OSError) as e:                 # a capture cut in the middle of a gzip stream
+    except (EOFError, OSError, zlib.error) as e:     # a capture cut in the middle of a gzip stream
         print("note: %s: %s" % (path, e), file=sys.stderr)
 
 
