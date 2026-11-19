@@ -23,11 +23,11 @@ import sys
 import time
 import urllib.request
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mapd"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-mapper"))
 
 import numpy as np                                   # noqa: E402
 
-from roadsense_mapd import rsmap                     # noqa: E402
+from chris_mapper import rsmap                       # noqa: E402
 
 GEOFABRIK = "https://download.geofabrik.de"
 USER_AGENT = "roadsense-maps/1"

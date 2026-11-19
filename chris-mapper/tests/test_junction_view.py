@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from roadsense_mapd import context, rsmap as R       # noqa: E402
+from chris_mapper import context, rsmap as R       # noqa: E402
 from tests import synthpack as S                     # noqa: E402
 
 FT = R.FEATURE_ID

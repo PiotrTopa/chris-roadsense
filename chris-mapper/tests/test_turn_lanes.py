@@ -14,7 +14,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tools"))
 
-from roadsense_mapd import context, rsmap as R       # noqa: E402
+from chris_mapper import context, rsmap as R       # noqa: E402
 from tests import synthpack as S                     # noqa: E402
 
 MAN = {"region": "synthetic", "osm_timestamp": "", "built": "test", "attribution": "hand-made test network"}
