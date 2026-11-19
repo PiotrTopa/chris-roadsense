@@ -1391,8 +1391,9 @@ Derived from the measurement topics, never fed back into them; nothing in it bel
             "reach_m": 80.0, "conf": 0.83, "age_s": 12.3,
             "phase": "appear|steady|coast|shift|leave",   // shift: blending to a restarted track (other marking)
             "alpha": 1.0} ],
-"lines_source": "model",                                  // "model": the road model's tracked lines (`lanes`); else the name
-                                                          //   of the external display lane source (below)
+"lines_source": "model",                                  // "model": the road model's tracked lines (`lanes`); "laned": the
+                                                          //   display lane source's; "laned+model": both (below)
+"lines_scale": null,                                      // factor applied to the display lane source's metres (null: no source)
 "road_model": "vision",                                   // the road model of the frame
 "path": {"y": [..]},                                      // the model's planned path at x, as measured
 "road": {...}                                             // the road as one picture (below)
@@ -1466,26 +1467,77 @@ Without mapd, without a pack or without a position `road` still carries the came
 `roadview.DEFAULT_CFG`). Replay: `tools/view_replay.py SESSION [--map MAP.jsonl]` prints how often each part is
 given on a recorded drive.
 
-### Display lane source (the seam for a separate lane analysis; lane L27)
+### Display lane source (`display_lanes`, laned; lanes L27, L29)
 
 The lane lines of the measurement topics (`road.lane_lines`, `lanes`, `fused.lanes`, the ego lane, the road
 geometry in `view.road`) are the road model's, with the model's own confidence, whatever their quality. The
-lines a consumer **draws** (`view.lines`) may come from another source: a separate, cheap lane-line analysis
+lines a consumer **draws** (`view.lines`) may be refined by another source: a separate, cheap lane-line analysis
 whose only job is a good picture. There is one place where that is decided, `ViewBuilder._display_lanes()` in
 `api/roadsense_api/view.py`, and one message that feeds it:
 
 ```
-{"type":"display_lanes","ts_mono_ns":..,"source":"laned",   // CLOCK_MONOTONIC of the frame the lines belong to
+{"type":"display_lanes","seq":..,"ts_mono_ns":..,"source":"laned",   // CLOCK_MONOTONIC of the frame the lines belong to
  "x":[..],                                                   // distances ahead, m (any grid; device frame)
- "lines":[ {"present":true,"y":[..],"y_std":[..]?}, x4 ],    // far left, left, right, far right; y right positive
- "edges":[ {"present":true,"y":[..]}, x2 ]? }                // optional: left, right road edge
+ "lines":[ {"present":true,"y":[..],"y_std":[..]?,          // far left, left, right, far right; y right positive;
+            "conf":0.9,"reach_m":48.0,"id":7}, x4 ],         //   y_std over 1 m = beyond the line's reach (not drawn)
+ "edges":[ {"present":true,"y":[..]}, x2 ]?,                 // optional: left, right road edge
+ "pitch_trim":0.004,"yaw_trim":-0.002,"analysis_ms":2.1}     // laned: its own trim of calib.json, its time per frame
 ```
 
-sent as JSON lines on `<rundir>/laned.sock` by whatever provides it (the api connects when the socket exists;
-no provider is part of roadsense today). While the last such message is at most `display_lanes_max_age_s`
-(0.5 s, `view.json`) from the frame, `view.lines` is built from it (the same smoothing, fading and motion
-carry as for the model's lines) and `view.lines_source` is its `source`; otherwise `view.lines` is built from
-`lanes` and `lines_source` is `"model"`. Nothing else reads the message: the measurement topics never see it.
+sent as JSON lines on `<rundir>/laned.sock` by a provider (the api connects when the socket exists; it is not a
+health failure when it does not). The message is also passed on to `/ws` consumers as topic `display_lanes`, as
+it came. While the last message is at most `display_lanes_max_age_s` (0.5 s, `view.json`) from the frame,
+`view.lines` is built with it; otherwise from `lanes` alone, as without a provider. **Nothing else reads the
+message: `lead`, `lanes`, `fused`, the ego lane and `view.road` are the same, message for message, with and
+without a provider** (`api/tests/test_display_lanes.py`).
+
+How the source is used (`display_lanes_mode` in `view.json`), per line:
+
+| mode | a line is drawn from | when to use |
+|---|---|---|
+| `agree` (default) | the source where source and road model agree on the line (within `display_agree_m` 0.5 m at 6 and 12 m for `display_agree_s` 0.6 s: the same marking, and the source measured the paint); the road model everywhere else. Beyond the source's reach the line continues as the model's, shifted by the difference at that point. Lines only the source has are not drawn (`display_agree_extra`: drawn while one source line agrees) | the source refines the model's lines and can never put a line on another marking or invent one |
+| `prefer` | the source where it has the line, the model where it does not | a source that is trusted to pick the markings |
+| `replace` | the source only: a line it does not see is not drawn | a source that is trusted alone ("absent rather than invented") |
+
+Road edges stay the road model's unless the source sends `edges`. `view.lines_source` says what the lines of the
+frame are: `"model"`, the source's name (`"laned"`: every drawn lane line is the source's), or `"laned+model"`.
+
+**Scale.** A road-plane analysis measures in the metres of `calib.json`'s camera height; the road model in the
+metres of its own idea of the camera (its lane is 2.8 m wide where a camera 1.5 m up sees 3.4 m). Where both see
+the ego lane's two lines the ratio of the two lane widths is low-passed (`display_scale_tau_s` 8 s) and applied
+to the source's `x` and `y` before anything else (`view.lines_scale`; null without a source;
+`display_scale: false` turns it off), so the lines sit right next to the model's lead, path and objects.
+
+**laned** (`laned/`, `roadsense-laned.service`; optional: `roadsense.target` does not want it, it runs after
+`systemctl enable roadsense-laned.service`) is the provider that ships: a classical analysis of the frame's luma
+plane, no model and no GPU.
+
+1. A marking filter at the nodes of a road-plane grid (44 rows from 4 to 60 m, geometric; 0.08 m cells to 7 m on
+   each side; three image rows per grid row): a stripe of the paint's width (0.15 m: `f * 0.15 / distance` pixels)
+   that is brighter than the road on **both** sides, min(centre - left, centre - right) of three box means on one
+   image row. A one-sided edge (a kerb in the sun, a vehicle's flank, a shadow) and a wide bright area (a zebra
+   bar, a white car) give nothing.
+2. Candidate lines of the frame: the tracks of the last frame are followed from where they were; new lines start
+   at the peaks of the lateral profile of the family of parallel lines `y = a + b x + c x^2` that collects the most
+   evidence up to 26 m. Each is followed row by row and fitted (weighted quadratic, curvature tied loosely to the
+   frame's). A line must span 9 m, cover a tenth of its rows, fit to 0.14 m; lines 0.6-2 m apart (wheel tracks in
+   snow, a rail next to a line) cancel each other; a new line under the car or pointing at the camera's foot
+   (the streak of a lamp on a wet road) is not started.
+3. Tracks with hysteresis (confidence low-passed over 0.6 s, on at 0.55, off at 0.2 or after 1 s without the
+   line), then slots: the ego lane's lines are the nearest within 3.2 m of the car's axis on each side, an outer
+   line lies one lane width (2.3-5.2 m) beyond. A slot is never filled by promoting a farther line.
+4. Two slow trims of `calib.json`, reported in the message: pitch (lines of one road are parallel: their slope
+   against their offset is the pitch error; 4 s) and yaw (on a straight road the car drives along the lines; 15 s).
+   Bounded to 0.06 rad. The height is not trimmed: that is what the view's scale is for.
+
+It reads the newest frame of the ring `--hz` times a second (default 5), on the little cores (`--cpus 0-3`),
+nice 5; config `<config dir>/laned.json` (`hz`, `cpus`, `nice`, `source`, and any constant of
+`laned/lanefind.h` by name); `--set KEY=VALUE`; re-reads `calib.json` when it changes. The load governor pauses
+it with the `scenery` step (`laned_hz` 0), which returns the display to the model's lines. Replay:
+`laned_replay FRAMES.nv12 ...` (one message per frame), evaluation: `tools/laned/display_eval.py`. What it is
+worth, measured: docs/lanes/L29-display-lanes.md (in short: the default mode moves the drawn lines onto the paint
+where source and model agree; it does not make the picture steadier, and alone, in `replace`, it is worse than
+the road model's lines in town, rain and snow).
 
 ## Load governor (`<rundir>/governor`, roadsense 2.0)
 
@@ -1505,7 +1557,7 @@ first thing cut. Both are gone (the flags are accepted and ignored).
   |---|---|---|---|
   | 1 | `preview` | `preview_hz` 1 | `/preview` and `preview.jpg` one picture a second |
   | 2 | `recorder_frames` | `record_frames` 0, `preview_hz` 0 | the recorder keeps messages, no pictures; `/preview` stops |
-  | 3 | `scenery` | `env_hz` 0.2 | `env` once in 5 s (its labels are smoothed over 10 s) |
+  | 3 | `scenery` | `env_hz` 0.2, `laned_hz` 0 | `env` once in 5 s (its labels are smoothed over 10 s); the display lane source (laned, when it runs) is paused: `view.lines` are the road model's again, `view.lines_source` says so |
   | 4 | `view` | `view_hz` 5 | the display channel at 5 messages a second |
   | 5 | `signs` | `signs_hz` 2.5 | sign detector at half rate (the GPU time goes to the road model) |
   | 6 | `lights` | `lights_hz` 2.5 | light detector at half rate |
@@ -1553,13 +1605,13 @@ change and at least every 2 s:
 
 ```
 {"v":1,"ts_mono_ns":...,"valid_s":10,"level":3,"limited":0,"headroom_k":3.4,
- "preview_hz":0,"record_frames":0,"env_hz":0.2,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"policy_hz":-1,
+ "preview_hz":0,"record_frames":0,"env_hz":0.2,"laned_hz":0,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"policy_hz":-1,
  "road_hz":-1}
 ```
 
 A cap of -1 leaves the stage at its configured rate, 0 pauses it, any other value is an upper bound. Every
 daemon reads its key through `camerad/governor.h` (`GovernorReader`, header-only): the camera daemons
-`preview_hz`, envd `env_hz`, a sign / light provider `signs_hz` / `lights_hz`, modeld `road_hz` and `policy_hz`; the api itself
+`preview_hz`, envd `env_hz`, laned `laned_hz`, a sign / light provider `signs_hz` / `lights_hz`, modeld `road_hz` and `policy_hz`; the api itself
 applies `view_hz` and `record_frames`. A file older than `valid_s` is ignored: without the api (or with
 `"enabled": false`) every daemon runs as configured and the platform's limiter is the only guard. A provider
 that does not read the file is simply never shed.
@@ -1621,6 +1673,7 @@ where the first column says "breaking"; everything else is additive.
 | new (L27) | `road.road_model`, `road_model_fallback`, `policy_hz`, `policy_ms`, `plan.held`, `plan.age_ms`; `road_model` in `lead`, `lanes`, `view`; `health.road_model` | - | which road model runs, whether it is a fallback, how old the plan is |
 | new (L27) | `lead.evidence`; `lead.event.kind` `reacquired`, `relocated` | - | weak / no evidence behind a coasting track; a `track_id` that is kept (vision profile) |
 | new (L27) | `view.lines_source`, message `display_lanes` on `<rundir>/laned.sock` | - | the seam for a separate lane source for the display |
+| new (L29) | `view.lines_scale`; `view.lines_source` may be `"laned+model"`; `display_lanes` passed on at `/ws`; governor cap `laned_hz`; daemon laned (optional) | - | the display lane source that ships; default mode `agree` |
 | changed (L27) | governor levels | 8 = `road` | 8 = `plan` (`policy_hz`), 9 = `road`; levels 1-7 unchanged; `max_level` 8 keeps the road model's rate |
 | config (L27) | `modeld.json` | - | `road_model`, `policy`, `policy_hz`, `models_dir` |
 | unchanged | vehicle input API (`position.sock`, `POST /v2/vehicle`) | 1.1 | 1.1 (`"api": 1` in `map` / `ego` / `vehicle` messages is that API's version, not this one's) |
