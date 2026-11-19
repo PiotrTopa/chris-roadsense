@@ -156,7 +156,7 @@ DEFAULT_CFG = dict(
 PROFILES = {
     "vision": dict(
         rv_scale=0.5, rv_rel=0.01, rx_scale=0.4, dist_walk_rel=0.03,
-        weak_prob=0.1, weak_coast_s=2.5, coast_s=0.6,   # 0.6 since L29 (owner: release about 0.7 s; was 0.8)
+        weak_prob=0.1, weak_coast_s=1.5, coast_s=0.6,   # L29: coast 0.8 -> 0.6, weak coast 2.5 -> 1.5 (release about 0.7 s)
         acquire_score=2.5,
         relocate_v_tol=1.5,
         reacquire_s=3.0,
