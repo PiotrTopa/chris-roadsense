@@ -29,7 +29,7 @@ if(NOT ORT_INCLUDE_DIR OR NOT ORT_LIBRARY)
   message(FATAL_ERROR "onnxruntime not found (set ONNXRUNTIME_ROOT)")
 endif()
 
-add_library(modeld_core STATIC warp.cc supercombo.cc vision.cc pipeline.cc ort_backend.cc)
+add_library(modeld_core STATIC warp.cc supercombo.cc vision.cc pipeline.cc calibrator.cc ort_backend.cc)
 target_include_directories(modeld_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ROADSENSE_ROOT} ${ORT_INCLUDE_DIR})
 target_link_libraries(modeld_core PUBLIC ${ORT_LIBRARY})
 
@@ -79,5 +79,9 @@ target_link_libraries(modeld_replay PRIVATE modeld_core)
 # warp_test: bit-exactness of the sampling table against the definition, and its cost per frame
 add_executable(warp_test warp_test.cc warp.cc)
 target_include_directories(warp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# calibrator_test: the online pitch / yaw estimate on synthetic ego-motion (convergence, gates, state file)
+add_executable(calibrator_test calibrator_test.cc calibrator.cc pipeline.cc warp.cc)
+target_include_directories(calibrator_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 install(TARGETS modeld modeld_replay RUNTIME DESTINATION bin)

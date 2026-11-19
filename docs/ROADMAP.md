@@ -16,6 +16,8 @@
 
 ## Phase 2: in-car data gathering
 - [ ] mount + intrinsics/extrinsics calibration (focal length from EXIF/sensor, pitch/yaw from the model's own calibration outputs like openpilot's calibrationd)
+  - [x] pitch / yaw online from the model's ego-motion (L32, `auto_calib`, docs/ARCHITECTURE.md Calibration); replayed rides and the car's recordings only, **not yet run on the car**
+  - [ ] focal length, camera height, roll: still nominal
 - [ ] rolling recorder (video + JSON) with ring buffer and USB storage
 - [ ] sign track aggregation (one event per physical sign with best crop and GPS when available)
 - [ ] thermal/battery management, charging strategy in host mode

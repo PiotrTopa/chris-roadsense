@@ -30,6 +30,7 @@
 #include "camerad/gpusched.h"
 #include "camerad/ring.h"
 #include "json_server.h"
+#include "calibrator.h"
 #include "pipeline.h"
 
 using namespace roadsense;
@@ -58,6 +59,10 @@ struct Options {
     double gpu_lead_ms = 0;          // start the next run this long before the provider's detector should end
     bool pipeline = true;            // ncnn: record the next run's vision stage during the current run
     int cpu_latency_us = -1;         // >= 0: hold /dev/cpu_dma_latency at this value while running
+    // Online pitch / yaw of the camera from the model's ego-motion (calibrator.h): on = estimate and use it for
+    // the warp, observe = estimate and report only, off.
+    std::string auto_calib = "on";
+    std::string calib_state = "/var/lib/roadsense/camera-calibration.json";  // "" / none: not kept between starts
 };
 
 bool parse_cpus(const std::string &s, cpu_set_t *set) {
@@ -125,8 +130,14 @@ void usage() {
             "                 finish its detector before starting the next run (default 0 = never wait)\n"
             "  --gpu-lead MS  with --gpu-yield: start the next run MS ms before the detector is expected to end\n"
             "                 (its published det_ms), so modeld's CPU preamble overlaps it (default 0)\n"
+            "  --auto-calib M on (default): the camera's pitch and yaw are estimated from the model's own motion while\n"
+            "                 driving straight above 24 km/h and, once valid, used for the warp instead of calib.json's\n"
+            "                 (reported in the `calib` message: source \"auto\", `online`); observe: estimated and\n"
+            "                 reported, not used; off\n"
+            "  --calib-state P where the estimate is kept between starts (default /var/lib/roadsense/camera-calibration.json;\n"
+            "                 none = not kept). It belongs to one calib.json and camera: ignored after either changes\n"
             "config: $ROADSENSE_CONFIG_DIR (default /etc/roadsense)/modeld.json keys road_model, policy, policy_hz, backend, model, threads, cpus, prep_cpus, rhd,\n"
-            "        steer_delay, max_hz (CLI wins); calibration from calib.json there (pitch, yaw, roll rad; height_m)\n"
+            "        steer_delay, max_hz, auto_calib, calib_state (CLI wins); calibration from calib.json there (pitch, yaw, roll rad; height_m)\n"
             "env: ROADSENSE_RUNDIR (default /run/roadsense), ROADSENSE_RING (default /dev/shm/roadsense-frames)\n");
 }
 
@@ -169,7 +180,7 @@ time_t file_mtime(const std::string &p) {
     return stat(p.c_str(), &st) == 0 ? st.st_mtime : 0;
 }
 
-void prep_thread(const Options *opt, Shared *sh) {
+void prep_thread(const Options *opt, Shared *sh, OnlineCalib *oc) {
     pthread_setname_np(pthread_self(), "md-prep");  // thread names: per-stage CPU accounting (tools/budget)
     if (!opt->prep_cpus.empty()) {
         cpu_set_t set;
@@ -188,6 +199,8 @@ void prep_thread(const Options *opt, Shared *sh) {
             calib.height_m);
     auto next_calib_check = std::chrono::steady_clock::now();
     std::shared_ptr<const PackedFrame> prev;
+    Calib used;  // the calibration of the last packed frame: the configured one or the online estimate
+    bool have_used = false;
     uint64_t last_seq = 0;
     int64_t last_ts = 0;
     bool waiting_logged = false;
@@ -234,8 +247,18 @@ void prep_thread(const Options *opt, Shared *sh) {
         f.k.cy = fv.cy;
         f.k.width = int(fv.width);
         f.k.height = int(fv.height);
+        oc->set_config(calib, f.k);
+        const Calib use = oc->calib();
+        if (have_used && !(use == used)) {  // never pair two frames warped differently
+            prev.reset();
+            picker.reset();
+            fprintf(stderr, "modeld: warp calibration pitch %.4f yaw %.4f (configured %.4f %.4f)\n", use.pitch, use.yaw,
+                    calib.pitch, calib.yaw);
+        }
+        used = use;
+        have_used = true;
         auto pf = std::make_shared<PackedFrame>();
-        pp.pack(f, calib, pf.get());
+        pp.pack(f, use, pf.get());
         prev = picker.push(pf);
         if (prev) sh->post(Pair{prev, pf, sel.stream_dt_ms()});
     }
@@ -372,6 +395,8 @@ int main(int argc, char **argv) {
             if (json_number(s, "gpu_lead_ms", &v)) opt.gpu_lead_ms = v;
             if (json_number(s, "pipeline", &v)) opt.pipeline = v != 0;
             if (json_number(s, "cpu_latency_us", &v)) opt.cpu_latency_us = int(v);
+            if (json_string(s, "auto_calib", &str)) opt.auto_calib = str;
+            if (json_string(s, "calib_state", &str)) opt.calib_state = str;
         }
     }
     for (int i = 1; i < argc; ++i) {
@@ -409,6 +434,8 @@ int main(int argc, char **argv) {
         else if (a == "--no-pipeline") opt.pipeline = false;
         else if (a == "--cpu-latency-us") opt.cpu_latency_us = atoi(val().c_str());
         else if (a == "--pipeline") opt.pipeline = true;
+        else if (a == "--auto-calib") opt.auto_calib = val();
+        else if (a == "--calib-state") opt.calib_state = val();
         else if (a == "--verbose" || a == "-v") opt.verbose = true;
         else {
             usage();
@@ -498,8 +525,16 @@ int main(int argc, char **argv) {
         }
     }
 
+    OnlineCalibOptions oco;
+    oco.enabled = opt.auto_calib != "off";
+    oco.apply = opt.auto_calib == "on";
+    oco.state_path = opt.calib_state == "none" ? std::string() : opt.calib_state;
+    OnlineCalib oc(oco);
+    bool oc_news = false;  // the estimate's state changed: publish `calib` again
+    fprintf(stderr, "modeld: online calibration %s%s%s\n", opt.auto_calib.c_str(), oco.state_path.empty() ? "" : ", state ",
+            oco.state_path.c_str());
     Shared sh;
-    std::thread prep(prep_thread, &opt, &sh);
+    std::thread prep(prep_thread, &opt, &sh, &oc);
     const bool pipelined = opt.pipeline && model->can_prefetch();
     std::unique_ptr<Prefetcher> pre;
     if (pipelined) pre = std::make_unique<Prefetcher>(model.get(), &sh);
@@ -560,10 +595,11 @@ int main(int argc, char **argv) {
             t0 = std::chrono::steady_clock::now();
         }
         next_run = t0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / eff_hz));
-        if (!calib_published || !(p.cur->calib == pub_calib) || !(p.cur->k == pub_k)) {
+        if (!calib_published || !(p.cur->calib == pub_calib) || !(p.cur->k == pub_k) || oc_news) {
             pub_calib = p.cur->calib;
             pub_k = p.cur->k;
-            const std::string cj = calib_json(pub_calib, pub_k, p.cur->seq, "config");
+            oc_news = false;
+            const std::string cj = calib_json(pub_calib, pub_k, p.cur->seq, oc);
             srv.set_greeting(cj);
             srv.publish(cj);
             calib_published = true;
@@ -592,6 +628,8 @@ int main(int argc, char **argv) {
             continue;
         }
         run_failures = 0;
+        if (p.prev->calib == p.cur->calib && model->outputs().finite)
+            oc_news |= oc.observe(p.cur->calib, model->outputs().pose.data(), model->outputs().pose_std.data());
         const auto t1 = std::chrono::steady_clock::now();
         const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
         if (gs.is_open() && gs.run_done(ms, opt.gpu_yield_ms > 0)) {

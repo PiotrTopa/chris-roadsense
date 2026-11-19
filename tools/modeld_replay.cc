@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "camerad/nv12.h"
+#include "calibrator.h"
 #include "pipeline.h"
 
 using namespace roadsense;
@@ -33,6 +34,7 @@ void usage() {
             "         [--start N] [--max-frames N] [--split]\n"
             "         [--road-model supercombo|vision] [--policy PATH|none] [--policy-threads N] [--policy-hz F] [--rates R1,R2,.. --out-prefix P]\n"
             "         [--dump-input DIR] [--dump-runs N] [--dump-tensors]\n"
+            "         [--auto-calib on|observe|off] [--calib-state PATH]\n"
             "  defaults: fps 20, focal 1470*W/1920 (camerad default), cx W/2, cy H/2, calib from\n"
             "  $ROADSENSE_CONFIG_DIR/calib.json if present, backend ort, model /var/lib/roadsense/models/supercombo-fp32.onnx\n"
             "  (ncnn: supercombo-ncnn.param there, 1 CPU thread)\n"
@@ -46,6 +48,10 @@ void usage() {
             "  --rates R,..      simulate modeld's run rate: at R runs per second of stream time the run takes the newest\n"
             "                    pair at each scheduled time (pairs skipped in between, as on the phone); one output file\n"
             "                    P<R>.jsonl per rate, each with its own model state (vision: one network run per frame shared)\n"
+            "  --auto-calib M    modeld's online pitch / yaw estimate (modeld/calibrator.h), fed by the first rate's runs:\n"
+            "                    on = used for the warp once valid, observe = reported in `calib` lines only, off (the\n"
+            "                    default here, unlike modeld: a replay reproduces the given calibration);\n"
+            "                    --calib-state PATH keeps / reads the estimate (default: not kept)\n"
             "  --split           ncnn: two-stage run as modeld pipelines it (vision stage recorded + submitted, then the\n"
             "                    rest); must give the same outputs as the default one-stage run\n");
 }
@@ -163,6 +169,7 @@ int main(int argc, char **argv) {
     SupercomboOptions so;
     bool model_set = false, threads_set = false, road_model_set = false;
     std::string models_dir = "/var/lib/roadsense/models";
+    std::string auto_calib = "off", calib_state;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto val = [&]() -> const char * {
@@ -203,6 +210,8 @@ int main(int argc, char **argv) {
         else if (a == "--dump-runs") dump_runs = atoi(val());
         else if (a == "--dump-tensors") dump_tensors = true;
         else if (a == "--split") split = true;
+        else if (a == "--auto-calib") auto_calib = val();
+        else if (a == "--calib-state") calib_state = val();
         else if (a == "-h" || a == "--help") return usage(), 0;
         else if (a[0] != '-' && input.empty()) input = a;
         else return usage(), 2;
@@ -299,6 +308,12 @@ int main(int argc, char **argv) {
     PairPicker picker(vision ? 0.2 : 0.05);
     std::vector<double> next_t(rates.size(), -1);  // stream time of each rate's next run
     bool calib_sent = false;
+    OnlineCalibOptions oco;
+    oco.enabled = auto_calib != "off";
+    oco.apply = auto_calib == "on";
+    oco.state_path = calib_state;
+    OnlineCalib oc(oco);
+    Calib warp_calib = calib;  // what the warp uses: the given calibration or the online estimate
     Image img;
     std::string err;
     long idx = 0, used = 0;
@@ -346,10 +361,22 @@ int main(int argc, char **argv) {
         f.k.cy = cy >= 0 ? cy : img.h / 2.0;
         if (!sel.accept(f.ts_mono_ns)) continue;
         auto curp = std::make_shared<PackedFrame>();
-        pp.pack(f, calib, curp.get());
+        if (oco.enabled) {
+            oc.set_config(calib, f.k);
+            const Calib use = oc.calib();
+            if (!(use == warp_calib)) {  // as modeld: never pair two frames warped differently
+                picker.reset();
+                fprintf(stderr, "modeld_replay: seq %llu warp calibration pitch %.4f yaw %.4f (configured %.4f %.4f)\n",
+                        (unsigned long long)f.seq, use.pitch, use.yaw, calib.pitch, calib.yaw);
+                for (FILE *o : outs) fprintf(o, "%s\n", calib_json(use, f.k, f.seq, oc).c_str());
+            }
+            warp_calib = use;
+        }
+        pp.pack(f, warp_calib, curp.get());
         const PackedFrame &cur = *curp;
         if (!calib_sent) {
-            for (FILE *o : outs) fprintf(o, "%s\n", calib_json(calib, f.k, f.seq, "config").c_str());
+            for (FILE *o : outs)
+                fprintf(o, "%s\n", (oco.enabled ? calib_json(warp_calib, f.k, f.seq, oc) : calib_json(calib, f.k, f.seq, "config")).c_str());
             const auto &m = pp.med().matrix(), &b = pp.big().matrix();
             fprintf(stderr, "modeld_replay: %s, %dx%d f %.1f cx %.1f cy %.1f\n  M_med = [%g %g %g; %g %g %g; %g %g %g]\n"
                     "  M_big = [%g %g %g; %g %g %g; %g %g %g]\n", so.road_model.c_str(), f.k.width, f.k.height, f.k.fx,
@@ -407,6 +434,9 @@ int main(int argc, char **argv) {
             m.policy_hz = mdl->has_policy() ? mdl->policy_hz() : -1;
             m.policy_ms = mdl->policy_ms();
             fprintf(outs[r], "%s\n", road_json(mdl->outputs(), m).c_str());
+            if (r == 0 && oco.enabled && prev.calib == cur.calib && mdl->outputs().finite &&
+                oc.observe(cur.calib, mdl->outputs().pose.data(), mdl->outputs().pose_std.data()))
+                for (FILE *o : outs) fprintf(o, "%s\n", calib_json(cur.calib, cur.k, cur.seq, oc).c_str());
             if (r == 0) {
                 ++runs0;
                 model_sum += ms;
