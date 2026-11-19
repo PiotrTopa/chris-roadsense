@@ -48,6 +48,10 @@ ExecStopPost=-/bin/sh -c 'cut -d" " -f1 /sys/class/devfreq/5000000.gpu/available
 #   new modeld, an older unit                    -> the same command line as this one: as the first two rows
 #   "road_model" set in modeld.json              -> strict: a missing file is an error (exit 1, systemd retries,
 #       /v2/health shows modeld without messages), never a silent other model
+# Camera calibration (lane L32): pitch and yaw are estimated from the model's own motion while driving straight
+# above 24 km/h and replace calib.json's values in the warp once valid (default `auto_calib` on; `"auto_calib":
+# "observe"` or "off" in modeld.json). Reported in the `calib` message and /v2/health `calibration`; kept in
+# /var/lib/roadsense/camera-calibration.json (StateDirectory above). An older modeld ignores none of this unit.
 ExecStart=/usr/local/bin/modeld --backend ncnn --cpus 4-7 --prep-cpus 0-3 --max-hz 20 --gpu-yield 80 --gpu-lead 2 --cpu-latency-us 0 --stats 10
 # CPU fallback (ONNX Runtime fp32, exact but ~5 Hz and 90 C on this phone):
 # ExecStart=/usr/local/bin/modeld --backend ort --cpus 4-7 --prep-cpus 0-3 --max-hz 5 --stats 10

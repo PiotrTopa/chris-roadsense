@@ -2,6 +2,7 @@
 import collections
 import glob
 import json
+import math
 import os
 import struct
 import time
@@ -401,6 +402,31 @@ class State:
         cy = ring.get("cy") or h / 2.0
         return float(f), float(cx), float(cy), int(w), int(h)
 
+    def calibration_summary(self):
+        """The camera calibration modeld warps with, for /health (lane L32): the configured calib.json or modeld's own
+        online estimate of pitch / yaw (`source` "auto"), the estimate's state, and how far it is from the configured
+        value. A consumer that sees `online.state` "valid" with `applied` false (mode observe) or a large `off_config_deg`
+        knows calib.json is wrong by that much."""
+        c = self.latest.get("calib")
+        if not c:
+            return None
+        out = {"source": c.get("source"), "pitch": c.get("pitch"), "yaw": c.get("yaw"), "roll": c.get("roll"),
+               "height_m": c.get("height_m"), "online": None}
+        o = c.get("online")
+        if o:
+            cfg = o.get("config") or {}
+            off = None
+            if o.get("pitch") is not None and o.get("yaw") is not None:
+                off = {"pitch": round(math.degrees(o["pitch"] - (cfg.get("pitch") or 0.0)), 2),
+                       "yaw": round(math.degrees(o["yaw"] - (cfg.get("yaw") or 0.0)), 2)}
+            sp = None
+            if o.get("spread_pitch") is not None and o.get("spread_yaw") is not None:
+                sp = {"pitch": round(math.degrees(o["spread_pitch"]), 2), "yaw": round(math.degrees(o["spread_yaw"]), 2)}
+            out["online"] = {"state": o.get("state"), "applied": o.get("applied"), "pitch": o.get("pitch"),
+                             "yaw": o.get("yaw"), "off_config_deg": off, "spread_deg": sp, "blocks": o.get("blocks"),
+                             "min_blocks": o.get("min_blocks"), "restored": o.get("restored")}
+        return out
+
     def vehicle_summary(self):
         """Short dict for /v1/health: is a host feeding vehicle data, and what."""
         v = self.latest.get("vehicle")
@@ -465,6 +491,7 @@ class State:
             "road_model": {"model": road.get("road_model"), "fallback": road.get("road_model_fallback"),
                            "plan": "plan" in road, "plan_age_ms": (road.get("plan") or {}).get("age_ms"),
                            "policy_hz": road.get("policy_hz"), "policy_ms": road.get("policy_ms")} if road else None,
+            "calibration": self.calibration_summary(),
             "detect_ms": signs.get("detect_ms"),
             "env_ms": env.get("env_ms"),
             "env": {g: (env.get(g) or {}).get("label") for g in ("place", "weather", "light")} if env else None,
