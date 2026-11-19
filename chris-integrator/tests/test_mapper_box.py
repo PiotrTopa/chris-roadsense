@@ -98,7 +98,7 @@ class MapperInTheStack(unittest.TestCase):
     def test_in_process(self):
         st, rows = run(self.path, Mapper(MapBox({"pack": self.path})))
         self.check(st, rows)
-        self.assertEqual([s.name for s in st.mixer.order][1:3], ["estimator", "mapper"])
+        self.assertEqual([s.name for s in st.mixer.order][2:4], ["estimator", "mapper"])     # after ride_watch, road_users
 
     def test_out_of_process_gives_the_same_map(self):
         env = dict(os.environ, PYTHONPATH=MAPPER)

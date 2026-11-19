@@ -17,7 +17,7 @@ Caps file `<rundir>/governor` (rewritten atomically at least every 2 s, ignored 
 than `valid_s`, so a dead governor means the daemons run as configured and the platform limiter is the only
 guard):
 
-    {"v":1,"ts_mono_ns":...,"valid_s":10,"level":3,"limited":0,"headroom_k":4.2,
+    {"v":1,"ts_mono_ns":...,"valid_s":10,"level":3,"limited":0,"headroom_k":4.2,"road_users_hz":0,
      "preview_hz":1,"record_frames":0,"env_hz":0.2,"laned_hz":0,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"policy_hz":-1,
      "road_hz":-1}
 
@@ -33,12 +33,16 @@ import time
 
 log = logging.getLogger("roadsense_api.governor")
 
-CAP_KEYS = ("preview_hz", "record_frames", "env_hz", "laned_hz", "view_hz", "signs_hz", "lights_hz", "policy_hz", "road_hz")
+CAP_KEYS = ("road_users_hz", "preview_hz", "record_frames", "env_hz", "laned_hz", "view_hz", "signs_hz", "lights_hz", "policy_hz", "road_hz")
 
 # Shed order, rising importance. Each step adds caps to those of the steps before it (a later step may
 # tighten an earlier cap). `what` is the name reported in health and in the event list.
 DEFAULT_STEPS = (
-    # the first two save next to nothing on most platforms: `quick` lets the next step follow after quick_dwell_s
+    # road-user classes (lane L42: the light detector's road users, their placement, the display objects) are
+    # non-critical display metadata and go first; they reuse the light detector's inference, so the step saves
+    # only their decode and what the integrator does with them: `quick`
+    {"what": "road_users", "caps": {"road_users_hz": 0}, "quick": True},
+    # the next two save next to nothing on most platforms: `quick` lets the next step follow after quick_dwell_s
     {"what": "preview", "caps": {"preview_hz": 1}, "quick": True},   # the camera picture for people: 1 a second
     {"what": "recorder_frames", "caps": {"record_frames": 0, "preview_hz": 0}, "quick": True},   # recorder: messages, no pictures
     # place / weather / light: one look in 5 s; and the display lane source (laned, optional) is paused: `view`
@@ -80,7 +84,7 @@ DEFAULT_CFG = {
     "regret_s": 90.0,
     "restore_hold_max_s": 600.0,
     "valid_s": 10.0,
-    "max_level": None,         # None = all steps; e.g. 8 never touches the road model's rate (7: nor the plan's)
+    "max_level": None,         # None = all steps; e.g. 9 never touches the road model's rate (8: nor the plan's)
     "steps": None,             # None = DEFAULT_STEPS
     # what a measurement topic must deliver not to be called degraded (rate in messages a second over the
     # last 2 s; latency from the frame's camera time to the api)

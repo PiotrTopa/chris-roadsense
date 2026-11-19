@@ -137,6 +137,7 @@ axis). Sources shipped here read:
 | `gnss` | a receiver | `fix`, `lat`, `lon`, `hacc_m`, `speed_mps`, `course_deg`, `alt_m` |
 | `map` | the map box (chris-mapper), or an external matcher | `match`: matched point, bearing, confidence, ambiguity; the map context |
 | `objects` | radars, cameras, class detectors | `sensor`, `kind`, per object range / azimuth / range rate, or x / y in the sensor's frame, or a `class` with where it points |
+| `lights` + `road_users` | a camera's class detector (roadsense-signs `signd --lights-road-users`) | per box `cls`, `score`, `box`, `clip`, `rider`; placed by the `road_users` box with the camera's `calib` (bearing, ground distance with its uncertainty) -> stream `road_users` |
 
 No source is required. A car with a camera only gets a camera-only estimate that says so.
 
@@ -152,8 +153,8 @@ with the frame's time of validity:
   the reason, how a fault was isolated); `checks` (every monitor's verdict).
 * `tracks`: every track with id, state, existence probability, position / velocity / acceleration with std,
   the sensors that feed it and when each last saw it, flags (`standing`, `ghost`, `stationary`, `on_path`),
-  and `class` (what kind of road user: label, confidence, source; `null` while no sensor says; never used to
-  gate a measurement).
+  and `class` (what kind of road user: label, confidence, source, age, votes; a vote over the track's life with
+  a sticky label, `null` while no sensor says or the vote is not sure; never used to gate a measurement).
 * `lead`: the track on the path with distance, relative speed, time gap, time to collision, life-cycle events,
   the sensors behind it, its `class`, and `valid` / `reason`.
 

@@ -661,3 +661,32 @@ Two ways in, both an input only:
 
 By construction nothing reads the attribute: gating, association, existence, the lead selection and the ego
 estimate are the same, number for number, with and without a class detector (a test asserts exactly that).
+
+**Lane L42: the first class detector, and the vote** (report: roadsense `docs/lanes/L42-road-users.md`).
+
+* The detector is the traffic-light detector of roadsense-signs (BDD100K YOLO11n, eight road classes besides
+  lights and signs): `signd --lights-road-users` decodes its road-user boxes from the inference that already runs
+  for the lights and writes them into every `lights` message as `road_users` (`cls`, `score`, `box`, `clip`:
+  edges of the view's region the box touches, `rider`: a rider paired with the bike / motorbike under it, `p`:
+  the eight class scores); `"road_users": null` = shed by the load governor (first step, `road_users_hz` 0).
+* The `road_users` box (`plugins/roadusers.py`, `core/roadusers.py`) places each box with the camera's `calib`:
+  bearing from the box's centre column (1 sigma: a quarter of the box width + 0.3 deg), ground distance from
+  the bottom edge on a flat road when the box is not cut at the bottom of the detector's region (1 sigma from
+  0.6 deg of pitch, 3 px + 4 % of the box height, 5 cm of camera height: about 15 % at 20 m, 30 % at 40 m), no
+  distance from the box size (a car's width depends on the view). Stream `road_users` (public).
+* The `road_users` source kind (in the default estimator configuration) attaches each road user to at most one
+  track and each track to at most one road user per message (bearing gate 3 sigma, at least the half width of a
+  vehicle at the track's distance; distance within 3 sigma where both have one) and folds the class into the
+  track's vote. Annotation only, like `object_classes`.
+* The vote (`core/classvote.py`, used by every class input): per label a tally of score x quality (a box cut by
+  the region weighs 0.7), half-life 30 s, the sum held at 8 (a share over the recent life of the track); the
+  first label is shown once two observations are in and it leads by 1.5x, another label replaces it only at
+  2x the shown one's tally; `confidence` = share x (1 - exp(-total)); below 0.35 the class is `null`.
+  Aliases: `person` -> `human`, `rider` / `bicycle` -> `bike`, `motor` / `motorcycle` -> `motorbike`,
+  `train` -> `tram`; `van` stays `van` (the detector has no van class).
+* On a car without range sensors the object layer holds only the lead, so other road users have no track to
+  carry their class. The view draws them itself (`trackers/roadusers_view.py`): `view.objects` of kind
+  `road_user` (role `other`, `cls`, `sx` / `sy`, phases and fades) for boxes with a ground distance only,
+  riderless bikes and motorbikes left out, the lead's own detection not drawn twice; display only, never a
+  measurement topic. The equality test for this path: `tests/test_road_users.py` (tracks, lead, ego state
+  equal; the view equal apart from the class and the `road_user` objects).

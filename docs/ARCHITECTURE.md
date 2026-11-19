@@ -497,8 +497,22 @@ frame, a 48x24 state CNN per light, a small tracker; models and licences: roadse
              "frame_state": "red",                    // this frame's observation ("unknown" while coasting)
              "flashing": false,                       // yellow <-> off alternating within 4 s
              "score": 0.66, "box": [x0,y0,x1,y1], "horizontal": false, "hits": 12, "age": 13,
-             "coast": 0} ]                            // optional: processed frames since the track was last detected
+             "coast": 0} ],                           // optional: processed frames since the track was last detected
+"road_users": [ {"cls": "car",                       // optional (signd --lights-road-users, lane L42): person, rider,
+                                                     //   car, truck, bus, train, motor, bike (BDD100K classes)
+                 "score": 0.89, "box": [x0,y0,x1,y1], // frame pixels
+                 "clip": "b",                         // edges of `roi` the box touches (l t r b): "b" = no ground point
+                 "rider": false,                      // a bike / motor with its rider paired (union box)
+                 "p": [0,0,0.89,0,0,0,0,0]} ]         // the eight class scores; `null` = shed by the governor
 ```
+Road users (lane L42, `docs/lanes/L42-road-users.md`): the light detector's own output carries eight road
+classes; with `--lights-road-users` the provider decodes them from the same inference (no extra detector run;
+the decode costs well under a millisecond) and lists them per message, absent without the flag, `null` while
+the load governor sheds them (first step, `road_users_hz` 0). They are non-critical display metadata: the
+api does nothing with them; chris-integrator places them with the camera's calibration (`road_users` stream),
+folds their class into the vote of the track they point at (`tracks[].class`, `lead.class`) and draws those no
+track holds as `view.objects` of kind `road_user`. Boxes cut at the bottom of the region (`clip` "b": nearer
+than about 14 m in the wide view, 24 m in the second view) carry a bearing only.
 Confirmed tracks (>= 2 hits) are listed: those matched in the current frame and, since 2026-11-16 (lane L15),
 those the reference provider is coasting (`coast` 1..`--lights-coast`, the box predicted, the state the last
 smoothed one), so a light the detector misses in one frame, or one that only the other view can see, does not
@@ -1666,17 +1680,20 @@ first thing cut. Both are gone (the flags are accepted and ignored).
 
   | level | step (`shed[]` name) | cap written | what a consumer sees |
   |---|---|---|---|
-  | 1 | `preview` | `preview_hz` 1 | `/preview` and `preview.jpg` one picture a second |
-  | 2 | `recorder_frames` | `record_frames` 0, `preview_hz` 0 | the recorder keeps messages, no pictures; `/preview` stops |
-  | 3 | `scenery` | `env_hz` 0.2, `laned_hz` 0 | `env` once in 5 s (its labels are smoothed over 10 s); the display lane source (laned, when it runs) is paused: `view.lines` are the road model's again, `view.lines_source` says so |
-  | 4 | `view` | `view_hz` 5 | the display channel at 5 messages a second |
-  | 5 | `signs` | `signs_hz` 2.5 | sign detector at half rate (the GPU time goes to the road model) |
-  | 6 | `lights` | `lights_hz` 2.5 | light detector at half rate |
-  | 7 | `detectors_floor` | `env_hz` 0, `signs_hz` 1.25, `lights_hz` 1.25 | scenery paused, detectors at a quarter |
-  | 8 | `plan` | `policy_hz` 2 | the road model's policy at 2 runs a second: `road.plan` held in between (`plan.held`, `plan.age_ms` up to 500); road / lead / lanes untouched. Unused with supercombo (no policy) |
-  | 9 | `road` | `road_hz` 10 | the road model at half rate (`road.rate_limited`) |
+  | 1 | `road_users` | `road_users_hz` 0 | the light provider stops decoding road users (`"road_users": null`); classes are voted no further (the last voted class stays on its track), no new `road_user` display objects (lane L42) |
+  | 2 | `preview` | `preview_hz` 1 | `/preview` and `preview.jpg` one picture a second |
+  | 3 | `recorder_frames` | `record_frames` 0, `preview_hz` 0 | the recorder keeps messages, no pictures; `/preview` stops |
+  | 4 | `scenery` | `env_hz` 0.2, `laned_hz` 0 | `env` once in 5 s (its labels are smoothed over 10 s); the display lane source (laned, when it runs) is paused: `view.lines` are the road model's again, `view.lines_source` says so |
+  | 5 | `view` | `view_hz` 5 | the display channel at 5 messages a second |
+  | 6 | `signs` | `signs_hz` 2.5 | sign detector at half rate (the GPU time goes to the road model) |
+  | 7 | `lights` | `lights_hz` 2.5 | light detector at half rate |
+  | 8 | `detectors_floor` | `env_hz` 0, `signs_hz` 1.25, `lights_hz` 1.25 | scenery paused, detectors at a quarter |
+  | 9 | `plan` | `policy_hz` 2 | the road model's policy at 2 runs a second: `road.plan` held in between (`plan.held`, `plan.age_ms` up to 500); road / lead / lanes untouched. Unused with supercombo (no policy) |
+  | 10 | `road` | `road_hz` 10 | the road model at half rate (`road.rate_limited`) |
 
-  (Until lane L27 the road model was level 8; `plan` was put in front of it. Levels 1-7 are unchanged.)
+  (Until lane L27 the road model was level 8; `plan` was put in front of it. Lane L42 put `road_users` in
+  front of everything: every level below moved up by one; a `governor.json` with `max_level` 8 / 7 means 9 / 8
+  now.)
 
 * Every step and every restore is reported, and every measurement topic says what it is delivering (below):
   a consumer never has to guess whether it is getting the full stream.
@@ -1700,8 +1717,8 @@ uses the headroom as it is.
   hold (up to 10 min).
 
 All of it is configuration (`<config dir>/governor.json`, keys of `governor.DEFAULT_CFG`: `shed_at_k`,
-`urgent_k`, `lookahead_s`, `restore_at_k`, `shed_dwell_s`, `restore_hold_s`, `max_level` (8 = never touch the
-road model's rate; 7 = nor the plan's), `steps` (the list above with its rates: a platform with other full rates sets its own),
+`urgent_k`, `lookahead_s`, `restore_at_k`, `shed_dwell_s`, `restore_hold_s`, `max_level` (9 = never touch the
+road model's rate; 8 = nor the plan's), `steps` (the list above with its rates: a platform with other full rates sets its own),
 `floors`, `enabled`).
 
 **Probe.** roadsense knows no device. The default probe (`"probe": "sysfs"`) reads the generic Linux thermal
@@ -1715,14 +1732,15 @@ or names its own class (`"probe": "package.module:Class"`, one method `read()` r
 change and at least every 2 s:
 
 ```
-{"v":1,"ts_mono_ns":...,"valid_s":10,"level":3,"limited":0,"headroom_k":3.4,
+{"v":1,"ts_mono_ns":...,"valid_s":10,"level":4,"limited":0,"headroom_k":3.4,"road_users_hz":0,
  "preview_hz":0,"record_frames":0,"env_hz":0.2,"laned_hz":0,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"policy_hz":-1,
  "road_hz":-1}
 ```
 
 A cap of -1 leaves the stage at its configured rate, 0 pauses it, any other value is an upper bound. Every
 daemon reads its key through `camerad/governor.h` (`GovernorReader`, header-only): the camera daemons
-`preview_hz`, envd `env_hz`, laned `laned_hz`, a sign / light provider `signs_hz` / `lights_hz`, modeld `road_hz` and `policy_hz`; the api itself
+`preview_hz`, envd `env_hz`, laned `laned_hz`, a sign / light provider `signs_hz` / `lights_hz` (and
+`road_users_hz` for the light provider's road users), modeld `road_hz` and `policy_hz`; the api itself
 applies `view_hz` and `record_frames`. A file older than `valid_s` is ignored: without the api (or with
 `"enabled": false`) every daemon runs as configured and the platform's limiter is the only guard. A provider
 that does not read the file is simply never shed.

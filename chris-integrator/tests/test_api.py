@@ -259,7 +259,7 @@ class ApiTest(unittest.TestCase):
     def test_mixer_and_tracks(self):
         m = self.get("/v2/mixer")
         names = [p["name"] for p in sorted((p for p in m["plugins"] if p["enabled"]), key=lambda p: p["order"])]
-        self.assertEqual(names[:2], ["ride_watch", "estimator"])
+        self.assertEqual(names[:3], ["ride_watch", "road_users", "estimator"])   # road users annotate the tracks (L42)
         self.assertLess(names.index("estimator"), names.index("mapper"))      # the map box reads the ego estimate
         self.assertLess(names.index("lanes"), names.index("view"))
         self.assertTrue(all(p["errors"] == 0 for p in m["plugins"]), [p["last_error"] for p in m["plugins"]])

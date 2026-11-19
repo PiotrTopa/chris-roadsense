@@ -7,7 +7,7 @@
 Everything here is configuration of the mixer; nothing here is needed to use the mixer or a plug-in alone.
 
 Configuration: one JSON file per plug-in in the configuration directory, named after the plug-in
-(`integrator.json` for the estimator, `lead.json`, `lanes.json`, `egolane.json`, `roadgeom.json`, `view.json`,
+(`integrator.json` for the estimator, `road_users.json`, `lead.json`, `lanes.json`, `egolane.json`, `roadgeom.json`, `view.json`,
 `lights.json`, `rules.json`, `fused.json`, `mapper.json`, `rates.json`), and `mixer.json` for the wiring:
 
     {"disable": ["fused"],                                        plug-ins of the default stack to leave out
@@ -23,6 +23,7 @@ import os
 from .mixer import Mixer, StreamSpec
 from .plugins.common import Rates
 from .plugins.estimator import Estimator
+from .plugins.roadusers import RoadUsers
 from .plugins.trackers import EgoLane, EgoLight, Fused, Lanes, RideWatch, RoadGeom, Rules, SignContext, View
 
 log = logging.getLogger("chris_integrator.stack")
@@ -34,6 +35,7 @@ ROADSENSE = (
     ("camera", "camera", "raw", "sample", True, "camera status"),
     ("env", "env", "raw", "sample", True, "place / weather / light"),
     ("lights", "lights_raw", "raw", "sample", False, "traffic-light detections of one camera"),
+    ("road_users", "road_users_raw", "raw", "sample", False, "road users of the light provider's extra road-user view (L42)"),
     ("signs", "signs_raw", "raw", "sample", False, "sign detections of one camera"),
     ("display_lanes", "display_lanes", "raw", "sample", True, "a lane source for the display only"),
     ("governor", "governor", "status", "periodic", True, "the roadsense instance's load governor: level, caps"),
@@ -159,7 +161,7 @@ def build(cfg=None, config_dir=None, datadir=None, clock=None, mapper="auto", ex
     if lead:
         est_cfg["lead"] = dict(lead, **(est_cfg.get("lead") or {}))
     view_cfg = conf("view")
-    boxes = [RideWatch(), Estimator(est_cfg)]
+    boxes = [RideWatch(), RoadUsers(conf("road_users") or None), Estimator(est_cfg)]
     if external_map:
         st.add_channel("map_in", EXTERNAL_MAP, info="an external map matcher")
     elif mapper not in (None, False):

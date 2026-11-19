@@ -48,11 +48,11 @@ class GovernorTest(unittest.TestCase):
     def test_sheds_in_order_one_step_per_dwell(self):
         g, clk = self.make()
         run(g, clk, 87.0, 1)                                         # headroom 3 K < 4 K
-        self.assertEqual(g.shed(), ["preview"])
-        run(g, clk, 87.0, 2)                                         # the two steps that save little are quick
-        self.assertEqual(g.shed(), ["preview", "recorder_frames", "scenery"])
+        self.assertEqual(g.shed(), ["road_users"])                   # non-critical display metadata first (L42)
+        run(g, clk, 87.0, 3)                                         # the three steps that save little are quick
+        self.assertEqual(g.shed(), ["road_users", "preview", "recorder_frames", "scenery"])
         run(g, clk, 87.0, 7)
-        self.assertEqual(g.level, 3)                                 # dwell 8 s not over
+        self.assertEqual(g.level, 4)                                 # dwell 8 s not over
         run(g, clk, 87.0, 1)
         self.assertEqual(g.shed()[-1], "view")
         run(g, clk, 87.0, 200)
@@ -69,22 +69,22 @@ class GovernorTest(unittest.TestCase):
     def test_urgent_and_limiter_step_faster(self):
         g, clk = self.make()
         run(g, clk, 89.5, 10)                                        # 0.5 K: quick steps, then one every 3 s
-        self.assertEqual(g.level, 5)
+        self.assertEqual(g.level, 6)
         g, clk = self.make()
         run(g, clk, 87.0, 60, limiter=3)                             # 3 K and the limiter cutting: down to the road model
-        self.assertEqual(g.level, 9)
+        self.assertEqual(g.level, 10)
         self.assertTrue(g.state()["limited"])
 
     def test_a_step_that_turned_the_temperature_is_given_time(self):
         g, clk = self.make(tau_s=4.0)
-        run(g, clk, 87.0, 3)
-        self.assertEqual(g.level, 3)
+        run(g, clk, 87.0, 4)                                         # the three quick steps, then scenery
+        self.assertEqual(g.level, 4)
         t = 87.0
         for _ in range(40):                                          # still inside the margin, but falling
             t -= 0.05
             clk.t += 1.0
             g.step(reading(t))
-        self.assertEqual(g.level, 3)
+        self.assertEqual(g.level, 4)
 
     def test_limiter_alone_holds_the_level(self):
         g, clk = self.make()
@@ -107,20 +107,20 @@ class GovernorTest(unittest.TestCase):
         self.assertLess(g.state()["headroom_ahead_k"], g.state()["headroom_k"])
 
     def test_max_level_keeps_the_road_model(self):
-        g, clk = self.make(max_level=8)                              # everything but the road model's own rate
+        g, clk = self.make(max_level=9)                              # everything but the road model's own rate
         run(g, clk, 95.0, 300, limiter=5)
-        self.assertEqual(g.level, 8)
+        self.assertEqual(g.level, 9)
         self.assertEqual((g.caps()["road_hz"], g.caps()["policy_hz"]), (-1, 2))
-        g, clk = self.make(max_level=7)                              # ... nor the plan's
+        g, clk = self.make(max_level=8)                              # ... nor the plan's
         run(g, clk, 95.0, 300, limiter=5)
-        self.assertEqual((g.level, g.caps()["road_hz"], g.caps()["policy_hz"]), (7, -1, -1))
+        self.assertEqual((g.level, g.caps()["road_hz"], g.caps()["policy_hz"]), (8, -1, -1))
 
     def test_plan_step_before_the_road_model(self):
         """The policy's rate is shed on a forecast like the detectors (it is not a last resort), the road model's
         rate only when the limit is hit; `road` is not marked shed for it (the plan says `held` itself)."""
         g, clk = self.make()
         run(g, clk, 87.0, 200)                                       # 3 K of headroom, never urgent
-        self.assertEqual((g.level, g.shed()[-1]), (8, "plan"))
+        self.assertEqual((g.level, g.shed()[-1]), (9, "plan"))
         self.assertEqual((g.caps()["policy_hz"], g.caps()["road_hz"]), (2, -1))
         self.assertEqual(g.topic_status("road", 14.0, 110.0)["why"], [])
         self.assertIn('"policy_hz":2', g.file_line())
@@ -171,25 +171,27 @@ class GovernorTest(unittest.TestCase):
 
     def test_force(self):
         g, clk = self.make()
-        g.force(6)
+        g.force(7)
         self.assertEqual(g.caps()["lights_hz"], 2.5)
+        self.assertEqual(g.caps()["road_users_hz"], 0)
         run(g, clk, 60.0, 300)
-        self.assertEqual(g.level, 6)                                 # held
+        self.assertEqual(g.level, 7)                                 # held
         g.force(None)
         run(g, clk, 60.0, 400)
         self.assertEqual(g.level, 0)
 
     def test_file_line_and_probe(self):
         g, clk = self.make()
-        run(g, clk, 87.0, 3)
+        run(g, clk, 87.0, 4)
         d = json.loads(g.file_line())
-        self.assertEqual(d["level"], 3)
+        self.assertEqual(d["level"], 4)
         self.assertEqual(d["env_hz"], 0.2)
+        self.assertEqual(d["road_users_hz"], 0)
         self.assertEqual(d["road_hz"], -1)
         with tempfile.TemporaryDirectory() as tmp:
             p = os.path.join(tmp, "governor")
             self.assertTrue(G.write_caps(p, g.file_line()))
-            self.assertEqual(json.load(open(p))["level"], 3)
+            self.assertEqual(json.load(open(p))["level"], 4)
             r = os.path.join(tmp, "reading.json")
             json.dump({"zones": [{"name": "soc", "temp_c": 88.0, "limit_c": 90}],
                        "limiter": [{"name": "x", "state": 2, "max": 5}]}, open(r, "w"))
@@ -216,12 +218,12 @@ class GovernorTest(unittest.TestCase):
         self.assertEqual((s["degraded"], s["why"], s["level"]), (False, [], 0))
         self.assertTrue(g.topic_status("road", 8.0, 110.0)["degraded"])
         self.assertEqual(g.topic_status("lead", 13.0, 300.0)["why"], ["late"])
-        g.force(6)
+        g.force(7)
         self.assertEqual(g.topic_status("lights", 2.5, 150.0)["why"], ["shed", "slow"])
         self.assertFalse(g.topic_status("road", 14.0, 110.0)["degraded"])
-        g.force(8)                                                   # the plan's rate: `road` itself is whole
+        g.force(9)                                                   # the plan's rate: `road` itself is whole
         self.assertEqual(g.topic_status("road", 14.0, 110.0)["why"], [])
-        g.force(9)
+        g.force(10)
         self.assertEqual(g.topic_status("road", 10.0, 110.0)["why"], ["shed"])
         g.force(None)
         g.level = 0
@@ -231,6 +233,16 @@ class GovernorTest(unittest.TestCase):
 
 
 class GovernorPausesTheProvider(unittest.TestCase):
+    def test_road_users_are_shed_first(self):
+        self.assertEqual(G.DEFAULT_STEPS[0]["what"], "road_users")
+        self.assertEqual(G.DEFAULT_STEPS[0]["caps"], {"road_users_hz": 0})
+        self.assertIn("road_users_hz", G.CAP_KEYS)
+        g = G.Governor()
+        self.assertEqual(g.caps()["road_users_hz"], -1)
+        g.force(1)
+        self.assertEqual(json.loads(g.file_line())["road_users_hz"], 0)
+        self.assertEqual(g.caps()["lights_hz"], -1)                          # the light detector itself runs on
+
     def test_laned_is_shed_with_the_scenery_step_before_the_view(self):
         steps = [s["what"] for s in G.DEFAULT_STEPS]
         i = next(k for k, s in enumerate(G.DEFAULT_STEPS) if "laned_hz" in s["caps"])

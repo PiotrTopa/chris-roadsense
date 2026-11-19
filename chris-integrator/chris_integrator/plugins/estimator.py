@@ -25,8 +25,9 @@ class Estimator(Plugin):
 
     def _new(self):
         cfg = dict(self.cfg)
-        if cfg.get("sources") is None:               # a car that feeds range-sensor scans gets them fused
-            cfg["sources"] = [{"kind": "radar", "id": "*"}]
+        if cfg.get("sources") is None:               # a car that feeds range-sensor scans gets them fused; a camera's
+            cfg["sources"] = [{"kind": "radar", "id": "*"},       # road users annotate the tracks with a class
+                              {"kind": "road_users", "id": "*"}]
         self.integ = Integrator(cfg, sources=self._sources)
         types = [self.FRAME] + sorted(t for t in self.integ.by_type if t != self.FRAME)
         self.inputs = tuple(In(t, trigger=True, optional=True, feedback=t in self.feedback) for t in types) + \

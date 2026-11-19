@@ -42,41 +42,27 @@ DEFAULT_CFG = dict(
 
 # ---- object class: non-critical metadata ----------------------------------------------------------------------
 # A detection may say what kind of road user it is (`class`, with `class_conf` or the detection's `prob`). The
-# layer keeps that as an attribute of the track: a decayed vote per label, the winning label with its share as
-# confidence, and the sensor that said so. It is never read by gating, association, existence or the lead
-# selection: a wrong or missing class changes what is drawn, not what is measured.
-CLASS_ALIASES = {"person": "human", "pedestrian": "human", "bicycle": "bike", "cyclist": "bike", "motorcycle": "motorbike",
-                 "van": "car", "lorry": "truck", "coach": "bus"}
-CLASS_DECAY = 0.9
+# layer keeps that as an attribute of the track: a vote over the track's life with a sticky label
+# (core/classvote.py), the label's share as confidence, and the sensor that said so. It is never read by gating,
+# association, existence or the lead selection: a wrong or missing class changes what is drawn, not what is
+# measured.
+from . import classvote as _cv  # noqa: E402
+CLASS_ALIASES = _cv.ALIASES
 
 
-def classify(tr, attrs, src, t):
+def classify(tr, attrs, src, t, weight=1.0):
     """Fold a detection's class label into the track's class attribute."""
     label = attrs.get("class", attrs.get("cls"))
-    if not isinstance(label, str) or not label:
-        return
-    label = CLASS_ALIASES.get(label.strip().lower(), label.strip().lower())
-    conf = attrs.get("class_conf", attrs.get("prob"))
-    conf = min(1.0, max(0.0, float(conf))) if isinstance(conf, (int, float)) and not isinstance(conf, bool) else 0.5
     c = tr.mem.get("cls")
     if c is None:
-        c = tr.mem["cls"] = {"w": {}, "src": {}, "t": t, "n": 0}
-    for k in c["w"]:
-        c["w"][k] *= CLASS_DECAY
-    c["w"][label] = c["w"].get(label, 0.0) + (1.0 - CLASS_DECAY) * conf
-    c["src"][label] = src
-    c["t"], c["n"] = t, c["n"] + 1
+        c = tr.mem["cls"] = {}
+    _cv.vote(c, label, attrs.get("class_conf", attrs.get("prob")), src, t, weight)
 
 
 def class_of(tr, T):
-    """The track's class attribute for the output messages, or None: {"label", "confidence" (0..1: the decayed
-    share of confident votes for the label), "source" (the sensor that last said so), "age_s", "votes"}."""
-    c = tr.mem.get("cls")
-    if not c or not c["w"]:
-        return None
-    label = max(c["w"], key=c["w"].get)
-    return {"label": label, "confidence": round(min(1.0, c["w"][label]), 2), "source": c["src"].get(label),
-            "age_s": round(max(0.0, T - c["t"]), 2), "votes": c["n"]}
+    """The track's class attribute for the output messages, or None: {"label", "confidence" (0..1: the label's
+    share of the vote times the amount of evidence), "source" (the sensor that last said so), "age_s", "votes"}."""
+    return _cv.result(tr.mem.get("cls"), T)
 
 
 class Det:
