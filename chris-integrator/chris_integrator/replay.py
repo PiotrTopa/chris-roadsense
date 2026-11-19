@@ -191,7 +191,7 @@ class Pipeline:
         self.stack = st = Stack(m)
         st.add_channel("recorded", RECORDED, info="a recorder session")
         # outputs per road frame only; no source besides the stack's own unless the configuration names one
-        self._est = Estimator(dict({"sources": []}, **(integrator_cfg or {})), feedback=(), tick=())
+        self._est = Estimator(dict({"sources": []}, **(integrator_cfg or {})), feedback=(), tick=(), stream_of={})
         if not isinstance(integrator, bool):
             self._est.integ = integrator
         self._lanes, self._egolane, self._geom = Lanes(), EgoLane(egolane_cfg), RoadGeom()

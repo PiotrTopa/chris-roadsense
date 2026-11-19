@@ -11,15 +11,20 @@ class Estimator(Plugin):
     name = "estimator"
     DEFAULT_CFG = {}                       # core.integrator.DEFAULT_CFG keys (integrator.json)
     FRAME = "road"                         # the stream whose messages are camera frames
+    # a source reads message types; on the bus the raw detections of a camera carry another stream name than the
+    # decided topic of the same message type (`signs` is the sign-context box's output, downstream of this box)
+    STREAM_OF = {"signs": "signs_raw"}
     outputs = (Out("ego_state", "estimate", "frame", doc="the car's motion and position with uncertainty, calibration, per-source health"),
                Out("tracks", "estimate", "frame", doc="one multi-target track list in the car frame"),
                Out("lead", "decision", "frame", doc="the track on the path"))
 
-    def __init__(self, cfg=None, name=None, sources=None, tick=("ego",), feedback=("map",)):
+    def __init__(self, cfg=None, name=None, sources=None, tick=("ego",), feedback=("map",), stream_of=None):
         """sources: Source objects instead of the default registration. tick: streams whose samples drive the
-        outputs while no camera frames arrive. feedback: inputs produced downstream of this box."""
-        super().__init__(cfg, name)
+        outputs while no camera frames arrive. feedback: inputs produced downstream of this box. stream_of:
+        {message type: stream} where a source's message type is carried by a stream of another name."""
         self._sources, self.tick, self.feedback = sources, tuple(tick), tuple(feedback)
+        self.stream_of = dict(self.STREAM_OF if stream_of is None else stream_of)
+        super().__init__(cfg, name)
         self.saved = None
         self._new()
 
@@ -29,7 +34,7 @@ class Estimator(Plugin):
             cfg["sources"] = [{"kind": "radar", "id": "*"},       # road users annotate the tracks with a class
                               {"kind": "road_users", "id": "*"}]
         self.integ = Integrator(cfg, sources=self._sources)
-        types = [self.FRAME] + sorted(t for t in self.integ.by_type if t != self.FRAME)
+        types = [self.FRAME] + sorted(self.stream_of.get(t, t) for t in self.integ.by_type if t != self.FRAME)
         self.inputs = tuple(In(t, trigger=True, optional=True, feedback=t in self.feedback) for t in types) + \
             (In("governor", optional=True),)
 
