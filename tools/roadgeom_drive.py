@@ -30,15 +30,15 @@ import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "mapd"))
-sys.path.insert(0, os.path.join(REPO, "api"))
+sys.path.insert(0, os.path.join(REPO, "chris-integrator"))
 
 import numpy as np                                        # noqa: E402
 
-from roadsense_api.fusion import Fusion                   # noqa: E402
-from roadsense_api.lanes import RoadGeometryTracker       # noqa: E402
-from roadsense_api.roadgeom import RoadGeometryFusion     # noqa: E402
-from roadsense_api.egolane import EgoLaneEstimator        # noqa: E402
-from roadsense_api.view import ViewBuilder                # noqa: E402
+from chris_integrator.trackers.fusion import Fusion                   # noqa: E402
+from chris_integrator.trackers.lanes import RoadGeometryTracker       # noqa: E402
+from chris_integrator.trackers.roadgeom import RoadGeometryFusion     # noqa: E402
+from chris_integrator.trackers.egolane import EgoLaneEstimator        # noqa: E402
+from chris_integrator.trackers.view import ViewBuilder                # noqa: E402
 from roadsense_mapd import geo, rsmap as R, sim           # noqa: E402
 from roadsense_mapd.engine import Engine                  # noqa: E402
 

@@ -230,5 +230,20 @@ class GovernorTest(unittest.TestCase):
         self.assertEqual((s["degraded"], s["why"]), (False, ["limited"]))
 
 
+class GovernorPausesTheProvider(unittest.TestCase):
+    def test_laned_is_shed_with_the_scenery_step_before_the_view(self):
+        steps = [s["what"] for s in G.DEFAULT_STEPS]
+        i = next(k for k, s in enumerate(G.DEFAULT_STEPS) if "laned_hz" in s["caps"])
+        self.assertEqual(G.DEFAULT_STEPS[i]["caps"]["laned_hz"], 0)
+        self.assertLess(i, steps.index("view"))                              # display only: before the view's rate
+        self.assertLess(i, steps.index("signs"))                             # and long before any measurement
+        self.assertIn("laned_hz", G.CAP_KEYS)
+        g = G.Governor()
+        self.assertEqual(g.caps()["laned_hz"], -1)                           # nothing shed: laned's own rate
+        g.force(i + 1)
+        self.assertEqual(g.caps()["laned_hz"], 0)
+        self.assertEqual(json.loads(g.file_line())["laned_hz"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

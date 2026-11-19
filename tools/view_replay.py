@@ -7,7 +7,7 @@ the display channel (docs/lanes/L19-view-channel.md).
 
 The session holds `road` (reduced), `lights` (annotated as they went out), `signs`, `ego`, `map`, `calib`;
 `lead`, `lanes`, the ego lane, the road geometry, `view` (with `view.road`) and `fused` are recomputed in the
-api's order (tools/replay_lib.py, which mirrors api/roadsense_api/state.py).
+api's order (chris_integrator.replay: a mixer of chris-integrator with the session as its input).
 
 Printed (per drawn frame = per road frame, what a consumer that draws at the model's rate sees):
 

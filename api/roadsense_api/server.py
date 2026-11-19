@@ -11,7 +11,6 @@ from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import governor as governor_mod
 from . import overlay
-from . import recorder as recorder_mod
 from .sockets import start_clients
 from .state import DAEMONS, State
 
@@ -48,11 +47,6 @@ class PreviewRenderer:
             hud.append(f"lights {st.fps('lights'):.1f} Hz  " + (
                 f"ego {ego['state'].upper()}{' flashing' if ego.get('flashing') else ''} #{ego['track_id']} {ego['dist_m']:.0f} m"
                 if ego else "ego none"))
-        if "rules" in st.latest:
-            hud += rules_hud(st.rules_engine.summary())
-        fused = st.latest.get("fused")
-        if fused and fused["map"]["available"]:
-            hud.append(map_hud(fused))
         ride = ride_line(cam, ascii_only=True)
         if ride:
             hud.append(ride)
@@ -84,38 +78,6 @@ class PreviewRenderer:
             ev.set()
 
 
-def rules_hud(summary, width=92):
-    """Up to three ASCII HUD lines (IN EFFECT / RECENT / AHEAD) from RulesInEffect.summary()."""
-    out = []
-    for label, items in (("IN EFFECT", summary["in_effect"]), ("RECENT", summary["recent"]), ("AHEAD", summary["ahead"])):
-        if not items:
-            continue
-        s = f"{label}: " + " | ".join(items)
-        s = s.encode("ascii", "ignore").decode()
-        out.append(s if len(s) <= width else s[:width - 3] + "...")
-    return out
-
-
-def _ascii(s):
-    s = unicodedata.normalize("NFKD", s.replace("\u2014", "-").replace("\u0142", "l").replace("\u0141", "L"))
-    return s.encode("ascii", "ignore").decode()
-
-
-def map_hud(fused, width=92):
-    """One ASCII HUD line from the `fused` topic: road, limit with its source, lanes, tunnel exit."""
-    r, sl, ln, tn = fused["road"] or {}, fused["speed_limit"], fused["lanes"], fused["tunnel"]
-    s = "MAP: " + " ".join(x for x in (r.get("ref"), r.get("name") or r.get("class")) if x)
-    s += f"  limit {sl['limit_kmh'] if sl['limit_kmh'] is not None else '-'} ({sl['source']})"
-    if ln["count"] is not None:
-        s += f"  lanes {ln['forward']}+{ln['backward']}"
-    if tn["in_tunnel"] and tn["exit_in_m"] is not None:
-        s += f"  tunnel exit {tn['exit_in_m']:.0f} m"
-    elif tn.get("entry_in_m") is not None:
-        s += f"  tunnel in {tn['entry_in_m']:.0f} m"
-    s = _ascii(s)
-    return s if len(s) <= width else s[:width - 3] + "..."
-
-
 def ride_line(cam, ascii_only=False):
     """'Ride: <slug> — <author>, <licence>' for a camerad-replay source (attribution wherever frames are shown).
     ascii_only: for the /preview HUD, whose bitmap font has no Polish letters or dashes."""
@@ -130,161 +92,37 @@ def ride_line(cam, ascii_only=False):
     return s
 
 
-async def h_road(req):
-    return _json(req.app["state"].latest.get("road") or {"error": "no road message yet"},
-                 200 if "road" in req.app["state"].latest else 503)
+def _ascii(s):
+    s = unicodedata.normalize("NFKD", s.replace("\u2014", "-").replace("\u0142", "l").replace("\u0141", "L"))
+    return s.encode("ascii", "ignore").decode()
+
+
+def _raw(name):
+    async def h(req):
+        msg = req.app["state"].latest.get(name)
+        return _json(msg or {"error": "no %s message yet" % name}, 200 if msg else 503)
+    return h
 
 
 async def h_signs(req):
     st = req.app["state"]
     msg = dict(st.latest.get("signs") or {})
     msg["live_tracks"] = st.tracks()
-    msg["suppressed_tracks"] = st.tracks(suppressed=True)
     return _json(msg)
 
 
-async def h_signs_history(req):
-    try:
-        limit = max(0, int(req.query.get("limit", 100)))
-    except ValueError:
-        return _json({"error": "limit must be an integer"}, 400)
-    hist = list(req.app["state"].history)[::-1][:limit]
-    return _json({"count": len(hist), "tracks": hist})
-
-
-async def h_env(req):
-    st = req.app["state"]
-    msg = st.latest.get("env")
-    return _json(msg or {"error": "no env message yet"}, 200 if msg else 503)
-
-
-async def h_speed_limit(req):
-    st = req.app["state"]
-    if "speed_limit" not in st.latest:
-        return _json({"error": "no road/signs message yet"}, 503)
-    return _json(st.speed.snapshot(full=True))
-
-
-async def h_rules(req):
-    st = req.app["state"]
-    if "rules" not in st.latest:
-        return _json({"error": "no road/signs message yet"}, 503)
-    return _json(st.rules_engine.snapshot(full=True))
-
-
-async def h_lights(req):
-    st = req.app["state"]
-    msg = st.latest.get("lights")
-    return _json(msg or {"error": "no lights message yet"}, 200 if msg else 503)
-
-
-async def h_map(req):
-    st = req.app["state"]
-    msg = st.latest.get("map")
-    return _json(msg or {"error": "no map message yet (mapd not running)"}, 200 if msg else 503)
-
-
-async def h_fused(req):
-    st = req.app["state"]
-    msg = st.latest.get("fused")
-    return _json(msg or {"error": "no fused message yet"}, 200 if msg else 503)
-
-
-async def h_lead(req):
-    st = req.app["state"]
-    msg = st.latest.get("lead")
-    return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
-
-
-async def h_ego_state(req):
-    """The data integrator's output for the last frame (docs/INTEGRATOR.md): ego motion with uncertainty and
-    sources, per-source health, the consistency checks."""
-    msg = req.app["state"].latest.get("ego_state")
-    return _json(msg or {"error": "no input yet"}, 200 if msg else 503)
-
-
-async def h_tracks(req):
-    """The integrator's object layer for the last frame: every track in the car frame with its sources."""
-    msg = req.app["state"].latest.get("tracks")
-    return _json(msg or {"error": "no input yet"}, 200 if msg else 503)
-
-
-async def h_lanes(req):
-    st = req.app["state"]
-    msg = st.latest.get("lanes")
-    return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
-
-
-async def h_view(req):
-    st = req.app["state"]
-    msg = st.latest.get("view")
-    return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
-
-
-async def h_roadgeom(req):
-    """The topic `roadgeom` of api 1 is the `road` object of `view` since 2.0."""
-    return _json({"error": "gone in api 2: the fused road geometry is view.road (GET /v2/view, /ws?topics=view)",
-                  "see": "/v2/view"}, 410)
+async def h_moved(req):
+    """The consolidated topics (tracked, fused, decided) are served by chris-integrator since api 3."""
+    return _json({"error": "gone from the roadsense debug face: this topic is served by chris-integrator "
+                           "(the consolidated API)", "topic": req.match_info.get("name") or req.path.rsplit("/", 1)[-1]}, 410)
 
 
 async def h_version(req):
     from . import API_MAJOR, __version__
     from .state import TOPICS
     return _json({"name": "roadsense-api", "version": __version__, "api": API_MAJOR, "topics": list(TOPICS),
+                  "role": "debug face: one camera's raw topics, /preview, the load governor",
                   "paths": "/v2/...; the /v1/... paths are aliases of the same handlers and will go"})
-
-
-async def h_vehicle(req):
-    """The car as the host describes it: mapd's `vehicle` message plus the last scan of every range sensor."""
-    st = req.app["state"]
-    msg = st.latest.get("vehicle")
-    if not msg:
-        return _json({"error": "no vehicle message yet (mapd not running)"}, 503)
-    return _json(dict(msg, objects=list(st.objects.values())))
-
-
-async def h_position(req):
-    """Vehicle input over HTTP (`POST /v1/vehicle`, and under its first name `POST /v1/position`): the body is
-    one message, a JSON array of messages, or JSON lines (docs/VEHICLE_API.md). Forwarded to mapd's
-    position.sock; mapd validates."""
-    try:
-        text = (await req.text()).strip()
-    except Exception:
-        return _json({"error": "unreadable body"}, 400)
-    try:
-        if text.startswith("["):
-            msgs = json.loads(text)
-        else:
-            msgs = [json.loads(ln) for ln in text.splitlines() if ln.strip()]
-    except ValueError:
-        return _json({"error": "body must be a JSON object, a JSON array or JSON lines"}, 400)
-    if not msgs or not all(isinstance(m, dict) for m in msgs):
-        return _json({"error": "no messages"}, 400)
-    path = os.path.join(req.app["state"].rundir, "position.sock")
-    try:
-        reader, writer = await asyncio.open_unix_connection(path)
-    except OSError:
-        return _json({"error": "mapd is not running (no position.sock)"}, 503)
-    rejected = []
-    try:
-        for m in msgs:
-            writer.write((json.dumps(m, separators=(",", ":")) + "\n").encode())
-        writer.write(b'{"type":"hello","api":1,"name":"roadsense-api"}\n')   # its reply marks the end of ours
-        await writer.drain()
-        while True:
-            raw = await asyncio.wait_for(reader.readline(), 2.0)
-            if not raw:
-                break
-            rep = json.loads(raw)
-            if rep.get("type") == "hello":
-                break
-            if rep.get("type") == "error":
-                rejected.append({"index": rep.get("line", 0) - 1, "reason": rep.get("reason")})
-    except (OSError, ValueError, asyncio.TimeoutError):
-        return _json({"error": "mapd did not answer"}, 503)
-    finally:
-        writer.close()
-    return _json({"api": 1, "accepted": len(msgs) - len(rejected), "rejected": rejected})
 
 
 async def h_camera(req):
@@ -298,10 +136,7 @@ async def h_camera(req):
 
 
 async def h_health(req):
-    h = req.app["state"].health()
-    rec = req.app.get("recorder")
-    h["recorder"] = rec.status() if rec is not None else None
-    return _json(h)
+    return _json(req.app["state"].health())
 
 
 async def h_governor(req):
@@ -318,6 +153,7 @@ async def h_governor(req):
             return _json({"error": 'body must be {"force": level or null}'}, 400)
         st.governor.force(force)
         governor_mod.write_caps(os.path.join(st.rundir, "governor"), st.governor.file_line())
+        req.app["governor_pub"].send(st.governor_message())
     return _json(st._governor_health())
 
 
@@ -341,9 +177,7 @@ async def governor_task(app):
             if caps != last_line_caps or now - last_write >= 2.0:
                 governor_mod.write_caps(path, gov.file_line())
                 last_line_caps, last_write = caps, now
-            rec = app.get("recorder")
-            if rec is not None:
-                rec.frames_enabled = gov.caps().get("record_frames", -1) != 0
+            app["governor_pub"].send(st.governor_message())
         except Exception:
             logging.getLogger("roadsense_api.governor").exception("governor step failed")
         await asyncio.sleep(float(gov.cfg["period_s"]))
@@ -435,26 +269,71 @@ async def _cors(req, resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
 
 
-def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", record="config", governor=None):
-    """`record`: a recorder config dict, None for no recording, or "config" to read `<config dir>/recorder.json`
-    (recorder.py; without that file nothing is recorded)."""
-    state = State(rundir, datadir=datadir, ring_path=ring_path, rules=rules)
+class LinePublisher:
+    """<rundir>/api.sock: the debug face's own output for other processes (the `governor` message), JSON lines;
+    a client gets the last line when it connects."""
+
+    def __init__(self, path):
+        self.path, self.clients, self.last, self.server = path, set(), None, None
+
+    def send(self, msg):
+        self.last = (json.dumps(msg, separators=(",", ":")) + "\n").encode()
+        for w in list(self.clients):
+            if w.transport is None or w.transport.is_closing() or w.transport.get_write_buffer_size() > 1 << 20:
+                self.clients.discard(w)
+                continue
+            w.write(self.last)
+
+    async def _client(self, reader, writer):
+        self.clients.add(writer)
+        if self.last:
+            writer.write(self.last)
+        try:
+            await reader.read()
+        except (OSError, asyncio.CancelledError):
+            pass
+        finally:
+            self.clients.discard(writer)
+            writer.close()
+
+    async def start(self):
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+        try:
+            self.server = await asyncio.start_unix_server(self._client, path=self.path)
+            os.chmod(self.path, 0o666)
+        except OSError as e:
+            log.warning("no %s: %s", self.path, e)
+
+    def close(self):
+        if self.server is not None:
+            self.server.close()
+
+
+MOVED = ("speed_limit", "rules", "map", "fused", "lead", "ego_state", "tracks", "lanes", "view", "vehicle", "signs/history")
+
+
+def make_app(rundir, datadir=None, ring_path=None, connect=True, rules=None, record=None, governor=None):
+    """The debug face of one roadsense instance. (`datadir`, `rules`, `record` are accepted and unused: the
+    consolidated side they configured is chris-integrator.)"""
+    state = State(rundir, ring_path=ring_path)
     if governor is None:          # the governor runs with the daemons; an app without them (tests) has none
         governor = connect
     app = web.Application()
     app["state"] = state
     app["preview_path"] = os.path.join(rundir, "preview.jpg")
-    rec_cfg = recorder_mod.load_config() if record == "config" else record
-    app["recorder"] = None
-    if rec_cfg:
-        app["recorder"] = recorder_mod.Recorder(rec_cfg, app["preview_path"])
-        state.subscribers.add(app["recorder"].on_message)
+    app["governor_pub"] = LinePublisher(os.path.join(rundir, "api.sock"))
     app["websockets"] = weakref.WeakSet()
     app.on_response_prepare.append(_cors)
 
     async def startup(app):
         app["renderer"] = PreviewRenderer(state, app["preview_path"])
         app["tasks"] = [asyncio.create_task(app["renderer"].run())]
+        if governor or connect:
+            await app["governor_pub"].start()
+            app["governor_pub"].send(state.governor_message())
         if governor:
             app["tasks"].append(asyncio.create_task(governor_task(app)))
         if connect:
@@ -464,9 +343,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
         for t in app["tasks"]:
             t.cancel()
         await asyncio.gather(*app["tasks"], return_exceptions=True)
-        if app["recorder"] is not None:
-            state.subscribers.discard(app["recorder"].on_message)
-            app["recorder"].close()
+        app["governor_pub"].close()
 
     async def shutdown(app):      # wake /preview handlers and close /ws clients so they finish (else systemd waits 90 s)
         app["renderer"].event.set()
@@ -477,34 +354,12 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
     app.on_shutdown.append(shutdown)
     app.on_cleanup.append(cleanup)
     app.router.add_get("/", h_index)
-    # api 2: every resource under /v2; /v1 is an alias of the same handlers (the content is that of api 2 on
-    # both: docs/ARCHITECTURE.md "roadsense 2.0: what changed") and will go
-    for method, name, handler in (
-            ("GET", "road", h_road),
-            ("GET", "signs", h_signs),
-            ("GET", "signs/history", h_signs_history),
-            ("GET", "env", h_env),
-            ("GET", "speed_limit", h_speed_limit),
-            ("GET", "rules", h_rules),
-            ("GET", "lights", h_lights),
-            ("GET", "map", h_map),
-            ("GET", "fused", h_fused),
-            ("GET", "lead", h_lead),
-            ("GET", "ego_state", h_ego_state),
-            ("GET", "tracks", h_tracks),
-            ("GET", "lanes", h_lanes),
-            ("GET", "view", h_view),
-            ("GET", "roadgeom", h_roadgeom),
-            ("POST", "position", h_position),
-            ("GET", "vehicle", h_vehicle),
-            ("POST", "vehicle", h_position),
-            ("GET", "camera", h_camera),
-            ("GET", "health", h_health),
-            ("GET", "governor", h_governor),
-            ("POST", "governor", h_governor),
-            ("GET", "frame.jpg", h_frame),
-            ("GET", "version", h_version),
-    ):
+    routes = [("GET", "road", _raw("road")), ("GET", "signs", h_signs), ("GET", "env", _raw("env")),
+              ("GET", "lights", _raw("lights")), ("GET", "calib", _raw("calib")), ("GET", "camera", h_camera),
+              ("GET", "health", h_health), ("GET", "governor", h_governor), ("POST", "governor", h_governor),
+              ("GET", "frame.jpg", h_frame), ("GET", "version", h_version)]
+    routes += [("GET", name, h_moved) for name in MOVED]
+    for method, name, handler in routes:
         for prefix in ("/v2/", "/v1/"):
             app.router.add_route(method, prefix + name, handler)
     app.router.add_get("/preview", h_preview)
@@ -515,7 +370,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
 
 INDEX_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>roadsense</title>
+<title>roadsense (debug face)</title>
 <style>
 body{margin:0;background:#111;color:#ddd;font:14px/1.4 monospace}
 main{display:flex;flex-wrap:wrap;gap:12px;padding:12px}
@@ -526,16 +381,12 @@ pre{margin:0;white-space:pre-wrap}
 .bad{color:#f66}.ok{color:#6f6}
 </style></head><body><main>
 <img src="/preview" alt="preview">
-<section><pre id="ride"></pre><h2>health</h2><pre id="health">...</pre>
-<h2>road</h2><pre id="road">...</pre>
-<h2>signs (live)</h2><pre id="signs">...</pre>
-<h2>environment</h2><pre id="env">...</pre>
-<h2>rules in effect</h2><pre id="rules">...</pre>
-<h2>speed limit</h2><pre id="speed">...</pre>
-<h2>traffic lights</h2><pre id="lights">...</pre>
-<h2>map</h2><pre id="map">...</pre>
-<h2>fused (map + camera)</h2><pre id="fused">...</pre>
-<h2>vehicle (from the host)</h2><pre id="vehicle">...</pre></section>
+<section><p>One camera's raw perception. Tracked and fused topics, the map and the consumer API: chris-integrator.</p>
+<h2>health</h2><pre id="health">...</pre>
+<h2>road (raw)</h2><pre id="road">...</pre>
+<h2>signs (detector tracks)</h2><pre id="signs">...</pre>
+<h2>traffic lights (raw)</h2><pre id="lights">...</pre>
+<h2>governor</h2><pre id="gov">...</pre></section>
 </main><script>
 const $ = id => document.getElementById(id);
 const f = (v, d=1) => v == null ? "-" : Number(v).toFixed(d);
@@ -551,109 +402,22 @@ async function tick(){
       s += `model ${f(h.model_ms, 0)} ms  detect ${f(h.detect_ms, 0)} ms  env ${f(h.env_ms, 0)} ms\\n`;
       s += `cpu ${f(h.cpu_temp_c)} C  ` + h.battery.map(b => `${b.name} ${b.capacity}% ${b.status || ""}`).join("  ");
       $("health").innerHTML = s;
+      $("gov").textContent = `level ${h.governor.level}/${h.governor.levels}  shed ${h.governor.shed.join(", ") || "-"}  limited ${h.governor.limited}`;
     }
-    const cam = await get("/v2/camera");
-    $("ride").textContent = cam && cam.ride ? `Ride: ${cam.ride} \u2014 ${cam.author || "unknown author"}, ` +
-      `${cam.licence || "licence unknown"}` + (cam.playlist ? `  (${cam.ride_index + 1}/${cam.ride_count}, ` +
-      `${f(cam.ride_t_s / 60, 0)}/${f(cam.ride_duration_s / 60, 0)} min)` : "") : "";
     const r = await get("/v2/road");
     if (r) {
       const names = ["far left", "left", "right", "far right"];
       let s = (r.lane_lines || []).map((l, i) => `${names[i] || i}: p ${f(l.prob, 2)}`).join("\\n");
-      const tl = await get("/v2/lanes");
-      if (tl) s += "\\ntracked: lines " + tl.lines.map(l => l.present ? (l.mode === "coast" ? "c" : "|") : ".").join("") +
-        "  edges " + tl.edges.map(l => l.present ? "|" : ".").join("") + `  width ${f(tl.lane_width_m)} m  (${tl.source})`;
       const lead = (r.leads || [])[0];
       s += "\\nlead (raw): " + (lead ? `${f(lead.x[0])} m  p ${f(lead.prob, 2)}  v ${f(lead.v[0])} m/s` : "-");
-      const ld = await get("/v2/lead");
-      if (ld && ld.valid === false) s += "\\nlead: UNKNOWN (" + ld.reason + ")";
-      const es = await get("/v2/ego_state");
-      if (es) s += "\\nego: " + (es.speed.valid ? `${f(es.speed.value)} +- ${f(es.speed.std, 2)} m/s (${es.speed.sources.join(", ")}; ${es.speed.mode})` : "speed unknown: " + es.speed.reason) +
-        "  sources: " + Object.entries(es.sources).map(([k, v]) => k + " " + v.state).join(", ");
-      s += "\\nlead (tracked): " + (ld && ld.present ? `${f(ld.dist_m)} +- ${f(ld.dist_std_m)} m  v_rel ${f(ld.v_rel_mps)} m/s  ` +
-        `gap ${f(ld.time_gap_s)} s  ${ld.mode}${ld.departed ? " DEPARTED" : ""}  ego ${f(ld.ego.speed_mps)} m/s (${ld.ego.source})` : "-");
       s += `\\nseq ${r.seq}  model ${f(r.model_ms, 0)} ms`;
       $("road").textContent = s;
     } else $("road").textContent = "no data";
     const sg = await get("/v2/signs");
     $("signs").textContent = sg && sg.live_tracks.length
       ? sg.live_tracks.map(t => `#${t.track_id} ${t.cls} ${f(t.score, 2)} hits ${t.hits}`).join("\\n") : "none";
-    const ev = await get("/v2/env");
-    $("env").textContent = ev ? ["place", "weather", "light"].map(g => {
-        const r = ev[g] || {};
-        const top = Object.entries(r.scores || {}).sort((a, b) => b[1] - a[1]).slice(0, 3)
-          .map(([k, v]) => `${k} ${f(v, 2)}`).join(", ");
-        return `${g.padEnd(8)} ${(r.label || "-").padEnd(20)} conf ${f(r.confidence, 2)}  stable ${f(r.stable_s, 0)} s  [${top}]`;
-      }).join("\\n") + `\\nluma ${f(ev.stats && ev.stats.luma, 0)}  ${ev.model || ""}  ${f(ev.env_ms, 0)} ms` : "no data";
-    const sl = await get("/v2/speed_limit");
-    $("speed").textContent = sl ? [
-        `limit ${sl.limit_kmh == null ? "unknown" : sl.limit_kmh + " km/h"}  conf ${f(sl.confidence, 2)}  ` +
-          (sl.source.kind === "sign" ? `${sl.source.sign} #${sl.source.track_id}` : `${sl.source.kind} ${sl.source.rule || ""}`),
-        `since ${f(sl.since.age_s, 0)} s / ${f(sl.since.distance_m, 0)} m  area ${sl.area.type} (${sl.area.source})  road ${sl.road_class}  zone ${sl.zone.type}`,
-        sl.expiry ? `expires: ${sl.expiry.rule}, cap in ${f(sl.expiry.remaining_m, 0)} m` : "",
-        `v ${f(sl.v_ego_kmh, 0)} km/h  odo ${f(sl.odometer_m / 1000, 2)} km` + (sl.advisory_kmh ? `  advisory ${sl.advisory_kmh}` : ""),
-        ...sl.pending.map(p => `pending #${p.track_id} ${p.sign} ${p.value_kmh || ""} hits ${p.hits} q ${f(p.quality, 2)}`),
-        ...(sl.recent_changes || []).slice(0, 3).map(c => `  ${f(c.odo_m, 0)} m: ${c.event}`)
-      ].filter(Boolean).join("\\n") : "no data";
-    const ru = await get("/v2/rules");
-    $("rules").textContent = ru ? [
-        ...(ru.in_effect.length ? ru.in_effect.map(e => `${e.sign.padEnd(6)} ${(e.name + (e.value != null ? " " + e.value + " " + (e.unit || "") : "")).padEnd(34)} ` +
-          `${e.side ? "(" + e.side + ") " : ""}since ${f(e.since.distance_m, 0)} m / ${f(e.since.age_s, 0)} s  conf ${f(e.confidence, 2)}  ` +
-          `${e.source.kind === "sign" ? "#" + e.source.track_id : e.source.kind}${e.uncertain && e.uncertain.length ? "  ? " + e.uncertain.join(", ") : ""}` +
-          `${e.ends ? "\\n       until: " + e.ends + (e.remaining_m != null ? " (cap in " + f(e.remaining_m, 0) + " m)" : "") : ""}`) : ["nothing in effect"]),
-        "recent: " + (ru.recent.length ? ru.recent.map(e => `${e.sign} ${e.name} ${f(e.passed.age_s, 0)} s ago` + (e.applies_to_car ? "" : " (not this car)") +
-          (e.uncertain && e.uncertain.length ? " ?" : "")).join("; ") : "-"),
-        "ahead:  " + (ru.ahead.length ? ru.ahead.map(w => `${w.sign} ${w.name} ~${f(w.expected_in_m, 0)} m (${f(w.range_m[0], 0)}-${f(w.range_m[1], 0)})`).join("; ") : "-"),
-        `junction: ${ru.junction.last ? ru.junction.last.source + " " + f(ru.junction.last.age_m, 0) + " m ago" : "none seen"}  ` +
-          `area ${ru.area.type} (${ru.area.source})  road ${ru.road_class}  zone ${ru.zone.type}`,
-        ...(ru.pending || []).map(p => `pending #${p.track_id} ${p.sign} ${p.id} hits ${p.hits} q ${f(p.quality, 2)}`),
-        ...(ru.recent_changes || []).slice(0, 4).map(c => `  ${f(c.odo_m, 0)} m: ${c.event}`)
-      ].join("\\n") : "no data";
     const lt = await get("/v2/lights");
-    $("lights").textContent = lt ? [
-        lt.ego ? `ego ${lt.ego.state}${lt.ego.flashing ? " (flashing)" : ""}  #${lt.ego.track_id}  ${f(lt.ego.dist_m, 0)} m  ` +
-          `lat ${f(lt.ego.lateral_m, 1)} m  rel ${f(lt.ego.relevance, 2)}  agree ${lt.ego.agree}/${lt.ego.n_relevant}  (${lt.ego.source})` : "ego: none",
-        ...(lt.lights || []).map(l => `#${l.track_id} ${l.state.padEnd(10)} ${f(l.state_conf, 2)}  ${f(l.dist_m, 0)} m  ` +
-          `lat ${f(l.lateral_m, 1)}  rel ${f(l.relevance, 2)}  hits ${l.hits}${l.ego ? "  EGO" : ""}`),
-        `${f(lt.lights_ms, 0)} ms`
-      ].join("\\n") : "no data";
-    const mp = await get("/v2/map");
-    $("map").textContent = mp ? [
-        `position ${mp.state}` + (mp.position ? `  ${f(mp.position.lat, 5)} ${f(mp.position.lon, 5)}  +-${f(mp.position.hacc_m, 0)} m  ` +
-          `hdg ${f(mp.position.heading_deg, 0)}  ${f(mp.position.speed_mps * 3.6, 0)} km/h  motion ${mp.position.motion_source}` : ""),
-        mp.available ? `road ${mp.road.class} ${mp.road.ref || ""} ${mp.road.name || ""}  match ${f(mp.match.confidence, 2)} (${f(mp.match.distance_m, 0)} m)` +
-          `  lanes ${mp.road.lanes.forward}+${mp.road.lanes.backward} (${mp.road.lanes.source})` : `map unavailable: ${mp.reason}`,
-        mp.available ? `limit ${mp.speed_limit.limit_kmh == null ? "-" : mp.speed_limit.limit_kmh} (${mp.speed_limit.source} ${mp.speed_limit.rule || mp.speed_limit.detail || ""})` +
-          `  built-up ${mp.road.built_up.value} (${mp.road.built_up.source})` +
-          (mp.ahead.tunnel.in_tunnel ? `  TUNNEL exit ${f(mp.ahead.tunnel.exit_m, 0)} m` : mp.ahead.tunnel.entry_m != null ? `  tunnel in ${f(mp.ahead.tunnel.entry_m, 0)} m` : "") : "",
-        mp.available ? "ahead: " + (mp.ahead.features.slice(0, 5).map(x => `${x.kind} ${f(x.dist_m, 0)} m`).join(", ") || "-") +
-          (mp.ahead.curves.length ? `  curve ${mp.ahead.curves[0].direction} R ${f(mp.ahead.curves[0].min_radius_m, 0)} m in ${f(mp.ahead.curves[0].start_m, 0)} m` : "") : "",
-        mp.pack ? `pack ${mp.pack.region} OSM ${mp.pack.osm_timestamp}  (c) OpenStreetMap contributors` : "no pack"
-      ].filter(Boolean).join("\\n") : "mapd not running";
-    const fu = await get("/v2/fused");
-    $("fused").textContent = fu ? [
-        `limit ${fu.speed_limit.limit_kmh == null ? "unknown" : fu.speed_limit.limit_kmh + " km/h"}  ${fu.speed_limit.source}  conf ${f(fu.speed_limit.confidence, 2)}  (${fu.speed_limit.agreement})` +
-          (fu.speed_limit.note ? `  ${fu.speed_limit.note}` : ""),
-        `place ${fu.place.label || "-"}  ${fu.place.source}  conf ${f(fu.place.confidence, 2)}   built-up ${fu.built_up.value} (${fu.built_up.source})`,
-        `lanes ${fu.lanes.count == null ? "-" : fu.lanes.count}  ego ${fu.lanes.ego_index == null ? "-" : fu.lanes.ego_index}  oncoming left ${fu.lanes.oncoming_left == null ? "-" : fu.lanes.oncoming_left}  (${fu.lanes.source})`,
-        `tunnel ${fu.tunnel.in_tunnel}` + (fu.tunnel.exit_in_m != null ? `  exit in ${f(fu.tunnel.exit_in_m, 0)} m` : "") + `  (${fu.tunnel.source})`
-      ].join("\\n") : "no data";
-    const vh = await get("/v2/vehicle");
-    if (vh && vh.present) {
-      const sg = k => vh.signals[k] ? ` [${vh.signals[k].quality}, ${vh.signals[k].source || "-"}]` : "";
-      const row = (g, k) => vh[g][k] == null ? null : `${k} ${JSON.stringify(vh[g][k])}${sg(k)}`;
-      $("vehicle").textContent = [
-        `feeders: ${vh.feeders.map(x => x.name || "?").join(", ") || "-"}`,
-        `speed ${f(vh.motion.speed_mps * 3.6, 0)} km/h${vh.motion.standstill ? " (standstill)" : ""}  gear ${vh.motion.gear || "-"}  ` +
-          `yaw ${f(vh.motion.yaw_rate_rps, 3)} rad/s (${vh.motion.yaw_source || "-"})`,
-        ...["steering_wheel_deg", "accel_long_mps2", "accel_lat_mps2"].map(k => row("motion", k)),
-        ...Object.keys(vh.controls).map(k => row("controls", k)),
-        ...Object.keys(vh.body).map(k => row("body", k)),
-        ...vh.sensors.map(x => `sensor ${x.id} (${x.kind}): ${x.objects} objects, ${f(x.hz)} Hz, age ${f(x.age_s, 2)} s`),
-        `calibration: yaw scale ${f(vh.calibration.yaw_rate.scale.value, 3)} (n ${vh.calibration.yaw_rate.scale.n})  ` +
-          `speed scale ${f(vh.calibration.speed.scale.value, 3)} (n ${vh.calibration.speed.scale.n})`
-      ].filter(Boolean).join("\\n");
-    } else $("vehicle").textContent = vh ? "no host feeds vehicle data (vision only)" : "mapd not running";
+    $("lights").textContent = lt ? (lt.lights || []).map(l => `#${l.track_id} ${l.state} ${f(l.state_conf, 2)}  ${f(l.dist_m, 0)} m`).join("\\n") || "none" : "no data";
   } catch (e) { $("health").textContent = "api unreachable"; }
 }
 tick(); setInterval(tick, 1000);

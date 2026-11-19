@@ -1,9 +1,7 @@
-"""A ride change of camerad-replay --playlist (or a camera restart) resets the api's driving state."""
-import json
+"""The attribution line of a replayed ride (camerad-replay --playlist), shown wherever its frames are shown."""
 import unittest
 
 from roadsense_api.server import ride_line
-from roadsense_api.state import State
 
 
 def cam(seq, ride=None, idx=None):
@@ -14,29 +12,7 @@ def cam(seq, ride=None, idx=None):
     return m
 
 
-class RideChangeTest(unittest.TestCase):
-    def feed(self, st, m):
-        st.on_message("camerad", m, json.dumps(m))
-
-    def test_reset_on_ride_change_and_restart(self):
-        st = State("/nonexistent")
-        self.feed(st, cam(1, "a", 0))
-        self.feed(st, cam(2, "a", 0))
-        st.speed.odo = 1234.0
-        st.live_tracks[7] = {"track_id": 7, "_seen": 0}
-        self.feed(st, cam(3, "a", 0))           # same ride, seq on: nothing reset
-        self.assertEqual(st.speed.odo, 1234.0)
-        self.assertEqual(st.ride_changes, 0)
-        self.feed(st, cam(1, "b", 1))           # next ride
-        self.assertEqual(st.ride_changes, 1)
-        self.assertEqual(st.speed.odo, 0.0)
-        self.assertEqual(st.live_tracks, {})
-        st.speed.odo = 5.0
-        self.feed(st, cam(10))                  # a live camera after the replay: key changes
-        self.feed(st, cam(2))                   # camera restart: seq backwards
-        self.assertEqual(st.ride_changes, 3)
-        self.assertEqual(st.speed.odo, 0.0)
-
+class RideLineTest(unittest.TestCase):
     def test_ride_line(self):
         self.assertIsNone(ride_line({"seq": 1}))
         s = ride_line(cam(1, "rural-zloczew", 1))

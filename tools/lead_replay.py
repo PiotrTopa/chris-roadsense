@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay recorded `road` messages through the lead tracker (api/roadsense_api/lead.py) and measure it.
+"""Replay recorded `road` messages through the lead tracker (chris_integrator/trackers/lead.py) and measure it.
 
     tools/lead_replay.py ROAD.jsonl[.gz] [--ego none|surrogate] [--every N] [--csv OUT.csv] [--events]
 
@@ -27,12 +27,12 @@ import os
 import statistics
 import sys
 
-_API = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api")
-if "--api" in sys.argv:                          # measure another checkout's tracker on the same data (before / after)
+_API = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-integrator")
+if "--api" in sys.argv:                          # another checkout's chris-integrator directory (before / after)
     _API = sys.argv[sys.argv.index("--api") + 1]
 sys.path.insert(0, _API)
 
-from roadsense_api.lead import LeadTracker      # noqa: E402
+from chris_integrator.trackers.lead import LeadTracker      # noqa: E402
 
 NS = 10 ** 9
 

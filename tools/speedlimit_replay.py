@@ -10,8 +10,8 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
-from roadsense_api.speedlimit import SpeedLimit, load_rules  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-integrator"))
+from chris_integrator.trackers.speedlimit import SpeedLimit, load_rules  # noqa: E402
 
 
 def main():

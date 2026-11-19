@@ -1,5 +1,5 @@
 [Unit]
-Description=chris-integrator (sensor fusion and object layer of the chris perception stack)
+Description=chris-integrator (the mixer: fusion, object layer, map box, trackers and decisions, consolidated API)
 After=network.target
 
 [Service]
@@ -7,9 +7,18 @@ Type=simple
 Environment=CHRIS_RUNDIR=/run/chris
 Environment=CHRIS_DATADIR=/var/lib/chris
 Environment=CHRIS_CONFIG_DIR=/etc/chris
+# the chris-roadsense instance whose sockets are read, and its debug face (for /preview, /v2/frame.jpg, /v2/governor)
 Environment=CHRIS_ROADSENSE_RUNDIR=/run/roadsense
+Environment=CHRIS_ROADSENSE_HTTP=http://127.0.0.1:8081
+# the consolidated API (HTTP + WebSocket): what consumers connect to
+Environment=CHRIS_API_HOST=0.0.0.0
+Environment=CHRIS_API_PORT=8080
+# the map pack of the map box (chris-mapper); a changed pack is loaded without a restart
+Environment=CHRIS_MAP_PACK=/var/lib/chris/maps/current.rsmap
+Environment=PYTHONPATH=/usr/local/lib/chris
 EnvironmentFile=-/etc/chris/integrator.env
 RuntimeDirectory=chris
+RuntimeDirectoryPreserve=yes
 StateDirectory=chris
 ExecStart=/usr/bin/python3 -m chris_integrator --roadsense ${CHRIS_ROADSENSE_RUNDIR}
 Restart=always

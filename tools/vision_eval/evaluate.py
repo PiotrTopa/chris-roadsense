@@ -116,8 +116,8 @@ def load(path, strip_plan=False):
     p = Pipeline()
     pre = PreStage(PRE["prob_tau"], PRE["geo_tau"]) if (PRE["prob_tau"] or PRE["geo_tau"]) and "vis" in os.path.basename(path) else None
     if (TRACKER_CFG["lanes"] or TRACKER_CFG["lead"]) and (TRACKER_ON[0] == "all" or "vis" in os.path.basename(path)):
-        from roadsense_api.lanes import RoadGeometryTracker
-        from roadsense_api.lead import LeadTracker
+        from chris_integrator.trackers.lanes import RoadGeometryTracker
+        from chris_integrator.trackers.lead import LeadTracker
         p.lanes, p.lead = RoadGeometryTracker(TRACKER_CFG["lanes"]), LeadTracker(TRACKER_CFG["lead"])
     R = {k: [] for k in ("t", "seq", "raw_in", "raw_edge", "raw_lp", "lead_raw_x", "lead_raw_p", "vx", "yr",
                          "tr_present", "tr_y", "tr_edge_present", "lead_present", "lead_d", "lead_v", "lead_id",

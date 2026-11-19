@@ -178,7 +178,7 @@ def cmd_characterise(a):
 # ---- detect ---------------------------------------------------------------------------------------------------
 def cmd_detect(a):
     rl = tree_lib()
-    from roadsense_api.integrator import Integrator
+    from chris_integrator import Integrator
     for path in a.sessions:
         integ = Integrator()
         veh = Veh()
@@ -279,7 +279,7 @@ def cmd_detect(a):
 # ---- accuracy -------------------------------------------------------------------------------------------------
 def cmd_accuracy(a):
     rl = tree_lib()
-    from roadsense_api.integrator import Integrator
+    from chris_integrator import Integrator
     for path in a.sessions:
         msgs = [m for m in messages(rl, a, path) if m.get("type") in ("ego", "road", "vehicle")
                 and isinstance(m.get("ts_mono_ns"), int)]
@@ -598,7 +598,7 @@ def cmd_mfd(a):
 # ---- cost -----------------------------------------------------------------------------------------------------
 def cmd_cost(a):
     rl = tree_lib()
-    from roadsense_api.integrator import Integrator
+    from chris_integrator import Integrator
     msgs = [m for m in messages(rl, a, a.session) if isinstance(m.get("ts_mono_ns"), int)]
     integ = Integrator()
     n = k = 0

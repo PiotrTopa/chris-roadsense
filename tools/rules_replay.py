@@ -16,9 +16,9 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
-from roadsense_api.rules import RulesInEffect  # noqa: E402
-from roadsense_api.speedlimit import load_rules  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-integrator"))
+from chris_integrator.trackers.rules import RulesInEffect  # noqa: E402
+from chris_integrator.trackers.speedlimit import load_rules  # noqa: E402
 
 
 class RideRun:

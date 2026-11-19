@@ -1,5 +1,5 @@
 [Unit]
-Description=roadsense mapd (position filter, map matching, map context from an OpenStreetMap pack)
+Description=roadsense mapd, LEGACY (own position filter + vehicle input; in the chris stack the map box runs inside chris-integrator: do not run both)
 PartOf=roadsense.target
 
 [Service]
@@ -9,7 +9,7 @@ Slice=roadsense.slice
 # position source and without a pack.
 Environment=ROADSENSE_RUNDIR=/run/roadsense
 Environment=ROADSENSE_CONFIG_DIR=/etc/roadsense
-Environment=PYTHONPATH=/usr/local/lib/roadsense/mapd
+Environment=PYTHONPATH=/usr/local/lib/roadsense/mapd:/usr/local/lib/chris
 RuntimeDirectory=roadsense
 RuntimeDirectoryPreserve=yes
 StateDirectory=roadsense

@@ -36,8 +36,8 @@ import sys
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "api"))
-from roadsense_api.lead import DEFAULT_CFG, LeadTracker  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "chris-integrator"))
+from chris_integrator.trackers.lead import DEFAULT_CFG, LeadTracker  # noqa: E402
 
 BANDS = ((0, 15), (15, 30), (30, 60), (60, 200))
 

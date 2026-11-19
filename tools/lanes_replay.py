@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay recorded `road` messages through the road-geometry tracker (api/roadsense_api/lanes.py) and measure it.
+"""Replay recorded `road` messages through the road-geometry tracker (chris_integrator/trackers/lanes.py) and measure it.
 
     tools/lanes_replay.py ROAD.jsonl[.gz] [--every N] [--lanes-total N --lanes-forward N] [--cfg k=v ...] [--out LANES.jsonl]
 
@@ -29,9 +29,9 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-integrator"))
 
-from roadsense_api.lanes import LINE_NAMES, RoadGeometryTracker      # noqa: E402
+from chris_integrator.trackers.lanes import LINE_NAMES, RoadGeometryTracker      # noqa: E402
 
 NS = 10 ** 9
 XS = (10.0, 30.0, 60.0)

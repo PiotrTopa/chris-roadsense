@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay recorded `lights` messages through the api's ego-light selection (api/roadsense_api/lights.py).
+"""Replay recorded `lights` messages through the api's ego-light selection (chris_integrator/trackers/lights.py).
 
     tools/lights_ego_replay.py LIGHTS.jsonl[.gz] --road ROAD.jsonl[.gz] [--step N] [--fps F] [--focal PX]
                                [--stateless] [--events]
@@ -24,9 +24,9 @@ import zlib
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-integrator"))
 
-from roadsense_api import lights as L      # noqa: E402
+from chris_integrator.trackers import lights as L      # noqa: E402
 
 
 def read_lines(path):

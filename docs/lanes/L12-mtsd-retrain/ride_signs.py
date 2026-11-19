@@ -13,8 +13,8 @@ only, never committed); the MJPEG index is ~/l11/frames/SLUG/full/index.npy (L11
 import glob, json, os, subprocess, sys
 import numpy as np
 
-sys.path.insert(0, "/home/piotr/projects/roadsense/api")
-from roadsense_api import signctx  # noqa: E402
+sys.path.insert(0, "/home/piotr/projects/roadsense/chris-integrator")
+from chris_integrator.trackers import signctx  # noqa: E402
 
 slug, rec, out = sys.argv[1:4]
 k = sys.argv.index("--")

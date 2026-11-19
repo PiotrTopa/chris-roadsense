@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Replay a recorder session through the ego-light selection with and without the lane assignment
-(api/roadsense_api/lights.py, lane L16).
+(chris_integrator/trackers/lights.py, lane L16).
 
     tools/lights_lane_replay.py SESSION/messages.jsonl.gz [--events] [--out LIGHTS.jsonl]
 
@@ -25,10 +25,10 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-integrator"))
 
-from roadsense_api import lights as L                      # noqa: E402
-from roadsense_api.lanes import RoadGeometryTracker        # noqa: E402
+from chris_integrator.trackers import lights as L                      # noqa: E402
+from chris_integrator.trackers.lanes import RoadGeometryTracker        # noqa: E402
 
 DROP = ("dist_m", "lateral_m", "relevance", "ego", "slot")
 

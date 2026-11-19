@@ -25,16 +25,12 @@ import argparse
 import os
 import sys
 
-_API = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api")
+# --api: the chris-integrator directory of another checkout (before / after on the same data)
+_API = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-integrator")
 if "--api" in sys.argv:
     _API = os.path.abspath(sys.argv[sys.argv.index("--api") + 1])
 sys.path.insert(0, _API)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from replay_lib import Pipeline, read_lines, read_session      # noqa: E402
-
-for _k in [k for k in sys.modules if k == "roadsense_api" or k.startswith("roadsense_api.")]:
-    del sys.modules[_k]
-sys.path.insert(0, _API)
+from chris_integrator.replay import Pipeline, read_lines, read_session      # noqa: E402
 
 ARROWS_AHEAD_M = 120.0
 
