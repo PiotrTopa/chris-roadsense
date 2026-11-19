@@ -11,10 +11,10 @@ Slice=roadsense.slice
 Environment=ROADSENSE_RUNDIR=/run/roadsense
 Environment=ROADSENSE_DATADIR=/var/lib/roadsense
 Environment=PYTHONPATH=/usr/local/lib/roadsense/api
-# Port: 8081 by default (8080 is the consolidated API of chris-integrator, which forwards /preview,
+# Port: 8091 by default (8090 is the consolidated API of chris-integrator, which forwards /preview,
 # /v2/frame.jpg and /v2/governor to this face); /etc/roadsense/api.env overrides
 # (scripts/install-phone.sh API_PORT=N writes it).
-Environment=ROADSENSE_API_PORT=8081
+Environment=ROADSENSE_API_PORT=8091
 # Bind address: loopback by default: consumers talk to chris-integrator; set ROADSENSE_API_HOST=0.0.0.0
 # (scripts/install-phone.sh API_HOST=...) to look at one camera's raw perception from another machine.
 Environment=ROADSENSE_API_HOST=127.0.0.1

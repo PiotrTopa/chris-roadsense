@@ -12,14 +12,14 @@ speed limit, map, `fused`, `view`, the consumer API, the recorder) is
 Dependencies: Python 3.14 + `py3-aiohttp`, `py3-numpy`, `py3-pillow` (Alpine packages, no pip).
 
 ```sh
-cd api && python3 -m roadsense_api --rundir /run/roadsense --port 8081
+cd api && python3 -m roadsense_api --rundir /run/roadsense --port 8091
 ```
 
 | Option / env | Default | |
 |---|---|---|
 | `--rundir` / `ROADSENSE_RUNDIR` | `/run/roadsense` | daemon sockets, `preview.jpg`, the governor's caps file, `api.sock` (the `governor` message for chris-integrator) |
 | `--ring` / `ROADSENSE_RING` | `/dev/shm/roadsense-frames` | frame ring; only its header is read (intrinsics for `/v2/camera` and overlays) |
-| `--port` / `ROADSENSE_API_PORT` | `8081` | 8080 is the consolidated API's default |
+| `--port` / `ROADSENSE_API_PORT` | `8091` | 8090 is the consolidated API's (chris-integrator) port |
 | `--host` / `ROADSENSE_API_HOST` | `0.0.0.0` (the unit file: `127.0.0.1`) | |
 
 Modules: `sockets.py` (one reconnecting client per daemon, backoff 0.2-5 s), `state.py` (latest raw messages,
