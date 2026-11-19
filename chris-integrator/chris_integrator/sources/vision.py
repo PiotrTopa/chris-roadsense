@@ -19,9 +19,12 @@ PAIR_LAG_S = 0.125               # prior of the delay: the pose describes the im
 STOP_SPEED, GO_SPEED, STOP_CONFIRM_S = 0.15, 0.8, 1.0
 MOUNT_MIN_SPEED, MOUNT_MAX_YAW = 5.0, 0.10
 PITCH_CUSUM_K, PITCH_CUSUM_H = 1.5, 14.0   # in sigma of the pitch row; a step of 1 degree at 10 m/s fires in about half a second
-# the pose's motion at a standstill another source knows (m/s, rad/s, frames within 2 s). Set on ONE parked session of the
-# reference car (54 min: rates below 0.0011 rad/s in 99.9 % of frames; a re-aiming by hand reached 0.038)
-HANDLED_SPEED, HANDLED_RATE, HANDLED_FRAMES = 0.5, 0.01, 4
+# the pose's motion at a standstill another source knows (m/s, rad/s, frames within 2 s). Deliberately coarse: on
+# the reference car the road model reports small rotations while the car stands in traffic, and a threshold low
+# enough to catch a gentle re-aiming by hand (0.01 rad/s: one such event recorded) fired 3-4 times per healthy
+# drive. A gentle re-aiming at standstill is therefore NOT detected here; it shows at the next drive (pitch step,
+# model out of range, sign rows).
+HANDLED_SPEED, HANDLED_RATE, HANDLED_FRAMES = 0.5, 0.04, 6
 PITCH_STEP_MIN = 0.006           # rad: smaller "steps" are the estimator's ordinary business
 # The speed error's structure, fitted to its autocorrelation on the reference car's two healthy drives (12 000
 # frames; correlation 0.80 at one frame, 0.54 at 0.5 s, 0.42 at 1 s, 0.21 at 3 s, 0.13 at 5 s): hardly any of it

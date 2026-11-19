@@ -452,9 +452,11 @@ def cmd_mount(a):
                 ratio.append(m["pose"]["vx"] / v[0])
             for d in es["diagnostics"]:
                 if d["quantity"] == "mount" or d["kind"] in ("mount_step", "epoch"):
-                    k = (d["kind"], round(T - d["since_s"], -1) if d["kind"] in ("camera_handled", "mount_step") else 0)
+                    k = (d["kind"], d["text"] if d["kind"] in ("camera_handled", "mount_step") else 0)
                     if k not in seen:
-                        seen[k] = (T - t0 - (d["since_s"] if d["level"] != "info" else 0.0), d["text"])
+                        seen[k] = (T - t0 - d["since_s"], d["text"])
+                    elif d["kind"] == "pitch_from_signs":
+                        seen[k] = (seen[k][0], d["text"])       # the newest wording (the estimate settles)
         c = es["calibration"]
         cv, cs = c["vision"], c.get("signrows", {})
         print("== %s: %d frames, %d with the vehicle >= 5 m/s (camera faulted in %.0f %% of them; model speed / vehicle speed median %s)" % (

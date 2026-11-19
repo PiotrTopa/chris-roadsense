@@ -88,9 +88,9 @@ class EgoModel:
         self.aux.append((name, aux))
         self.n += 1
         self._psd = np.append(self._psd, 0.0 if aux.tau_s else aux.psd)
+        self._rho_cache.clear()            # (the cached vectors have the old length)
         if aux.tau_s:
             self._gm.append((i, aux.tau_s, aux.sigma0))
-            self._rho_cache.clear()
         if aux.lo is not None or aux.hi is not None:
             self._clamp.append((i, aux.lo, aux.hi))
         return i

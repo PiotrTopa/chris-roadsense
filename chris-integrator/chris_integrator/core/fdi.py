@@ -24,6 +24,7 @@ import statistics
 DEFAULT_CFG = dict(
     stuck_s=1.5, stuck_n=10,          # identical non-zero values for this long and this many samples: stuck
     stuck_fault_s=2.5,                # ... and a fault after this long
+    learn_n=60, learn_repeat=0.2,     # ... for a stream that has shown, over this many samples, that it does not repeat
     repeat_window=40, repeat_share=0.45,   # share of samples equal to their predecessor (while the value is not zero)
     noise_window=40, noise_ratio=4.0, noise_fault_ratio=25.0,   # robust sigma of the second difference / characterised sigma
     outlier_z=8.0, outlier_share=0.04,
@@ -58,6 +59,7 @@ class Stream:
         self.noise_ratio = 1.0
         self.k = 0
         self.held = []
+        self.h_n, self.h_rep = 0, 0.0
 
     def offer(self, t, v, s):
         """-> [(kind, level, text)] conditions that hold now."""
@@ -72,7 +74,17 @@ class Stream:
         else:
             self.run_v, self.run_t, self.run_n = v, t, 1
         self.q.append((t, v, s))
-        if v != 0.0 and s > 0.0 and self.run_n >= c["stuck_n"] and t - self.run_t >= c["stuck_s"]:
+        # what this stream normally does: the share of samples that equal their predecessor (learned while no
+        # run is going on). A stream that has always repeated itself (a coarse signal, a test fixture) is not
+        # stuck when it repeats; one that never did, is.
+        if v != 0.0 and self.run_n <= 3:
+            self.h_n += 1
+            self.h_rep += ((1.0 if self.run_n > 1 else 0.0) - self.h_rep) / min(self.h_n, 500)
+        varies = self.h_n >= c["learn_n"] and self.h_rep < c["learn_repeat"]
+        if not varies:
+            return out
+        # (a value within its own noise of zero may well stay where it is: a standing car)
+        if abs(v) > 4.0 * s > 0.0 and self.run_n >= c["stuck_n"] and t - self.run_t >= c["stuck_s"]:
             out.append(("stuck", "fault" if t - self.run_t >= c["stuck_fault_s"] else "warn",
                         "value frozen at %.4g for %.1f s (%d samples)" % (v, t - self.run_t, self.run_n)))
         n = len(self.q)

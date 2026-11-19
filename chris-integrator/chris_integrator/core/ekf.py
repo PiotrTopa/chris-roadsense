@@ -254,19 +254,21 @@ class Filter:
         while j1 + 1 < len(self.entries) and self.entries[j1 + 1].t - T <= self.lookahead:
             j1 += 1
         xs, Ps = self.entries[j1].x, self.entries[j1].P
+        # a model may return its transition in a structured form and multiply by it itself (`apply_F`)
+        fmul = getattr(self.model, "apply_F", None) or (lambda F, M: F @ M)
         try:
             for j in range(j1, j0, -1):                # smooth back to entry j0
                 e, a = self.entries[j], self.entries[j - 1]
                 if e.F is None:
                     continue
-                C = np.linalg.solve(e.Pp, self.model.apply_F(e.F, a.P)).T
+                C = np.linalg.solve(e.Pp, fmul(e.F, a.P)).T
                 xs = a.x + C @ self._diff(xs, e.xp)
                 Ps = a.P + C @ (Ps - e.Pp) @ C.T
             e = self.entries[j0]
             dt = e.t - T
             if dt > 0.0:                               # and from entry j0 back to the node at T
                 xp, Pp, F = self.model.predict(x, P, dt)
-                C = np.linalg.solve(Pp, self.model.apply_F(F, P)).T
+                C = np.linalg.solve(Pp, fmul(F, P)).T
                 xs = x + C @ self._diff(xs, xp)
                 Ps = P + C @ (Ps - Pp) @ C.T
             Ps = 0.5 * (Ps + Ps.T)

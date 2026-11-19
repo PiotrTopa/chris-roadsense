@@ -134,7 +134,7 @@ def _alarms(es):
     """{group: (level, text)} the integrator names at this frame."""
     out = {}
     for g, s in es["sources"].items():
-        if s["state"] in ALARM:
+        if s["state"] in ALARM and not (s["state"] == "absent" and s.get("age_s") is None):     # never seen: not part of this car
             out[g] = (s["state"], s.get("reason") or s["state"])
     for d in es.get("diagnostics") or ():
         if (d.get("level") in ("fault", "warn") or d.get("kind") in ("epoch", "reanchor", "mount_step") and d.get("since_s", 99) < 5) \
@@ -148,7 +148,7 @@ def _alarms(es):
 
 def _blamed(es):
     """Groups declared faulted (the integrator's isolation), and those a finding at fault level names."""
-    b = [g for g, s in es["sources"].items() if s["state"] in ("fault", "stale", "absent")]
+    b = [g for g, s in es["sources"].items() if s["state"] in ("fault", "stale") or s["state"] == "absent" and s.get("age_s") is not None]
     b += [d["source"] for d in es.get("diagnostics") or () if (d.get("level") == "fault" or d.get("kind") == "epoch" and d.get("since_s", 99) < 5)
           and d["source"] not in b]
     return b
@@ -180,7 +180,7 @@ def _score(rows, ref, faults, groups, t0, t1, base=None):
     res = {"n": len(rows)}
     pre = set()
     for r in rows:
-        if t0 - 20.0 <= r["t"] < t0:
+        if t0 - 20.0 <= r["t"] < t0 - 1.0:               # (messages arrive out of stamp order by up to a second)
             pre |= set(r["al"])
     if base is not None:                                   # what the unfaulted run names at the same time is not this fault's
         for r in rows:
@@ -191,7 +191,7 @@ def _score(rows, ref, faults, groups, t0, t1, base=None):
     det = who = None
     named = []
     for r in rows:
-        if r["t"] < t0:
+        if r["t"] < t0 - 1.0:
             continue
         new = [g for g in r["al"] if g not in pre or r["al"][g][0] == "fault"]
         if new and det is None:
