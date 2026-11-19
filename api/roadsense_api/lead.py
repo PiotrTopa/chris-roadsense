@@ -16,7 +16,7 @@ from roadsense_integrator.sources.camera_lead import DEFAULT_CFG as _CAM_CFG, PR
 
 NS = 1e9
 DEFAULT_CFG = dict(_CAM_CFG, **LEAD_CFG)
-DEFAULT_CFG.update(radar_fusion=False)      # kept for old lead.json files: range sensors are sources of the integrator now
+DEFAULT_CFG.update(radar_fusion=False)      # stand-alone tracker only: register the radar source for `objects` scans
 
 
 class LeadTracker:
@@ -26,7 +26,10 @@ class LeadTracker:
         self.reset()
 
     def reset(self):
-        self.integ = Integrator(dict(self.integrator_cfg, lead=self.user_cfg))
+        cfg = dict(self.integrator_cfg, lead=self.user_cfg)
+        if self.user_cfg.get("radar_fusion"):        # an old lead.json switch: range sensors are sources now
+            cfg["sources"] = list(cfg.get("sources") or []) + [{"kind": "radar", "id": "*"}]
+        self.integ = Integrator(cfg)
         self.tracks = None
 
     @property

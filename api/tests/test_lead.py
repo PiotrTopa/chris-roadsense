@@ -442,7 +442,6 @@ class Inputs(unittest.TestCase):
         self.assertEqual(set(none) - {"gap_m"}, set(o) - {"gap_m"})
 
 
-@unittest.skip("L38: range sensors are sources of the integrator; the radar source is added by the next commits")
 class Radar(unittest.TestCase):
     """Range-sensor fusion (`radar_fusion`): synthetic radar scans next to the synthetic camera output. The
     camera's distance is scaled by 1.15 (an uncalibrated focal length), the radar is right to 0.15 m."""
@@ -524,20 +523,37 @@ class Radar(unittest.TestCase):
         self.assertTrue(all(o["radar"]["id"] == 1 for _, _, _, o in rows))
         self.assertLess(max(abs(o["dist_m"] - g) for _, g, _, o in rows), 0.5)
 
-    def test_camera_loses_the_lead_radar_keeps_it_for_a_while(self):
+    def test_camera_loses_the_lead_radar_keeps_it(self):
         s = self.scene()
         s.run(5.0)
+        tid = s.rows[-1][3]["track_id"]
         s.prob = 0.05                                               # glare: the camera sees no lead
         rows = s.run(4.0)
-        self.assertTrue(all(o["present"] for _, _, _, o in rows))
+        self.assertTrue(all(o["present"] and o["track_id"] == tid for _, _, _, o in rows))
         self.assertEqual(rows[-1][3]["source"], "radar+ego")
         self.assertAlmostEqual(rows[-1][3]["dist_m"], s.gap, delta=0.5)
-        rows = s.run(3.0)                                           # ... but not for ever: the camera says which vehicle is the lead
-        self.assertFalse(rows[-1][3]["present"])
-        # and a radar alone never starts a track
+        # since L38 the lead is the track on the path, whoever sees it: a moving vehicle on the car's path that
+        # the radar holds stays the lead, and a radar alone finds one (the object layer, docs/INTEGRATOR.md 6)
+        rows = s.run(3.0)
+        self.assertTrue(rows[-1][3]["present"])
+        self.assertTrue(rows[-1][3]["on_path"])
         s2 = self.scene()
         s2.prob = 0.05
-        self.assertFalse(any(o["present"] for _, _, _, o in s2.run(5.0)))
+        self.assertTrue(s2.run(5.0)[-1][3]["present"])
+        # the older rule (the camera alone says which vehicle is the lead) is a switch of the object layer
+        s3 = Scene(30.0, 20.0, 20.0, seed=5)
+        s3.attach(LeadTracker({"radar_fusion": True}, {"objects": {"lead_radar_only": False}}))
+        s3.prob = 0.05
+        rnd = random.Random(1)
+        road0 = s3.road
+
+        def road():
+            s3.tr.on_objects({"type": "objects", "ts_mono_ns": int((s3.t - 0.03) * NS), "sensor": "radar0", "kind": "radar",
+                              "frame": "camera", "objects": [{"id": 1, "x_m": s3.gap + rnd.gauss(0, 0.15), "y_m": 0.2,
+                                                              "range_rate_mps": s3.vl - s3.ve}]})
+            return road0()
+        s3.road = road
+        self.assertFalse(any(o["present"] for _, _, _, o in s3.run(5.0)))
 
     def test_stale_or_unplaced_scans_are_ignored(self):
         tr = LeadTracker({"radar_fusion": True})
@@ -545,11 +561,10 @@ class Radar(unittest.TestCase):
         tr.on_objects({"type": "objects", "ts_mono_ns": NS, "sensor": "u", "kind": "ultrasonic", "frame": "camera", "objects": []})
         tr.on_objects({"type": "objects", "sensor": "r", "kind": "radar", "frame": "camera", "objects": None})
         tr.on_objects(None)
-        self.assertEqual(tr.scans, {})
+        self.assertEqual([s.id for s in tr.integ.specs if s.id in ("r", "u")], [])     # no source was made of them
         s = self.scene()
         s.run(3.0)
-        s.radar_on = False
-        s.tr.scans["radar0"] = (int((s.t - 5.0) * NS), [{"x_m": 30.0, "y_m": 0.0}])       # an old scan stays around
+        s.radar_on = False                                          # the last scan grows old
         self.assertIsNone(s.run(1.0)[-1][3]["radar"])
 
     def test_brake_is_passed_on(self):

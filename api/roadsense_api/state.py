@@ -196,6 +196,8 @@ class State:
         lead = load_lead_config()
         if lead:
             cfg["lead"] = dict(lead, **(cfg.get("lead") or {}))
+        if cfg.get("sources") is None:               # a car that feeds range-sensor scans gets them fused
+            cfg["sources"] = [{"kind": "radar", "id": "*"}]
         return Integrator(cfg)
 
     def _carry_faults(self):
