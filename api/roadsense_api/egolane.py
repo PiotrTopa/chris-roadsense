@@ -76,6 +76,14 @@ DEFAULT_CFG = dict(
 )
 
 
+# Per road model (`road.road_model`), on top of DEFAULT_CFG; a key in the user's egolane.json wins. The v0.11.1 vision
+# model's lane lines are less steady than supercombo's (L24-M), and at the same threshold the filter was wrong and
+# confident more often on the labelled rides (5.5 % of labelled frames against 3.4 %; night expressway 9.3 against
+# 2.6 %). At 0.9 it is wrong as rarely as with supercombo (3.3 %) and says "unknown" more often (9.9 against
+# 6.6 %): unknown beats confident wrong (docs/lanes/L27-new-model-default.md).
+PROFILES = {"vision": dict(commit_p=0.9)}
+
+
 def _norm(p):
     s = sum(p)
     if s <= 0:
@@ -93,7 +101,9 @@ def _at(xs, ys, lo, hi):
 
 class EgoLaneEstimator:
     def __init__(self, cfg=None):
-        self.cfg = dict(DEFAULT_CFG, **(cfg or {}))
+        self.user_cfg = dict(cfg or {})
+        self.road_model = None
+        self.cfg = dict(DEFAULT_CFG, **self.user_cfg)
         self.reset()
 
     def reset(self):
@@ -182,7 +192,13 @@ class EgoLaneEstimator:
     # ---- the filter --------------------------------------------------------------------------------
     def on_lanes(self, lanes, road=None, speed_mps=None):
         """One tracked frame (`lanes` topic message); `road` is the raw model frame of it (lane changes are read
-        on the tracked lines; `road` is unused and kept for callers). Returns the estimate (also kept as `self.out`)."""
+        on the tracked lines; of `road` only `road_model` is read: it selects the profile). Returns the estimate
+        (also kept as `self.out`)."""
+        rm = road.get("road_model") if isinstance(road, dict) else None
+        if rm != self.road_model and (rm is not None or road is not None):
+            self.road_model = rm
+            self.cfg = dict(DEFAULT_CFG, **PROFILES.get(rm, {}))
+            self.cfg.update(self.user_cfg)
         c = self.cfg
         ts = lanes.get("ts_mono_ns")
         if not isinstance(ts, int):

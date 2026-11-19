@@ -85,6 +85,7 @@ DEFAULT_CFG = dict(
     static_min_x=1.0,            # ... and when it has passed the camera
     ego_max_age_s=0.5,           # vehicle motion older than this is not used (the model's is)
     max_gap_s=1.0,               # frames further apart than this restart the channel
+    display_lanes_max_age_s=0.5, # an external display lane source (`display_lanes`) older than this is not used
     max_static=24,
 )
 
@@ -189,6 +190,8 @@ class ViewBuilder:
         self.lines = {}                        # id -> _Line
         self.lead = None                       # {"id", "x", "y", "vx", "t0", "ts", "alpha", "msg"}
         self.plan = None                       # (x, y) of the last road plan (light positions: offset + path)
+        self.ext_lanes = None                  # the last `display_lanes` message of an external lane source
+        self.lines_source = "model"            # where the lines of the last `view` came from
         self.seen = {}                         # id -> first-seen ts (age across fade-out / back in)
         self.road = RoadView(self.road_cfg)    # the road part (roadview.py)
 
@@ -199,6 +202,28 @@ class ViewBuilder:
             return
         yaw = msg.get("yaw_rate_rps")
         self.ego = (ts, float(v), -float(yaw) if _fin(yaw) else None)   # the input's yaw rate is positive left
+
+    # ---- the lane-source seam (lane L27) -----------------------------------------------------------------
+    # The lines a consumer DRAWS may come from another source than the road model: a separate, cheap lane-line
+    # analysis whose only job is a good picture. This is the one place where that is decided. The measurement
+    # topics (`lanes`, `fused.lanes`, the ego lane, the road geometry) never see such a source: they stay the
+    # road model's. Contract of the message (docs/ARCHITECTURE.md "Display lane source"): the shape of `lanes`
+    # ({"type":"display_lanes","ts_mono_ns","source","x":[..],"lines":[4 x {"present","y":[..],"y_std"?}],
+    # "edges":[2 x ...]?}), device frame, y positive right, from any provider on <rundir>/laned.sock.
+    def on_display_lanes(self, msg):
+        if isinstance(msg, dict) and isinstance(msg.get("ts_mono_ns"), int) and isinstance(msg.get("x"), list) \
+                and isinstance(msg.get("lines"), list):
+            self.ext_lanes = msg
+
+    def _display_lanes(self, lanes, ts):
+        """The lane lines `view` draws for the frame at ts: the external display source while it is fresh, else
+        the road model's tracked lines (`lanes`). Sets `lines_source`."""
+        ext = self.ext_lanes
+        if ext is not None and abs(ts - ext["ts_mono_ns"]) <= self.cfg["display_lanes_max_age_s"] * NS:
+            self.lines_source = str(ext.get("source") or "external")
+            return ext
+        self.lines_source = "model"
+        return lanes
 
     def _motion(self, ts):
         v, r = self.model_motion
@@ -338,7 +363,7 @@ class ViewBuilder:
                             "sx": round(math.sqrt(ob.px), 2), "sy": round(math.sqrt(ob.py), 2),
                             "age_s": round((ts - self.seen.get(oid, ob.t0)) / NS, 2), "meas_age_s": round(age, 3),
                             "phase": phase, "alpha": round(ob.alpha, 2), "attrs": ob.attrs, "box": ob.box})
-        lines = self._lines(lanes, ts, dt, fade)
+        lines = self._lines(self._display_lanes(lanes, ts), ts, dt, fade)
         path = None
         if self.plan:
             ys = [_interp(self.plan[0], self.plan[1], x) for x in c["xs"]]
@@ -348,7 +373,8 @@ class ViewBuilder:
         return {"type": "view", "seq": road.get("seq"), "ts_mono_ns": ts, "ts_real_ns": road.get("ts_real_ns"),
                 "x": list(c["xs"]),
                 "ego": {"speed_mps": round(v, 2), "yaw_rate_rps": round(-r, 4), "source": src},   # positive left
-                "objects": objects, "lines": lines, "path": path,
+                "objects": objects, "lines": lines, "lines_source": self.lines_source, "path": path,
+                "road_model": road.get("road_model"),
                 "road": self.road.on_frame(ts, v, geom, egolane)}
 
     def _lead(self, lead, ts, dt, fade):

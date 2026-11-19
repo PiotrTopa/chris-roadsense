@@ -60,8 +60,10 @@ class GovernorTest(unittest.TestCase):
         self.assertEqual(g.caps()["road_hz"], -1)                    # 3 K of headroom left: the road model is not touched
         run(g, clk, 89.0, 10)                                        # the limit is being hit: the last resort
         self.assertEqual(g.shed()[-1], "road")
+        self.assertEqual(g.shed()[-2], "plan")                       # the plan's rate went before the road model's
         caps = g.caps()
-        self.assertEqual((caps["road_hz"], caps["env_hz"], caps["preview_hz"], caps["record_frames"]), (10, 0, 0, 0))
+        self.assertEqual((caps["road_hz"], caps["policy_hz"], caps["env_hz"], caps["preview_hz"], caps["record_frames"]),
+                         (10, 2, 0, 0, 0))
         self.assertEqual([e["what"] for e in g.events if e["action"] == "shed"], g.shed())
 
     def test_urgent_and_limiter_step_faster(self):
@@ -70,7 +72,7 @@ class GovernorTest(unittest.TestCase):
         self.assertEqual(g.level, 5)
         g, clk = self.make()
         run(g, clk, 87.0, 60, limiter=3)                             # 3 K and the limiter cutting: down to the road model
-        self.assertEqual(g.level, 8)
+        self.assertEqual(g.level, 9)
         self.assertTrue(g.state()["limited"])
 
     def test_a_step_that_turned_the_temperature_is_given_time(self):
@@ -105,10 +107,23 @@ class GovernorTest(unittest.TestCase):
         self.assertLess(g.state()["headroom_ahead_k"], g.state()["headroom_k"])
 
     def test_max_level_keeps_the_road_model(self):
-        g, clk = self.make(max_level=7)
+        g, clk = self.make(max_level=8)                              # everything but the road model's own rate
         run(g, clk, 95.0, 300, limiter=5)
-        self.assertEqual(g.level, 7)
-        self.assertEqual(g.caps()["road_hz"], -1)
+        self.assertEqual(g.level, 8)
+        self.assertEqual((g.caps()["road_hz"], g.caps()["policy_hz"]), (-1, 2))
+        g, clk = self.make(max_level=7)                              # ... nor the plan's
+        run(g, clk, 95.0, 300, limiter=5)
+        self.assertEqual((g.level, g.caps()["road_hz"], g.caps()["policy_hz"]), (7, -1, -1))
+
+    def test_plan_step_before_the_road_model(self):
+        """The policy's rate is shed on a forecast like the detectors (it is not a last resort), the road model's
+        rate only when the limit is hit; `road` is not marked shed for it (the plan says `held` itself)."""
+        g, clk = self.make()
+        run(g, clk, 87.0, 200)                                       # 3 K of headroom, never urgent
+        self.assertEqual((g.level, g.shed()[-1]), (8, "plan"))
+        self.assertEqual((g.caps()["policy_hz"], g.caps()["road_hz"]), (2, -1))
+        self.assertEqual(g.topic_status("road", 14.0, 110.0)["why"], [])
+        self.assertIn('"policy_hz":2', g.file_line())
 
     def test_restore_with_hysteresis(self):
         g, clk = self.make()
@@ -204,7 +219,9 @@ class GovernorTest(unittest.TestCase):
         g.force(6)
         self.assertEqual(g.topic_status("lights", 2.5, 150.0)["why"], ["shed", "slow"])
         self.assertFalse(g.topic_status("road", 14.0, 110.0)["degraded"])
-        g.force(8)
+        g.force(8)                                                   # the plan's rate: `road` itself is whole
+        self.assertEqual(g.topic_status("road", 14.0, 110.0)["why"], [])
+        g.force(9)
         self.assertEqual(g.topic_status("road", 10.0, 110.0)["why"], ["shed"])
         g.force(None)
         g.level = 0

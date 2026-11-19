@@ -18,7 +18,8 @@ than `valid_s`, so a dead governor means the daemons run as configured and the p
 guard):
 
     {"v":1,"ts_mono_ns":...,"valid_s":10,"level":3,"limited":0,"headroom_k":4.2,
-     "preview_hz":1,"record_frames":0,"env_hz":0.2,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"road_hz":-1}
+     "preview_hz":1,"record_frames":0,"env_hz":0.2,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"policy_hz":-1,
+     "road_hz":-1}
 
 A cap of -1 leaves the daemon's own configured rate; 0 pauses the stage; any other value is an upper bound
 (the daemon runs at min(configured, cap)).
@@ -32,7 +33,7 @@ import time
 
 log = logging.getLogger("roadsense_api.governor")
 
-CAP_KEYS = ("preview_hz", "record_frames", "env_hz", "view_hz", "signs_hz", "lights_hz", "road_hz")
+CAP_KEYS = ("preview_hz", "record_frames", "env_hz", "view_hz", "signs_hz", "lights_hz", "policy_hz", "road_hz")
 
 # Shed order, rising importance. Each step adds caps to those of the steps before it (a later step may
 # tighten an earlier cap). `what` is the name reported in health and in the event list.
@@ -45,6 +46,11 @@ DEFAULT_STEPS = (
     {"what": "signs", "caps": {"signs_hz": 2.5}},                    # sign detector at half rate
     {"what": "lights", "caps": {"lights_hz": 2.5}},                  # light detector at half rate
     {"what": "detectors_floor", "caps": {"env_hz": 0, "signs_hz": 1.25, "lights_hz": 1.25}},
+    # the plan (the road model's policy network, CPU): at most 2 runs a second, the plan held in between and marked
+    # (`road.plan.held`, `age_ms`). It goes before the road model's own rate: road / lead / lanes keep their rate
+    # and latency, only the planned path gets older (measured: docs/lanes/L27-new-model-default.md). Without a
+    # policy (supercombo) the cap is unused and the step saves nothing; it is `quick`, so the next step follows.
+    {"what": "plan", "caps": {"policy_hz": 2}, "quick": True},
     # last resort: only when the limit is really being hit (headroom under urgent_k now, or the limiter cutting),
     # never on a forecast
     {"what": "road", "caps": {"road_hz": 10}, "last_resort": True},  # the road model at half rate
@@ -72,7 +78,7 @@ DEFAULT_CFG = {
     "regret_s": 90.0,
     "restore_hold_max_s": 600.0,
     "valid_s": 10.0,
-    "max_level": None,         # None = all steps; e.g. 7 never touches the road model
+    "max_level": None,         # None = all steps; e.g. 8 never touches the road model's rate (7: nor the plan's)
     "steps": None,             # None = DEFAULT_STEPS
     # what a measurement topic must deliver not to be called degraded (rate in messages a second over the
     # last 2 s; latency from the frame's camera time to the api)
@@ -82,6 +88,7 @@ DEFAULT_CFG = {
 }
 
 # topic -> the caps that shed it
+# (`policy_hz` is in none: it slows the plan inside `road`, which says so itself in `plan.held` / `plan.age_ms`)
 TOPIC_CAPS = {"road": ("road_hz",), "lead": ("road_hz",), "lanes": ("road_hz",), "lights": ("lights_hz",),
               "signs": ("signs_hz",), "env": ("env_hz",), "view": ("view_hz",)}
 

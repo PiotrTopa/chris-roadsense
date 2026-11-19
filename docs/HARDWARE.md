@@ -118,6 +118,34 @@ method and every row in [docs/lanes/L21-budget-and-models.md](lanes/L21-budget-a
 * Per-process GPU time is in `/proc/<pid>/fdinfo/*` (`drm-engine-gpu`); the daemons name their threads
   (`md-prep`, `md-prefetch`, `md-main`, `sg-signs`, `sg-lights`), so `top -H` shows the stages.
 
+### Budget with the new default road model (measured 2026-11-19, lane L27)
+
+The default road model is openpilot v0.11.1 `driving_vision` (GPU) + `driving_policy` (CPU, 5 runs a second).
+Same bench, same session, the same sign / light / scenery daemons (L21's proposed stack: envd on the little
+cores, lights 5 Hz), candidates run from `~/l27`, nothing installed
+([docs/lanes/L27-new-model-default.md](lanes/L27-new-model-default.md) section 6):
+
+| | supercombo | vision + policy at 5 Hz (default) | vision + policy after every run |
+|---|---|---|---|
+| rail W | 6.83 | 6.59 | 6.73 |
+| GPU busy (modeld's part) | 91 % (66 %) | 84 % (59 %) | 83 % (57 %) |
+| big cores busy / C | 139 % / 71 | 137 % / 68 | 146 % / 70 |
+| little cores busy; of it frame prep | 204 %; 20.7 % | 192 %; 11.8 % | 192 %; 11.7 % |
+| model thread on a big core (GPU dispatch, parsing, policy) | 7.5 % | 8.6 % | 17.0 % |
+| road runs a second; model step | 13.8; 54 ms | 15.2; 44 ms | 14.8; 50 ms |
+| `road` latency camera -> consumer, median / p90 | 111 / 131 ms | 85 / 97 ms | 101 / 121 ms |
+
+* Single process (`modeld_replay --backend ncnn`, clocks pinned): 46.8 ms per run against supercombo's 60.5 ms;
+  frame prep 1.8-4.7 ms against 12.9 ms; the policy 7.9 ms per run on an A75 (18.0 ms on an A55).
+* The GPU is no longer full in time (84 %): 7 points are free, and the road rate is now set by the turn-taking
+  with the sign detector, not by the GPU.
+* fp16 on the Adreno against ORT fp32 for this model: lines that are present are within 0.007 m (to 30 m) and
+  0.019 m (30-100 m) on average, like supercombo's; the lead distance differs by 0.37 m on average (0.86 m p95,
+  about 1 % of the distance), twice supercombo's 0.19 m. The strict script of the "GPU inference" section
+  (maximum over all four lines to 192 m) rejects both models on the bench clip; see the lane report.
+* Governor step `plan` (the policy at 2 runs a second): three policy runs a second less, about 2 % of a big
+  core; it is in the order for completeness, not for its saving.
+
 ### Thermal headroom and the load governor (lane L24, 2026-11-18)
 
 Limits of this phone as the kernel exposes them: CPU and cluster zones trip `passive` at 90 C (cpufreq
@@ -144,7 +172,8 @@ subtraction table until the on-phone runbook of docs/lanes/L24-quality-max.md ha
 | 3: + scenery once in 5 s | 6.5 | 38 C | full |
 | 6: + signs and lights at half rate | 5.7 | 44 C | full |
 | 7: + scenery paused, detectors at a quarter | 5.1 | 49 C | full |
-| 8: + road model at 10 runs a second | 4.2 | 55 C | half rate, same latency |
+| 8: + the plan at 2 runs a second (new default road model, L27) | about 5.0 | 49 C | full; `road.plan` held up to 0.5 s |
+| 9: + road model at 10 runs a second | 4.2 | 55 C | half rate, same latency |
 | above | - | - | the platform limiter cuts clocks; the topics say `limited`, `slow`, `late` |
 
 With a lower fan duty the path is longer and every temperature in the tables drops accordingly: the fan has to

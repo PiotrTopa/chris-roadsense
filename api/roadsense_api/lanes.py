@@ -379,6 +379,7 @@ class RoadGeometryTracker:
         return {
             "type": "lanes", "seq": road.get("seq"), "ts_mono_ns": road.get("ts_mono_ns"),
             "ts_real_ns": road.get("ts_real_ns"),
+            "road_model": road.get("road_model"),      # which model's lines these are (lane L27)
             "x": np.round(self.x, 2).tolist(),
             "lines": lines[:N_LANE],                  # far left, left, right, far right
             "edges": lines[N_LANE:],                  # left, right

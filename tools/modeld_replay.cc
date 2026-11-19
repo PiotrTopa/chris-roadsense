@@ -40,8 +40,9 @@ void usage() {
             "                    <run>_{input_imgs,big_input_imgs}_yuv.pgm (current frame, Y 512x256 over U|V)\n"
             "                    and <run>_{...}_ch.pgm (all 12 channels, 3x4 tiles of 256x128)\n"
             "  --dump-tensors    also write <run>_in<i>.f32 (all 7 inputs) and <run>_out.f32 (raw 6504 outputs)\n"
-            "  --road-model M    supercombo (default) or vision (v0.11.1 driving_vision; default model\n"
-            "                    driving_vision-fp32.onnx / -ncnn.param, policy driving_policy-fp32.onnx; --policy none = no plan)\n"
+            "  --road-model M    vision (v0.11.1 driving_vision + driving_policy; the default, as in modeld) or supercombo;\n"
+            "                    files from --models-dir DIR (default /var/lib/roadsense/models) unless --model / --policy;\n"
+            "                    --policy none = no plan; --policy-hz as modeld (default 5, 0 = every run)\n"
             "  --rates R,..      simulate modeld's run rate: at R runs per second of stream time the run takes the newest\n"
             "                    pair at each scheduled time (pairs skipped in between, as on the phone); one output file\n"
             "                    P<R>.jsonl per rate, each with its own model state (vision: one network run per frame shared)\n"
@@ -154,13 +155,14 @@ int main(int argc, char **argv) {
     double fps = 20, focal = 0, cx = -1, cy = -1;
     Calib calib;
     bool calib_cli = false, dump_tensors = false;
-    bool split = false;
+    bool split = false, fallback = false;
     std::string rates_s, out_prefix;
     bool policy_set = false;  // --split: modeld's two-stage run (ncnn), for checking it against the one-stage run
     int dump_runs = 3;
     long start = 0, max_frames = -1;
     SupercomboOptions so;
-    bool model_set = false, threads_set = false;
+    bool model_set = false, threads_set = false, road_model_set = false;
+    std::string models_dir = "/var/lib/roadsense/models";
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto val = [&]() -> const char * {
@@ -182,7 +184,8 @@ int main(int argc, char **argv) {
         else if (a == "--roll") calib.roll = atof(val()), calib_cli = true;
         else if (a == "--height-m") calib.height_m = atof(val()), calib_cli = true;
         else if (a == "--backend") so.backend = val();
-        else if (a == "--road-model") so.road_model = val();
+        else if (a == "--road-model") so.road_model = val(), road_model_set = true;
+        else if (a == "--models-dir") models_dir = val();
         else if (a == "--policy") so.policy_path = val(), policy_set = true;
         else if (a == "--policy-threads") so.policy_threads = atoi(val());
         else if (a == "--policy-hz") so.policy_hz = atof(val());
@@ -205,18 +208,15 @@ int main(int argc, char **argv) {
         else return usage(), 2;
     }
     if (input.empty()) return usage(), 2;
-    if (is_vision(so)) {
-        if (!model_set)
-            so.model_path = so.backend == "ncnn" ? "/var/lib/roadsense/models/driving_vision-ncnn.param"
-                                                 : "/var/lib/roadsense/models/driving_vision-fp32.onnx";
-        if (!policy_set) so.policy_path = "/var/lib/roadsense/models/driving_policy-fp32.onnx";
-        if (so.policy_path == "none") so.policy_path.clear();
-        model_set = true;
+    {   // the same rule as modeld: vision + policy by default, supercombo when named or when only it is installed
+        RoadModelChoice choice;
+        std::string rerr;
+        if (!resolve_road_model(&so, road_model_set, model_set, policy_set, &choice, &rerr, models_dir))
+            return fprintf(stderr, "modeld_replay: %s\n", rerr.c_str()), 1;
+        fprintf(stderr, "modeld_replay: %s\n", choice.note.c_str());
+        fallback = choice.fallback;
     }
-    if (so.backend == "ncnn") {
-        if (!model_set) so.model_path = "/var/lib/roadsense/models/supercombo-ncnn.param";
-        if (!threads_set) so.threads = 1;
-    }
+    if (so.backend == "ncnn" && !threads_set) so.threads = 1;
     if (!calib_cli) {
         std::string err;
         const std::string cf = calib_file.empty() ? config_dir() + "/calib.json" : calib_file;
@@ -403,6 +403,9 @@ int main(int argc, char **argv) {
             m.v_ego = mdl->v_ego();
             m.steer_delay = mdl->steer_delay();
             m.effective_hz = rates[r] > 0 ? rates[r] : fps;
+            m.road_model_fallback = fallback;
+            m.policy_hz = mdl->has_policy() ? mdl->policy_hz() : -1;
+            m.policy_ms = mdl->policy_ms();
             fprintf(outs[r], "%s\n", road_json(mdl->outputs(), m).c_str());
             if (r == 0) {
                 ++runs0;

@@ -310,14 +310,52 @@ per second).
 ```
 
 ### modeld: `{"type":"road", ...}` per model run (every frame it keeps up with)
+**Road model (lane L27, 2026-11-19).** The default is the openpilot v0.11.1 model line: `driving_vision`
+(stateless, an image pair 200 ms apart; lane lines, road edges, leads, pose) followed by `driving_policy` (ONNX
+Runtime on the CPU, a 5 Hz history of the vision features) for the plan. openpilot v0.9.7 `supercombo` stays
+selectable. `road_model` in every message says which one produced it.
+
+| how modeld is started | what runs |
+|---|---|
+| no `--road-model`, no `road_model` in `modeld.json` (the unit in `systemd/`) | `vision` + policy when `driving_vision-*` and `driving_policy-fp32.onnx` are in the models directory; otherwise `supercombo` if its file is there, with `"road_model_fallback": true` in every message and `road_model.fallback` in health; with neither, exit 1 with the reason |
+| `--road-model vision` / `"road_model": "vision"` | strict: a missing vision or policy file is an error (exit 1). `--policy none` runs without the policy: no `plan` key |
+| `--road-model supercombo` / `"road_model": "supercombo"` | supercombo, as before L27 |
+| `--model PATH` without a road model | the file's name decides (`driving_vision*` = vision, anything else = supercombo: what every command written before L27 meant) |
+
+A modeld older than L27 knows none of this and runs supercombo; the unit passes no flag it would not know, so
+an older binary under the new unit, and a new binary under an older unit, both start. The api's trackers take
+their settings from `road_model` (below, `lead` and the ego lane), so an api and a modeld of different ages
+work together, at worst with the other model's tracker settings.
+
+The plan and `--policy-hz` (config `policy_hz`, default 5; 0 = after every vision run). The policy runs at
+most that often; between two policy runs the last plan is published again and says so: `plan.held: true`,
+`plan.age_ms` (camera time of this run minus that of the run the plan was made on; never above 1000: after a
+second without a policy run there is no `plan` key). `policy_hz` and `policy_ms` (the CPU time of the policy
+step of this run) are in the message. The load governor lowers the policy's rate (`policy_hz` cap, 2 a second)
+before it touches the road model's own rate.
+
+What differs between the two models in this message:
+
+| field | vision + policy (default) | supercombo |
+|---|---|---|
+| `road_model` | `"vision"` | `"supercombo"` |
+| `plan` | from the policy; `prob` null (one hypothesis); `held`, `age_ms` as above; absent without the policy | every run; `prob` = weight of the chosen hypothesis; `held` false, `age_ms` 0 |
+| `desired_curvature`, `desired_curvature_std` | null (the model has none) | values |
+| `desire_state` | from the policy (null without it) | values |
+| `leads[]` | one hypothesis each; the speed comes from the 200 ms pair | best of the model's hypotheses |
+| `pose`, `v_ego` | from the 200 ms pair; `v_ego` = `pose.vx` of this run. Steadier than supercombo's on the rides (speed 0.7 against 2.7 m/s, yaw rate 1.7 against 3.4 mrad/s about a 1 s mean) | `v_ego` = the speed fed into the run (the previous run's `pose.vx`) |
+| `frame_seq_prev`, `pair_dt_ms` | the frame 200 ms earlier | the frame 50 ms earlier |
+| `policy_hz`, `policy_ms` | numbers | null |
+
 modeld runs the network through an inference backend (`modeld/backend.h`):
-`--backend ort` (default; ONNX Runtime CPU, `supercombo-fp32.onnx`) or
-`--backend ncnn` (ncnn on the GPU through Vulkan, `supercombo-ncnn.param/.bin`
-from `tools/ncnn/make_ncnn.sh`; only when built with `-DROADSENSE_NCNN=ON`, see
-`modeld/CMakeLists.txt` and HARDWARE.md for its precision). Frame prep, the
-feedback FIFOs, parsing and this message are shared, so both backends publish
-the same schema; with ncnn the default pinning is `--cpus 0-3`. Config key
-`backend` in `modeld.json`.
+`--backend ort` (default; ONNX Runtime CPU, `driving_vision-fp32.onnx` / `supercombo-fp32.onnx`) or
+`--backend ncnn` (ncnn on the GPU through Vulkan, `driving_vision-ncnn.param/.bin` from
+`tools/ncnn/make_vision_ncnn.sh` / `supercombo-ncnn.param/.bin` from `tools/ncnn/make_ncnn.sh`; only when built
+with `-DROADSENSE_NCNN=ON`, see `modeld/CMakeLists.txt` and HARDWARE.md for its precision). Frame prep, parsing
+and this message are shared, so both backends and both models publish the same schema; with ncnn the default
+pinning is `--cpus 0-3`. Config keys `backend`, `road_model`, `policy`, `policy_hz`, `models_dir` in
+`modeld.json`. `scripts/fetch-models.sh` downloads both models (pinned URL and sha256 per file) and converts
+them.
 
 All distances in metres, device frame exactly as openpilot defines it: x forward,
 y RIGHT, z DOWN, origin at the camera (modeld passes supercombo outputs through
@@ -326,10 +364,15 @@ in this frame, no axis conversion). Times in seconds.
 ```
 "model_ms": 298.1,
 "frame_seq_prev": 1203,            // second frame of the pair
+"road_model": "vision",            // "vision" | "supercombo": which model made this message
+"road_model_fallback": false,      // true: no model was named and the default one's files are missing (supercombo runs)
+"policy_hz": 5, "policy_ms": 1.2,  // vision: the policy's rate cap now (0 = every run) and its CPU time in this run; null otherwise
 "plan": {"t": [33 T_IDXS], "x": [33], "y": [33], "z": [33],
          "vx": [33], "vy": [33], "vz": [33], "ax":[33],"ay":[33],"az":[33],
          "roll":[33],"pitch":[33],"yaw":[33],"roll_rate":[33],"pitch_rate":[33],"yaw_rate":[33],
-         "x_std":[33],"y_std":[33]},
+         "x_std":[33],"y_std":[33],
+         "prob": null,             // supercombo: weight of the chosen hypothesis
+         "held": false, "age_ms": 0},   // held: an earlier run's plan published again (policy_hz); age_ms: how much earlier
 "lane_lines": [ {"x":[33 X_IDXS],"y":[33],"z":[33],"y_std":[33],"prob":0.97}, x4 (far left, left, right, far right) ],
 "road_edges": [ {"x":[33],"y":[33],"z":[33],"y_std":[33]}, x2 (left, right) ],
 "leads": [ {"prob":0.9,"t":[6],"x":[6],"y":[6],"v":[6],"a":[6],"x_std":[6],"y_std":[6],"v_std":[6],"a_std":[6]}, x3 (now, +2s, +4s hypotheses) ],
@@ -339,7 +382,8 @@ in this frame, no axis conversion). Times in seconds.
          "blinkers":{"left":[6],"right":[6]}, "hard_brake_pred":[..]}
 ```
 Exact index tables come from openpilot v0.9.7 `selfdrive/modeld/constants.py`
-and are mirrored in `modeld/supercombo_layout.h`.
+and are mirrored in `modeld/supercombo_layout.h`; those of the v0.11.1 models (the ONNX metadata
+`output_slices`) in `modeld/vision_layout.h`.
 
 ### sign provider: `{"type":"signs", ...}` per processed frame
 Sign detection is not part of roadsense. Any external process may provide it by
@@ -857,7 +901,7 @@ tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsens
 | `POST /v2/vehicle`, `POST /v2/position` | vehicle input API over HTTP (body: one message, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
 | `GET /v2/camera` | latest `camera` message + ring header fields |
 | `GET /v2/governor`, `POST /v2/governor` | the load governor (below, "Load governor"): state, and holding a shed level by hand |
-| `GET /v2/health` | `governor` (shed level, what is shed, headroom, per-topic rate / latency / degraded marker); per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
+| `GET /v2/health` | `governor` (shed level, what is shed, headroom, per-topic rate / latency / degraded marker); `road_model` (`model`: `vision` or `supercombo`, `fallback`, `plan`: whether `road` carries one, `plan_age_ms`, `policy_hz`, `policy_ms`); per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
 | `GET /v2/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
 | `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `lead`, `lanes` and `view`; mapd's `ego` (the car's motion, while a feeder sends it), `vehicle` and `objects` pass through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,view,ego,vehicle,objects` filters. Per road frame the order is `road`, `lead`, `lanes`, `view`: a consumer that needs one frame complete waits for `view` |
@@ -1050,7 +1094,9 @@ message says `source: "vision"`: the tracker runs the same way on vision alone.
 ```
 "present": true,                 // a lead is tracked; false: every numeric field below is null
 "mode": "track|coast|none",      // see below (until roadsense 2.0 also "hold", which froze the value)
-"track_id": 12,                  // changes when the tracked vehicle is replaced (cut-in, lead change, lost and found)
+"track_id": 12,                  // changes when the tracked vehicle is replaced (cut-in, lead change, lost and found);
+                                 //   vision profile: kept when the same vehicle is found again within 3 s where it
+                                 //   would be by now (`reacquired`), or is seen at another distance at the same speed (`relocated`)
 "age_s": 31.4,                   // of this track
 "source": "vision+ego|vision",   // vision+ego: the ego speed / standstill came from vehicle motion
 "dist_m": 3.61,                  // camera -> rear of the lead along x, the same quantity as road.leads[0].x[0]
@@ -1064,12 +1110,15 @@ message says `source: "vision"`: the tracker runs the same way on vision alone.
 "time_gap_s": null,              // (gap_m or dist_m) / ego speed; null below 1 m/s
 "ttc_s": null,                   // (gap_m or dist_m) / closing speed; null unless closing faster than 0.5 m/s
 "standing": true,                // both stand (standing regime of the filter; the value stays live)
-"meas_age_s": 0.0,               // since the last measurement went into the track (> 0 while coasting)
+"meas_age_s": 0.0,               // since the last confirming measurement went into the track (> 0 while coasting)
+"evidence": "strong",            // this frame: strong = a usable frame went in; weak = a frame under the drop
+                                 //   threshold that agrees with the track (mode coast, below); none = prediction only
+"road_model": "vision",          // the road model of the frame; it selects the tracker's profile (below)
 "pending_change": false,         // the last frame(s) did not fit the track; a replacement is being considered
 "prob": 0.99,                    // road.leads[0].prob of this frame (null when the frame had no usable lead output)
 "departed": false,               // the lead moved off while ego still stands (below)
 "departure": null,               // or {"age_s":0.4,"dist_at_stop_m":3.61,"moved_m":0.8}
-"event": {"kind":"acquired|cut_in|changed|departed|gap_changed|lost|reset","ts_mono_ns":..,"track_id":12,"age_s":31.4},   // the last one; null before the first
+"event": {"kind":"acquired|reacquired|cut_in|changed|relocated|departed|gap_changed|lost|reset","ts_mono_ns":..,"track_id":12,"age_s":31.4},   // the last one; null before the first
 "ego": {"speed_mps":0.0,"standstill":true,"source":"vehicle|vision","age_s":0.04,"tag":"prius-can",   // what the tracker used; age_s: distance in time between the frame and the nearest motion sample
         "brake":true},              // the brake pedal from the `vehicle` topic (controls.brake); null when no host sends it
 "radar": null,                   // or {"sensor":"front_radar","id":17,"dist_m":31.4,"lateral_m":0.2,"v_rel_mps":-0.8,"age_s":0.03}: the range-sensor object used in this frame
@@ -1092,6 +1141,25 @@ The model's `a[0]` is not used (it made the track lag). Modes:
 | `track` | a lead with `prob` >= 0.5 for 2 frames | the filter. A frame whose distance is more than 4 sigma and more than max(0.6 m, 12 % of d) from the prediction is **not averaged in**: the track coasts and the frame starts a candidate. Frames that agree with the candidate replace the track after 0.15 s when it is nearer (`cut_in`) and after 0.5 s when it is farther (`changed`); a new `track_id` either way. A candidate that does not persist was an outlier or the model flickering between two vehicles: nothing between the two is ever reported |
 | `track` with `standing: true` | ego stands (vehicle: `standstill` for 0.3 s; vision only: the model's `v_ego` under 0.15 m/s for 1 s) and the lead stands (estimate under 0.35 m/s, measured under 0.12 m/s) for 0.5 s | **the value stays live** (one update per frame; since roadsense 2.0, lane L19). The filter's model changes: the ego speed is exactly zero, the lead's speed is measured with the model's standstill speed output (sigma max(0.12, 0.5 v_std) m/s), the lead's jerk noise drops to 0.05, and the distance is a random walk scaled so the per-frame jitter is averaged over about 3 s (`stand_tau_s`); a frame more than 2.5 sigma off counts with a weight falling as 1 / residual (Huber: a wiper pass moves it little). A two-sided CUSUM on the model's lead speed (sigma as above, slack 1 sigma, 3.5 sigma-tenths-of-a-second: a lead rolling at 0.3 m/s is caught in about 0.25 s) runs before the distance gate and ends the regime at once (event `departed` when the lead moves away, `gap_changed` when it comes nearer); ego moving (a wheel turns) ends it on that frame. What a live value shows that the old hold hid: the network's slow wander of its close-range distance (a few decimetres over seconds behind a standing car); a display that rounds to metres should add a hysteresis (0.3 m is enough on the recorded drives) |
 | `coast` | `prob` under 0.3 | prediction only, `meas_age_s` counting, for 0.6 s (2.5 s while standing); then `present: false`, event `lost` |
+
+**Profile for the vision model** (`lead.PROFILES["vision"]`, applied when `road_model` is `"vision"`; a key in
+`lead.json` wins; lane L27, docs/lanes/L27-new-model-default.md). The numbers above were measured on
+supercombo. The vision model has no memory: its `prob` flickers from frame to frame and it finds and drops
+distant leads; its relative speed, from an image pair 200 ms apart, scatters by 0.8-1.0 m/s per frame at 50 m
+and beyond where supercombo's scatters by 2-4, and its own `v_std` overstates that. The profile uses the speed
+on purpose:
+
+| | supercombo (default settings) | vision profile |
+|---|---|---|
+| relative speed | sigma max(0.15, 2 v_std) + 0.1 d: little weight beyond 30 m | sigma max(0.15, 0.5 v_std) + 0.01 d: the filter's speed carries the distance through gaps; relative to `pose.vx` of the same run |
+| distance | sigma max(hypot(0.10 m, 2 % of d), 0.2 x_std); kinematics only | sigma with 0.4 x_std (its per-frame scatter is 2-4 m at 50 m and beyond), plus a random walk of (3 % of d)^2 per second: the model's distance drifts against its own speed output, and a track that trusted the speed alone stopped following the distance |
+| start of a track | 2 frames with `prob` >= 0.5 | accumulated evidence: the `prob` of successive frames (>= 0.3) whose distance moved as the reported relative speed says add up, a frame that does not agree starts again; a track starts at 2.5. Two agreeing frames at >= 0.9 start it at once (a clear cut-in is not delayed) |
+| a frame under 0.3 | no measurement: `coast`, prediction only, 0.6 s | from 0.1 on, if its distance is within max(2 m, 8 %) and its speed within 2.5 m/s of the track: a measurement with 2.5 times the sigma, `mode: "coast"`, `evidence: "weak"`; the track ends 2.5 s after its last confirming frame. Otherwise `evidence: "none"`, prediction only, 0.8 s |
+| a replacing hypothesis at another distance | new `track_id` (`changed` / `cut_in`) | the same `track_id` when its speed is within 1.5 m/s and its lateral position within 1 m of the track's (`relocated`): the model re-estimated the distance of the same vehicle. The distance still jumps; nothing is held |
+| found again after `lost` | new `track_id` | the same `track_id` within 3 s when it is where the lost track would be (max(3 m, 15 %)): `reacquired`. It was absent in between and the message said so |
+
+Nothing is held in either profile: a track without evidence is predicted for a bounded time, marked `coast`
+with `evidence` and `meas_age_s`, and then dropped.
 | `none` | no track | `vision` still carries the raw value |
 
 `departed`: the standing regime ended because the lead moved away while ego still stands; true from that frame
@@ -1209,7 +1277,7 @@ lane count. Evidence per frame, read at 8-20 m:
   an exit lane opening on the right of an expressway left the estimate confidently wrong for seconds.
 
 Consecutive frames see the same road, so their evidence counts as one observation per 0.5 s; the distribution
-diffuses by 1 % per second (a change nobody saw). `ego_index` only when one lane holds 0.8 (`commit_p`; 0.75
+diffuses by 1 % per second (a change nobody saw). `ego_index` only when one lane holds 0.8 (`commit_p`; 0.9 when the lines are the vision road model's, `egolane.PROFILES`, lane L27: at 0.8 the filter was wrong and confident on 5.5 % of the labelled frames against supercombo's 3.4 %, at 0.9 on 3.3 % with 9.9 % unknown against 6.6 %; 0.75
 until L22): "unknown" is a valid answer, a wrong confident one is not. Constants: `DEFAULT_CFG` in
 `egolane.py`, overridable per key in `<config dir>/egolane.json`. Cost 0.05 ms per frame on the laptop (the
 `lanes` tracker: 0.38 ms). Replay and score against hand labels:
@@ -1323,6 +1391,9 @@ Derived from the measurement topics, never fed back into them; nothing in it bel
             "reach_m": 80.0, "conf": 0.83, "age_s": 12.3,
             "phase": "appear|steady|coast|shift|leave",   // shift: blending to a restarted track (other marking)
             "alpha": 1.0} ],
+"lines_source": "model",                                  // "model": the road model's tracked lines (`lanes`); else the name
+                                                          //   of the external display lane source (below)
+"road_model": "vision",                                   // the road model of the frame
 "path": {"y": [..]},                                      // the model's planned path at x, as measured
 "road": {...}                                             // the road as one picture (below)
 ```
@@ -1395,6 +1466,27 @@ Without mapd, without a pack or without a position `road` still carries the came
 `roadview.DEFAULT_CFG`). Replay: `tools/view_replay.py SESSION [--map MAP.jsonl]` prints how often each part is
 given on a recorded drive.
 
+### Display lane source (the seam for a separate lane analysis; lane L27)
+
+The lane lines of the measurement topics (`road.lane_lines`, `lanes`, `fused.lanes`, the ego lane, the road
+geometry in `view.road`) are the road model's, with the model's own confidence, whatever their quality. The
+lines a consumer **draws** (`view.lines`) may come from another source: a separate, cheap lane-line analysis
+whose only job is a good picture. There is one place where that is decided, `ViewBuilder._display_lanes()` in
+`api/roadsense_api/view.py`, and one message that feeds it:
+
+```
+{"type":"display_lanes","ts_mono_ns":..,"source":"laned",   // CLOCK_MONOTONIC of the frame the lines belong to
+ "x":[..],                                                   // distances ahead, m (any grid; device frame)
+ "lines":[ {"present":true,"y":[..],"y_std":[..]?}, x4 ],    // far left, left, right, far right; y right positive
+ "edges":[ {"present":true,"y":[..]}, x2 ]? }                // optional: left, right road edge
+```
+
+sent as JSON lines on `<rundir>/laned.sock` by whatever provides it (the api connects when the socket exists;
+no provider is part of roadsense today). While the last such message is at most `display_lanes_max_age_s`
+(0.5 s, `view.json`) from the frame, `view.lines` is built from it (the same smoothing, fading and motion
+carry as for the model's lines) and `view.lines_source` is its `source`; otherwise `view.lines` is built from
+`lanes` and `lines_source` is `"model"`. Nothing else reads the message: the measurement topics never see it.
+
 ## Load governor (`<rundir>/governor`, roadsense 2.0)
 
 One policy decides what roadsense gives up when the platform runs out of thermal headroom
@@ -1418,7 +1510,10 @@ first thing cut. Both are gone (the flags are accepted and ignored).
   | 5 | `signs` | `signs_hz` 2.5 | sign detector at half rate (the GPU time goes to the road model) |
   | 6 | `lights` | `lights_hz` 2.5 | light detector at half rate |
   | 7 | `detectors_floor` | `env_hz` 0, `signs_hz` 1.25, `lights_hz` 1.25 | scenery paused, detectors at a quarter |
-  | 8 | `road` | `road_hz` 10 | the road model at half rate (`road.rate_limited`) |
+  | 8 | `plan` | `policy_hz` 2 | the road model's policy at 2 runs a second: `road.plan` held in between (`plan.held`, `plan.age_ms` up to 500); road / lead / lanes untouched. Unused with supercombo (no policy) |
+  | 9 | `road` | `road_hz` 10 | the road model at half rate (`road.rate_limited`) |
+
+  (Until lane L27 the road model was level 8; `plan` was put in front of it. Levels 1-7 are unchanged.)
 
 * Every step and every restore is reported, and every measurement topic says what it is delivering (below):
   a consumer never has to guess whether it is getting the full stream.
@@ -1442,8 +1537,8 @@ uses the headroom as it is.
   hold (up to 10 min).
 
 All of it is configuration (`<config dir>/governor.json`, keys of `governor.DEFAULT_CFG`: `shed_at_k`,
-`urgent_k`, `lookahead_s`, `restore_at_k`, `shed_dwell_s`, `restore_hold_s`, `max_level` (7 = never touch the
-road model), `steps` (the list above with its rates: a platform with other full rates sets its own),
+`urgent_k`, `lookahead_s`, `restore_at_k`, `shed_dwell_s`, `restore_hold_s`, `max_level` (8 = never touch the
+road model's rate; 7 = nor the plan's), `steps` (the list above with its rates: a platform with other full rates sets its own),
 `floors`, `enabled`).
 
 **Probe.** roadsense knows no device. The default probe (`"probe": "sysfs"`) reads the generic Linux thermal
@@ -1458,12 +1553,13 @@ change and at least every 2 s:
 
 ```
 {"v":1,"ts_mono_ns":...,"valid_s":10,"level":3,"limited":0,"headroom_k":3.4,
- "preview_hz":0,"record_frames":0,"env_hz":0.2,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"road_hz":-1}
+ "preview_hz":0,"record_frames":0,"env_hz":0.2,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"policy_hz":-1,
+ "road_hz":-1}
 ```
 
 A cap of -1 leaves the stage at its configured rate, 0 pauses it, any other value is an upper bound. Every
 daemon reads its key through `camerad/governor.h` (`GovernorReader`, header-only): the camera daemons
-`preview_hz`, envd `env_hz`, a sign / light provider `signs_hz` / `lights_hz`, modeld `road_hz`; the api itself
+`preview_hz`, envd `env_hz`, a sign / light provider `signs_hz` / `lights_hz`, modeld `road_hz` and `policy_hz`; the api itself
 applies `view_hz` and `record_frames`. A file older than `valid_s` is ignored: without the api (or with
 `"enabled": false`) every daemon runs as configured and the platform's limiter is the only guard. A provider
 that does not read the file is simply never shed.
@@ -1499,7 +1595,7 @@ where the first column says "breaking"; everything else is additive.
 |---|---|---|---|
 | breaking | topic `lead`, `fused.lead`: `mode` | `track`, `hold`, `coast`, `none`; in `hold` (both standing) `dist_m` was frozen | `hold` no longer exists: `track` with `standing: true`, the value stays live (it shows the network's slow wander of a few decimetres: a display that rounds to metres needs a hysteresis of about 0.3 m). `standing`, `departed`, `gap_changed`, `coast` unchanged |
 | breaking | topic `roadgeom`, `GET /v1/roadgeom`, `?topics=roadgeom` | the fused road geometry, one message per frame | gone (the path answers 410). The same fields are in `view.road`; its four-field `junction` head is replaced by the whole junction view in `view.road.junction` |
-| breaking | `fused.lanes.ego_index` | a rule; never a middle lane; a guess when unsure | the ego-lane filter's answer; `null` = unknown, and more often than before; commit threshold 0.8 |
+| breaking | `fused.lanes.ego_index` | a rule; never a middle lane; a guess when unsure | the ego-lane filter's answer; `null` = unknown, and more often than before; commit threshold 0.8 (0.9 on the vision model's lines, L27) |
 | breaking | `map.match.confidence` | the winner's share among all candidate edges (dipped at every side road) | the confidence of the matched **road**: pieces of the same road are not rivals (median while moving 0.45 -> 0.55). Thresholds tuned to the old meaning should be revisited |
 | breaking | `map.position.hacc_m` | followed the receiver's claim | scaled by what the receiver's own fixes show (up to 6 x the claim; `map.input.gnss.hacc_scale`) |
 | breaking | map pack | format 1 | format 2 (turn lanes, speed cameras). mapd 2.0 reads 1 and 2; mapd 1.x refuses 2: update roadsense first, then the pack |
@@ -1521,6 +1617,12 @@ where the first column says "breaking"; everything else is additive.
 | breaking | `road.thermal_c`; modeld `--throttle-temp`, envd `--pause-temp` / `pause_temp` | modeld halved its rate and envd paused at a temperature of their own | gone: one load governor sheds in a fixed order with the road model last ("Load governor"); `road.rate_hz`, `road.governor_level`, `road.limited` are new, `effective_hz` / `rate_limited` now reflect the governor |
 | new | `health.governor`, `GET/POST /v2/governor`, `rate` in `lead` / `lanes` / `lights` / `signs` | - | what is shed under heat and what each measurement topic is delivering (rate, latency, `degraded` + reasons) |
 | config | `<config dir>/governor.json` | - | `governor.DEFAULT_CFG` keys |
+| default changed (L27) | the road model behind `road` | openpilot v0.9.7 supercombo | openpilot v0.11.1 `driving_vision` + `driving_policy`; supercombo selectable (`road_model`). `road.desired_curvature` is null, `plan.prob` is null, `plan` may be `held`; the api version stays 2 (every field keeps its name, type and meaning; nulls were already allowed) |
+| new (L27) | `road.road_model`, `road_model_fallback`, `policy_hz`, `policy_ms`, `plan.held`, `plan.age_ms`; `road_model` in `lead`, `lanes`, `view`; `health.road_model` | - | which road model runs, whether it is a fallback, how old the plan is |
+| new (L27) | `lead.evidence`; `lead.event.kind` `reacquired`, `relocated` | - | weak / no evidence behind a coasting track; a `track_id` that is kept (vision profile) |
+| new (L27) | `view.lines_source`, message `display_lanes` on `<rundir>/laned.sock` | - | the seam for a separate lane source for the display |
+| changed (L27) | governor levels | 8 = `road` | 8 = `plan` (`policy_hz`), 9 = `road`; levels 1-7 unchanged; `max_level` 8 keeps the road model's rate |
+| config (L27) | `modeld.json` | - | `road_model`, `policy`, `policy_hz`, `models_dir` |
 | unchanged | vehicle input API (`position.sock`, `POST /v2/vehicle`) | 1.1 | 1.1 (`"api": 1` in `map` / `ego` / `vehicle` messages is that API's version, not this one's) |
 
 Which topic for what: decisions (alerts, anything that acts) read the measurement topics (`lead`, `lanes`,
@@ -1562,7 +1664,9 @@ postmarketOS) everything is built on the phone (`g++`, `cmake`,
 `onnxruntime-dev`, `libcamera-dev` from Alpine); `scripts/install-phone.sh`
 builds, installs to `/usr/local/bin`, writes the systemd units from `systemd/`
 and enables `roadsense.target`. Models under `/var/lib/roadsense/models`,
-fetched with `scripts/fetch-models.sh`. mapd is Python (`py3-numpy`), installed to
+fetched and converted on a dev box with `scripts/fetch-models.sh` (the default road model: openpilot v0.11.1
+`driving_vision` + `driving_policy`; supercombo v0.9.7 as the selectable one and modeld's fallback; URL and
+sha256 pinned per file) and copied with `scripts/push-models.sh`. mapd is Python (`py3-numpy`), installed to
 `/usr/local/lib/roadsense/mapd` with `roadsense-mapd.service`; its map pack is not part of
 the tree: it is built on a dev box and copied with `scripts/roadsense-maps install` to
 `/var/lib/roadsense/maps/current.rsmap` ([MAPS.md](MAPS.md)). A sign provider installs its own unit

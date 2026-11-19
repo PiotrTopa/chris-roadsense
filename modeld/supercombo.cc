@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include <unistd.h>
+
 namespace roadsense {
 
 namespace {
@@ -29,12 +31,62 @@ static_assert(vis::kPolicyOutputLen == 1000, "policy_out_ size");
 
 bool is_vision(const SupercomboOptions &o) { return o.road_model == "vision"; }
 
+bool resolve_road_model(SupercomboOptions *o, bool road_model_set, bool model_set, bool policy_set,
+                        RoadModelChoice *choice, std::string *err, const std::string &dir) {
+    auto readable = [](const std::string &p) { return access(p.c_str(), R_OK) == 0; };
+    const bool ncnn = o->backend == "ncnn";
+    const std::string vis_model = dir + (ncnn ? "/driving_vision-ncnn.param" : "/driving_vision-fp32.onnx");
+    const std::string sc_model = dir + (ncnn ? "/supercombo-ncnn.param" : "/supercombo-fp32.onnx");
+    const std::string policy = dir + "/driving_policy-fp32.onnx";
+    RoadModelChoice ch;
+    if (road_model_set && o->road_model != "vision" && o->road_model != "supercombo") {
+        *err = "unknown road model '" + o->road_model + "' (vision, supercombo)";
+        return false;
+    }
+    if (!road_model_set) {
+        if (model_set) {
+            const size_t sl = o->model_path.find_last_of('/');
+            const std::string base = sl == std::string::npos ? o->model_path : o->model_path.substr(sl + 1);
+            o->road_model = base.find("driving_vision") != std::string::npos ? "vision" : "supercombo";
+            ch.note = "road model " + o->road_model + " (from the model file's name; no --road-model given)";
+        } else if (readable(vis_model) && (policy_set || readable(policy))) {
+            o->road_model = "vision";
+        } else if (readable(sc_model)) {
+            o->road_model = "supercombo";
+            ch.fallback = true;
+            ch.note = "FALLBACK to supercombo: the default road model's files are not installed (" +
+                      std::string(readable(vis_model) ? policy : vis_model) + " missing); `road_model_fallback` is set";
+        } else {
+            *err = "no road model installed: neither " + vis_model + " + " + policy + " nor " + sc_model;
+            return false;
+        }
+    }
+    if (o->road_model == "vision") {
+        if (!model_set) o->model_path = vis_model;
+        if (!policy_set) o->policy_path = policy;
+        if (o->policy_path == "none") o->policy_path.clear();
+        if (!o->policy_path.empty() && !readable(o->policy_path)) {
+            *err = "policy " + o->policy_path + " not readable (the plan needs it; --policy none runs without a plan)";
+            return false;
+        }
+    } else {
+        if (!model_set) o->model_path = sc_model;
+        o->policy_path.clear();
+    }
+    if (ch.note.empty())
+        ch.note = "road model " + o->road_model +
+                  (o->road_model == "vision" ? (o->policy_path.empty() ? ", no policy (no plan in `road`)" : ", policy " + o->policy_path) : "");
+    if (choice) *choice = ch;
+    return true;
+}
+
 double Supercombo::pair_dt_s() const { return vision_ ? vis::kPairDtS : sc::kModelPeriodS; }
 
 Supercombo::Supercombo(const SupercomboOptions &opt) : opt_(opt) {
     if (opt.road_model != "supercombo" && opt.road_model != "vision")
         throw std::runtime_error("unknown road model '" + opt.road_model + "' (supercombo, vision)");
     vision_ = is_vision(opt);
+    policy_hz_ = opt.policy_hz;
     if (vision_) {
         in_[0].assign(sc::kImgInput, 0.0f);
         in_[1].assign(sc::kImgInput, 0.0f);
@@ -146,15 +198,16 @@ void Supercombo::finish(int64_t ts_ns) {
     if (ts_ns < 0) ts_ns = last_ts_ + int64_t(sc::kModelPeriodS * 1e9);
     last_ts_ = ts_ns;
     if (vision_) {
-        // v_ego (published only): the model's own pose vx of the previous run, as for supercombo
-        v_ego_ = runs_ > 1 ? std::clamp(parsed_.pose[0], 0.0f, 70.0f) : 0.0f;
-        if (!std::isfinite(v_ego_)) v_ego_ = 0;
         parsed_ = parse_vision(out_.data());
+        // v_ego (published only, nothing is fed back): the pose of this very run. The vision model's speed comes
+        // from the same image pair as its lead speed, and it is 2-4 times steadier than supercombo's (L27).
+        v_ego_ = std::clamp(parsed_.pose[0], 0.0f, 70.0f);
+        if (!std::isfinite(v_ego_)) v_ego_ = 0;
         policy_ms_ = 0;
         if (policy_) {
-            // the history gets every run's features; the policy itself may run less often (policy_hz)
-            const bool due = opt_.policy_hz <= 0 || policy_ts_ < 0 || ts_ns < policy_ts_ ||
-                             double(ts_ns - policy_ts_) >= 1e9 / opt_.policy_hz - 25e6;
+            // the history gets every run's features; the policy itself may run less often (policy_hz_)
+            const bool due = policy_hz_ <= 0 || policy_ts_ < 0 || ts_ns < policy_ts_ ||
+                             double(ts_ns - policy_ts_) >= 1e9 / policy_hz_ - 25e6;
             std::string perr;
             const auto t0 = std::chrono::steady_clock::now();
             if (due) {
@@ -169,6 +222,8 @@ void Supercombo::finish(int64_t ts_ns) {
                 policy_->push(out_.data() + vis::kHiddenState, ts_ns);
             }
             policy_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            // A held plan is never older than 1 s: after that there is no plan rather than a stale one.
+            if (policy_valid_ && ts_ns - policy_ts_ > 1'000'000'000) policy_valid_ = false;
             if (policy_valid_) {
                 const auto &po = policy_out_;
                 bool fin = true;
@@ -182,6 +237,8 @@ void Supercombo::finish(int64_t ts_ns) {
                 parsed_.has_plan = parsed_.has_desire_state = true;
                 parsed_.plan_hyp = 0;
                 parsed_.plan_weight = NAN;
+                parsed_.plan_held = !due;
+                parsed_.plan_age_ms = double(ts_ns - policy_ts_) * 1e-6;
                 parsed_.finite = parsed_.finite && fin;
             }
         }
@@ -360,6 +417,9 @@ std::string road_json(const RoadOutputs &o, const RoadMeta &m) {
     j.key("steer_delay"), j.num(m.steer_delay), j.s += ',';
     j.key("valid"), j.s += o.finite ? "true" : "false", j.s += ',';
     j.key("road_model"), j.s += '"', j.s += o.model, j.s += "\",";
+    j.key("road_model_fallback"), j.s += m.road_model_fallback ? "true" : "false", j.s += ',';
+    j.key("policy_hz"), j.num(m.policy_hz >= 0 ? m.policy_hz : NAN), j.s += ',';
+    j.key("policy_ms"), j.num(m.policy_hz >= 0 ? m.policy_ms : NAN), j.s += ',';
 
     // plan (absent, not null, when the model has none: consumers test road.get("plan"))
     if (o.has_plan) {
@@ -376,6 +436,9 @@ std::string road_json(const RoadOutputs &o, const RoadMeta &m) {
     j.s += ',', j.key("y_std"), j.arrf(sc::kIdxN, [&](int t) { return o.plan_std[t][1]; });
     j.s += ',', j.key("z_std"), j.arrf(sc::kIdxN, [&](int t) { return o.plan_std[t][2]; });
     j.s += ',', j.key("prob"), j.num(o.plan_mhp ? o.plan_weight : NAN);
+    // held: the plan of an earlier run, published again (policy_hz); age_ms: how much earlier (camera time)
+    j.s += ',', j.key("held"), j.s += o.plan_held ? "true" : "false";
+    j.s += ',', j.key("age_ms"), j.num(o.plan_age_ms);
     j.s += "},";
     }
 
