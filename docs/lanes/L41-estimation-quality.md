@@ -42,7 +42,8 @@ Public description of what changed: `chris-integrator/docs/DESIGN.md` (sections 
 * **A gentle re-aiming of the camera at standstill is not detected**; the one recorded (14:40) is seen only at
   the next drive. Its size cannot be estimated from the road model's outputs at all, only from sign rows.
 * Receiver faults (jump, drift, delayed fixes, swapped axes) are detected and named but the position stays
-  confidently wrong for 35-47 s of a 55 s fault: there is one absolute source.
+  confidently wrong for 35-47 s of a 55 s fault: there is one absolute source. On the real recording the
+  position under receiver and map faults is *worse* than L38's (section 2.3): not diagnosed.
 * Cost is not lower than L38's (section 7).
 
 ## 1. What was wrong in the estimator, and what was changed
