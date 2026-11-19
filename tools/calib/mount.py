@@ -56,6 +56,13 @@ DEFAULTS = dict(
 )
 
 
+# What the picture method's bootstrap cannot see: where in the lane the car drove, the road's crossfall, an
+# uncorrected lens distortion. Measured (lane report L33): the two methods differ by 0.02-0.19 deg on rides whose
+# calibration leaves no residual, and straightening the car camera's nominal distortion moves the result by 0.07-0.2 deg.
+PICTURE_FLOOR = 0.15 * DEG
+AGREE = 0.7 * DEG            # the two methods agree when they are this close (or within twice their combined error)
+
+
 def raw_lines(path):
     """Lines (bytes) of a plain or gzip message file; a recording cut by a power loss yields what is complete."""
     if os.path.isdir(path):
@@ -154,7 +161,7 @@ def select(s, o):
 
 
 def absolute_angles(s):
-    """Per sample: the true (pitch, yaw) this sample points at, and the residual (d_pitch, d_yaw) it showed."""
+    """Per sample: the (pitch, yaw) this sample points at, and how far that is from the calibration in use."""
     d_yaw = np.arctan2(s[:, 3], s[:, 2])
     d_pitch = np.arctan2(s[:, 4], np.hypot(s[:, 2], s[:, 3]))
     out = np.zeros((len(s), 2))
@@ -167,7 +174,7 @@ def absolute_angles(s):
             r = cache[key] = geom.rot_from_euler(s[i, 9], s[i, 7], s[i, 8])
         rr = r @ geom.rot_from_euler(0.0, -d_pitch[i], d_yaw[i])
         _, out[i, 0], out[i, 1] = geom.euler_from_rot(rr)
-    return out, np.stack([d_pitch, d_yaw], axis=1)
+    return out, out - s[:, 7:9]
 
 
 def robust_sigma(v):
@@ -333,6 +340,22 @@ def picture_segments(cv2, gray, min_len=25.0, flat_deg=8.0):
     return seg[(ln >= min_len) & (ang >= flat_deg)]
 
 
+def static_segments(segs, frame_of, share=0.3, cell=8.0, angle_deg=3.0):
+    """Mask of the segments that sit at the same place in many pictures: the bonnet, the dashboard's reflection, a
+    burned-in text. They belong to the car, not to the road, and two of them would always "meet" somewhere."""
+    n_frames = len(np.unique(frame_of))
+    if n_frames < 10:
+        return np.zeros(len(segs), bool)
+    mx, my = (segs[:, 0] + segs[:, 2]) / 2.0, (segs[:, 1] + segs[:, 3]) / 2.0
+    ang = np.degrees(np.arctan2(segs[:, 3] - segs[:, 1], segs[:, 2] - segs[:, 0])) % 180.0
+    key = (np.floor(mx / cell).astype(np.int64) * 100003 + np.floor(my / cell).astype(np.int64)) * 1009 \
+        + np.floor(ang / angle_deg).astype(np.int64)
+    pairs = np.unique(np.stack([key, frame_of.astype(np.int64)], axis=1), axis=0)
+    keys, counts = np.unique(pairs[:, 0], return_counts=True)
+    static = keys[counts >= max(5, share * n_frames)]
+    return np.isin(key, static)
+
+
 def vanishing_point(segs, frame_of, guess, sigma=4.0, window=(360.0, 240.0), rng=None, boot=40):
     """The point most segments aim at. segs: rows [x1, y1, x2, y2] (pinhole pixels), frame_of: the picture each came
     from, guess: (u, v) to search around. Only segments below a candidate count for it (the road is below the
@@ -440,6 +463,9 @@ def picture_method(rep, lens=None, max_frames=400, pictures=None, intr=None, ver
     if not segs:
         return dict(status="not_enough", reason="no straight segments in the pictures")
     segs, frame_of = np.concatenate(segs), np.concatenate(frame_of)
+    keep = ~static_segments(segs, frame_of)
+    n_static = int((~keep).sum())
+    segs, frame_of = segs[keep], frame_of[keep]
     guess = (k_lens["cx"], k_lens["cy"])
     vp = vanishing_point(segs, frame_of, guess)
     if vp is None:
@@ -448,12 +474,44 @@ def picture_method(rep, lens=None, max_frames=400, pictures=None, intr=None, ver
                                                                         cy=k_lens["cy"]))
     f = k_lens["focal_px"]
     out = dict(status="ok", pictures=len(files), vp_px=[round(vp["u"], 2), round(vp["v"], 2)], pitch=pitch, yaw=yaw,
-               sigma=dict(pitch=vp["sigma_v"] / f, yaw=vp["sigma_u"] / f), support=round(vp["support"], 3),
-               segments=vp["segments"], inliers=vp["inliers"], frames_supporting=vp["frames_supporting"])
+               sigma=dict(pitch=math.hypot(vp["sigma_v"] / f, PICTURE_FLOOR), yaw=math.hypot(vp["sigma_u"] / f, PICTURE_FLOOR)),
+               sigma_bootstrap=dict(pitch=vp["sigma_v"] / f, yaw=vp["sigma_u"] / f), support=round(vp["support"], 3),
+               segments=vp["segments"], inliers=vp["inliers"], frames_supporting=vp["frames_supporting"],
+               static_segments_dropped=n_static)
     if vp["frames_supporting"] < 8 or vp["support"] < 0.03:
         out["status"] = "weak"
         out["reason"] = ("few pictures agree on one vanishing point (%d pictures, %.0f %% of the segment length): no "
                          "clear lane lines on the straight stretches" % (vp["frames_supporting"], 100 * vp["support"]))
+    return out
+
+
+def recommend(rep):
+    """Which estimate to apply, per angle: the one with the smaller error when the two methods agree; the road
+    model's motion when there are no usable pictures; nothing when they contradict each other."""
+    p = rep.get("pictures") or {}
+    pose_ok = rep.get("status") == "ok"
+    pic_ok = p.get("status") == "ok"
+    if not pose_ok and not pic_ok:
+        return None
+    if pose_ok and not pic_ok:
+        return dict(status="ok", pitch=rep["pitch"], yaw=rep["yaw"], sigma=dict(rep["sigma"]),
+                    source=dict(pitch="pose", yaw="pose"), why="no usable pictures: the road model's motion alone")
+    if pic_ok and not pose_ok:
+        if rep.get("method") == "pictures":
+            return dict(status="ok", pitch=p["pitch"], yaw=p["yaw"], sigma=dict(p["sigma"]),
+                        source=dict(pitch="pictures", yaw="pictures"), why="pictures only")
+        return None                                   # the recordings themselves were judged not good enough
+    out = dict(status="ok", source={}, sigma={})
+    for k in ("pitch", "yaw"):
+        diff = abs(rep[k] - p[k])
+        if diff > max(AGREE, 2.0 * math.hypot(rep["sigma"][k], p["sigma"][k])):
+            return dict(status="conflict", why="the two methods differ by %.2f deg in %s: neither is recommended; look at "
+                        "the view with each (apply.py --mount-source pose | pictures --dry-run)" % (diff / DEG, k))
+        src = "pose" if rep["sigma"][k] <= p["sigma"][k] else "pictures"
+        out[k] = rep[k] if src == "pose" else p[k]
+        out["sigma"][k] = min(rep["sigma"][k], p["sigma"][k])
+        out["source"][k] = src
+    out["why"] = "both methods agree; per angle the one with the smaller error"
     return out
 
 
@@ -481,7 +539,7 @@ def print_report(rep, out=sys.stdout):
             rep["pitch"], d(rep["pitch"]), s["pitch"] / DEG, sp["pitch"] / DEG, rep["halves"]["pitch"] / DEG))
         w("  yaw   %+.4f rad (%s deg) +- %.2f deg   spread over time %.2f deg, halves differ %.2f deg\n" % (
             rep["yaw"], d(rep["yaw"]), s["yaw"] / DEG, sp["yaw"] / DEG, rep["halves"]["yaw"] / DEG))
-        w("  residual against the calibration in use: pitch %s deg, yaw %s deg\n" % (
+        w("  the calibration in use is off by: pitch %s deg, yaw %s deg (estimate minus used)\n" % (
             d(rep["residual"]["pitch"]), d(rep["residual"]["yaw"])))
         if rep.get("vp_px"):
             w("  road vanishing point at pixel %.1f, %.1f\n" % tuple(rep["vp_px"]))
@@ -501,6 +559,13 @@ def print_report(rep, out=sys.stdout):
                     d(p["pitch"] - rep["pitch"]), d(p["yaw"] - rep["yaw"])))
         if p.get("reason"):
             w("pictures' vanishing point: %s\n" % p["reason"])
+    r = rep.get("recommended")
+    if r and r.get("status") == "ok":
+        w("recommended: pitch %+.4f rad (%s deg, +- %.2f, from %s), yaw %+.4f rad (%s deg, +- %.2f, from %s)\n" % (
+            r["pitch"], d(r["pitch"]), r["sigma"]["pitch"] / DEG, r["source"]["pitch"],
+            r["yaw"], d(r["yaw"]), r["sigma"]["yaw"] / DEG, r["source"]["yaw"]))
+    elif r:
+        w("recommended: nothing: %s\n" % r["why"])
     for t in rep.get("notes", []):
         w("NOTE: %s\n" % t)
     if rep["status"] == "ok":
@@ -518,7 +583,12 @@ def strip(rep):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("inputs", nargs="+", help="recorder sessions or message files (jsonl, jsonl.gz)")
+    ap.add_argument("inputs", nargs="*", help="recorder sessions or message files (jsonl, jsonl.gz)")
+    ap.add_argument("--pictures", help="instead of recordings: a folder of road pictures from the camera (e.g. frames of "
+                    "a dashcam video of a straight road); only the pictures' vanishing point is estimated; needs --focal")
+    ap.add_argument("--focal", type=float, help="--pictures: the camera's focal length in pixels")
+    ap.add_argument("--cx", type=float)
+    ap.add_argument("--cy", type=float)
     ap.add_argument("--out", help="report (JSON); apply.py takes it when its status is ok")
     ap.add_argument("--frames", action="store_true", help="also the vanishing point of the sessions' pictures (OpenCV)")
     ap.add_argument("--lens", help="lens.json: straighten the pictures' segments with its distortion (--frames)")
@@ -538,19 +608,59 @@ def main(argv=None):
         opts["block"] = a.block
     if a.min_blocks:
         opts["min_blocks"] = a.min_blocks
+    lens = None
+    if a.lens:
+        lj = geom.load_json(a.lens)
+        lens = lj.get("calibration") or lj
+    if a.pictures:
+        if a.inputs or not (a.focal or lens):
+            ap.error("--pictures goes without recordings and needs --focal (or --lens)")
+        files = sorted(os.path.join(a.pictures, f) for f in os.listdir(a.pictures)
+                       if f.lower().endswith((".jpg", ".jpeg", ".png", ".pgm")))
+        if not files:
+            ap.error("no pictures in %s" % a.pictures)
+        try:
+            from PIL import Image
+            with Image.open(files[0]) as im:
+                w, h = im.size
+        except ImportError:
+            import cv2
+            h, w = cv2.imread(files[0], 0).shape
+        intr = dict(focal_px=a.focal or lens["focal_px"], cx=a.cx if a.cx is not None else w / 2.0,
+                    cy=a.cy if a.cy is not None else h / 2.0, width=w, height=h)
+        rep = dict(status="not_enough", method="pictures", inputs=[], notes=[], intrinsics_assumed=intr)
+        p = rep["pictures"] = picture_method(rep, lens, a.max_frames, pictures=list(enumerate(files)), intr=intr)
+        if p.get("status") == "ok":
+            rep["status"] = "ok"
+        else:
+            rep["reasons"] = [p.get("reason") or p.get("status")]
+        rep["angles_for"] = {k: (lens or intr).get(k, intr[k]) for k in ("focal_px", "cx", "cy")}
+        rep["recommended"] = recommend(rep)
+        print_report(rep)
+        if a.out:
+            geom.write_json_atomic(a.out, rep)
+            print("report: %s" % a.out)
+        return 0 if rep["status"] == "ok" else 2
+    if not a.inputs:
+        ap.error("give recordings, or --pictures DIR")
     rep = estimate(a.inputs, opts)
     if a.frames:
-        lens = None
-        if a.lens:
-            lj = geom.load_json(a.lens)
-            lens = lj.get("calibration") or lj
         rep["pictures"] = picture_method(rep, lens, a.max_frames, verbose=a.verbose)
-        p = rep["pictures"]
-        if rep["status"] == "ok" and p.get("status") == "ok":
-            dp, dy = abs(p["pitch"] - rep["pitch"]), abs(p["yaw"] - rep["yaw"])
-            if max(dp, dy) > 0.7 * DEG:
-                rep["notes"].append("the pictures' vanishing point and the road model's motion differ by pitch %.2f deg, "
-                                    "yaw %.2f deg: look at apply.py's view before trusting either" % (dp / DEG, dy / DEG))
+    rep["angles_for"] = {k: (rep.get("intrinsics_assumed") or {}).get(k) for k in ("focal_px", "cx", "cy")}
+    if lens and "pitch" in rep and rep["angles_for"]["focal_px"]:
+        # the recording was made with other lens values than the ones given: the road model's estimate fixes a pixel
+        # (where the road vanishes); express it as angles of the given lens, like the pictures' estimate
+        new = {k: lens.get(k, rep["angles_for"][k]) for k in ("focal_px", "cx", "cy")}
+        if any(abs(new[k] - rep["angles_for"][k]) > 0.05 for k in new):
+            vp = geom.Camera(rep["angles_for"], dict(pitch=rep["pitch"], yaw=rep["yaw"])).vanishing_point()
+            rep["as_recorded"] = dict(pitch=rep["pitch"], yaw=rep["yaw"], intrinsics=dict(rep["angles_for"]))
+            rep["pitch"], rep["yaw"] = geom.angles_from_vanishing_point(vp[0], vp[1], new)
+            rep["notes"].append("the angles are given for the lens values of --lens (focal %.1f, centre %.1f, %.1f); the "
+                                "recording was made with focal %.1f, centre %.1f, %.1f" % (
+                                    new["focal_px"], new["cx"], new["cy"], rep["angles_for"]["focal_px"],
+                                    rep["angles_for"]["cx"], rep["angles_for"]["cy"]))
+        rep["angles_for"] = new
+    rep["recommended"] = recommend(rep)
     print_report(rep)
     if a.verbose and rep.get("blocks"):
         for b in rep["blocks"]:

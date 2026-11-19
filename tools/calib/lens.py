@@ -432,13 +432,17 @@ def cmd_solve(a):
 
 # ---- impact of the distortion on the model inputs --------------------------------------------------------------------
 
-def impact(intr, size, calib=None):
-    """How far the distortion moves points of the road models' input frames. Returns rows for a table."""
+def impact(intr, size, calib=None, declared_focal=None):
+    """How far the distortion moves points of the road models' input frames. Returns rows for a table.
+    declared_focal: the focal length the warp is told (default: the lens's own)."""
     w, h = size
     out = {}
     for frame in ("medmodel", "sbigmodel"):
         mf = geom.MODEL_FRAMES[frame][0]
         mp, pin, real = geom.model_region(frame, intr, calib, n=33)
+        if declared_focal:
+            _, pin, _ = geom.model_region(frame, dict(intr, focal_px=declared_focal), calib, n=33)
+            mf = mf * intr["focal_px"] / declared_focal        # camera pixel -> model pixel = mf / declared
         inside = (pin[:, 0] >= 0) & (pin[:, 0] <= w - 1) & (pin[:, 1] >= 0) & (pin[:, 1] <= h - 1)
         d_cam = np.linalg.norm(real - pin, axis=1)
         scale = mf / intr["focal_px"]                         # camera pixel -> model pixel
@@ -454,7 +458,7 @@ def impact(intr, size, calib=None):
             cam_px_max=float(d_cam[inside].max()), cam_px_rms=float(np.sqrt(np.mean(d_cam[inside] ** 2))),
             model_px_max=float(d_cam[inside].max() * scale), model_px_rms=float(np.sqrt(np.mean(d_cam[inside] ** 2)) * scale),
             model_px_near_vp=float(d_cam[inside & centre].max() * scale) if (inside & centre).any() else None,
-            best_pinhole_focal=float(s * intr["focal_px"]), best_pinhole_model_px_max=float(res.max() * scale),
+            best_pinhole_focal=float(s * (declared_focal or intr["focal_px"])), best_pinhole_model_px_max=float(res.max() * scale),
             best_pinhole_model_px_rms=float(np.sqrt(np.mean(res ** 2)) * scale))
     return out
 
@@ -470,7 +474,9 @@ def cmd_impact(a):
         intr = dict(focal_px=a.focal, cx=a.cx if a.cx is not None else w / 2.0, cy=a.cy if a.cy is not None else h / 2.0,
                     k1=a.k1, k2=a.k2, p1=0.0, p2=0.0, k3=a.k3)
     calib = geom.load_json(a.calib) if a.calib else None
-    r = impact(intr, size, calib)
+    r = impact(intr, size, calib, a.declared_focal)
+    if a.declared_focal:
+        print("the warp is told focal %.1f px" % a.declared_focal)
     print("lens: focal %.1f centre %.1f, %.1f k1 %+.4f k2 %+.4f, picture %dx%d, mount %s" % (
         intr["focal_px"], intr["cx"], intr["cy"], intr.get("k1", 0), intr.get("k2", 0), size[0], size[1],
         "pitch %.4f yaw %.4f" % (calib.get("pitch", 0), calib.get("yaw", 0)) if calib else "level"))
@@ -603,6 +609,7 @@ def main(argv=None):
     s.add_argument("--lens", help="lens.json from solve")
     lens_args(s, False)
     s.add_argument("--calib", help="calib.json (mount angles; default level)")
+    s.add_argument("--declared-focal", type=float, help="the focal length the warp is told, if not the lens's own")
     s.add_argument("--json")
     s.set_defaults(fn=cmd_impact)
 

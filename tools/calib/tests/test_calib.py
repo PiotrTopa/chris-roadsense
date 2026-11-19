@@ -354,6 +354,22 @@ class MountTest(unittest.TestCase):
         rep = mount.estimate([p])
         self.assertEqual(rep["status"], "not_enough")
 
+    def test_recommendation(self):
+        pose = dict(status="ok", pitch=0.020, yaw=-0.058, sigma=dict(pitch=0.002, yaw=0.006))
+        pic = dict(status="ok", pitch=0.021, yaw=-0.062, sigma=dict(pitch=0.003, yaw=0.003))
+        r = mount.recommend(dict(pose, pictures=pic))
+        self.assertEqual((r["status"], r["source"]), ("ok", dict(pitch="pose", yaw="pictures")))
+        self.assertEqual((r["pitch"], r["yaw"], r["sigma"]), (0.020, -0.062, dict(pitch=0.002, yaw=0.003)))
+        r = mount.recommend(dict(pose, pictures=dict(status="weak", pitch=0.05, yaw=0.0, sigma=dict(pitch=0.01, yaw=0.01))))
+        self.assertEqual(r["source"], dict(pitch="pose", yaw="pose"))
+        r = mount.recommend(dict(pose))
+        self.assertEqual(r["source"], dict(pitch="pose", yaw="pose"))
+        r = mount.recommend(dict(pose, pictures=dict(pic, yaw=-0.030)))       # 1.6 deg apart
+        self.assertEqual(r["status"], "conflict")
+        self.assertNotIn("pitch", r)
+        self.assertIsNone(mount.recommend(dict(status="not_enough", pictures=pic)))   # the drive itself was refused
+        self.assertIsNone(mount.recommend(dict(status="not_enough")))
+
     def test_truncated_gzip_is_read(self):
         p = os.path.join(self.d, "c.jsonl.gz")
         write_drive(p, (0.0, -3.0 * DEG), (0.0, 0.0), DRIVE)
@@ -421,7 +437,10 @@ class ApplyTest(unittest.TestCase):
                                                 intrinsics_assumed=dict(focal_px=975.0, cx=640.0, cy=360.0, width=1280,
                                                                         height=720),
                                                 pictures=dict(status="ok", pitch=0.0230, yaw=-0.0690,
-                                                              sigma=dict(pitch=0.001, yaw=0.001))))
+                                                              sigma=dict(pitch=0.003, yaw=0.003)),
+                                                recommended=dict(status="ok", pitch=0.0227, yaw=-0.0690,
+                                                                 sigma=dict(pitch=0.002, yaw=0.003),
+                                                                 source=dict(pitch="pose", yaw="pictures"))))
         from PIL import Image
         self.frame = os.path.join(self.d, "frame.jpg")
         Image.new("RGB", (1280, 720), (60, 60, 60)).save(self.frame)
@@ -454,10 +473,10 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual((cal["height_m"], cal["camera_to_front_m"], cal["lateral_offset_m"]), (1.25, 1.62, 0.03))
         self.assertEqual(self.read("lead.json"), {"camera_to_front_m": 1.62})
         # the lens values changed, so the angles keep the road's vanishing pixel, not the numbers
-        vp_old = geom.Camera(dict(focal_px=975.0, cx=640.0, cy=360.0), dict(pitch=0.0227, yaw=-0.0610)).vanishing_point()
+        vp_old = geom.Camera(dict(focal_px=975.0, cx=640.0, cy=360.0), dict(pitch=0.0227, yaw=-0.0690)).vanishing_point()
         vp_new = geom.Camera(dict(focal_px=991.5, cx=652.3, cy=349.1), cal).vanishing_point()
         np.testing.assert_allclose(vp_new, vp_old, atol=0.05)
-        self.assertNotAlmostEqual(cal["yaw"], -0.0610, 3)
+        self.assertNotAlmostEqual(cal["yaw"], -0.0690, 3)
         # the daemons' flat readers find the numbers (no quoted key names inside the comment)
         text = rd(os.path.join(self.cfg, "calib.json"))
         for k in ("pitch", "yaw", "roll", "height_m"):
@@ -506,7 +525,17 @@ class ApplyTest(unittest.TestCase):
                                         "--view", view, "--dry-run"), 0)
         self.assertEqual(rd(os.path.join(self.cfg, "calib.json")), before)
         self.assertTrue(os.path.getsize(view) > 1000)
+        self.assertEqual(self.run_apply("--mount", self.mount, "--mount-source", "pose"), 0)
+        self.assertEqual(self.read("calib.json")["yaw"], -0.061)
         self.assertEqual(self.run_apply("--mount", self.mount, "--mount-source", "pictures"), 0)
+        self.assertEqual((self.read("calib.json")["pitch"], self.read("calib.json")["yaw"]), (0.023, -0.069))
+        self.assertEqual(self.run_apply("--mount", self.mount), 0)                # what mount.py recommends
+        self.assertEqual((self.read("calib.json")["pitch"], self.read("calib.json")["yaw"]), (0.0227, -0.069))
+        # two methods that contradict each other: nothing is applied without an explicit choice
+        m = geom.load_json(self.mount)
+        m["recommended"] = dict(status="conflict", why="the two methods differ by 1.20 deg in yaw")
+        geom.write_json_atomic(self.mount, m)
+        self.assertEqual(self.run_apply("--mount", self.mount), 2)
         self.assertEqual(self.read("calib.json")["yaw"], -0.069)
 
     def test_view_marks_the_vanishing_point(self):

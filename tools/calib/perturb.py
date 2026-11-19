@@ -9,6 +9,8 @@ Reads raw NV12 frames on stdin and writes them to stdout as a camera would have 
 mounting been (pitch + DP, yaw + DY, roll + DR) instead of calib.json's angles: a pure rotation about the lens, so
 the picture is re-projected exactly (x' ~ K V R_new R_old^T V^T K^-1 x) and no depth is needed. Luma and chroma
 are warped in their own planes, nothing is colour-converted. With all angles 0 the frames pass through untouched.
+`--k1 / --k2` additionally bend the picture as a lens with that radial distortion would (OpenCV's model about the
+picture centre), to measure what an uncorrected distortion does to the road model's outputs.
 `--save-frames` keeps every N-th output frame as DIR/<seq>.jpg (seq = frame number from 1, as modeld_replay
 numbers them), which together with modeld_replay's messages makes a folder mount.py reads like a recorder session.
 """
@@ -43,19 +45,31 @@ def main(argv=None):
     ap.add_argument("--pitch-deg", type=float, default=0.0)
     ap.add_argument("--yaw-deg", type=float, default=0.0)
     ap.add_argument("--roll-deg", type=float, default=0.0)
+    ap.add_argument("--k1", type=float, default=0.0)
+    ap.add_argument("--k2", type=float, default=0.0)
     ap.add_argument("--save-frames")
     ap.add_argument("--save-every", type=int, default=20)
     a = ap.parse_args(argv)
     w, h = (int(x) for x in a.size.lower().split("x"))
     intr = dict(focal_px=a.focal, cx=a.cx if a.cx is not None else w / 2.0, cy=a.cy if a.cy is not None else h / 2.0)
     calib = geom.load_json(a.calib) if a.calib else {}
-    ident = a.pitch_deg == 0 and a.yaw_deg == 0 and a.roll_deg == 0
+    ident = a.pitch_deg == 0 and a.yaw_deg == 0 and a.roll_deg == 0 and a.k1 == 0 and a.k2 == 0
     hm = homography(intr, calib, math.radians(a.pitch_deg), math.radians(a.yaw_deg), math.radians(a.roll_deg))
-    s = np.diag([0.5, 0.5, 1.0])
-    # chroma plane: half size, samples at the centres of 2x2 luma blocks: u_c = (u - 0.5) / 2
-    t = np.array([[0.5, 0, -0.25], [0, 0.5, -0.25], [0, 0, 1.0]])
-    hc = t @ hm @ np.linalg.inv(t)
-    del s
+    hinv = np.linalg.inv(hm)
+    dist = dict(k1=a.k1, k2=a.k2)
+
+    def maps(pw, ph, to_luma, from_luma):
+        """For every output pixel of a plane the source pixel in the same plane of the input."""
+        gx, gy = np.meshgrid(np.arange(pw, dtype=np.float64), np.arange(ph, dtype=np.float64))
+        u, v = to_luma(gx), to_luma(gy)
+        # output pixel (bent lens, turned camera) -> ideal pixel of the turned camera -> pixel of the recording
+        x, y = geom.undistort((u - intr["cx"]) / intr["focal_px"], (v - intr["cy"]) / intr["focal_px"], dist)
+        p = np.stack([x * intr["focal_px"] + intr["cx"], y * intr["focal_px"] + intr["cy"], np.ones_like(x)], axis=-1) @ hinv.T
+        return (from_luma(p[..., 0] / p[..., 2]).astype(np.float32), from_luma(p[..., 1] / p[..., 2]).astype(np.float32))
+
+    # chroma plane: half size, a sample at the centre of each 2x2 luma block: u_luma = 2 u_c + 0.5
+    ymap = maps(w, h, lambda t: t, lambda t: t)
+    cmap = maps(w // 2, h // 2, lambda t: 2 * t + 0.5, lambda t: (t - 0.5) / 2)
     if a.save_frames:
         os.makedirs(a.save_frames, exist_ok=True)
     fin, fout = sys.stdin.buffer, sys.stdout.buffer
@@ -69,9 +83,9 @@ def main(argv=None):
         y = np.frombuffer(buf, np.uint8, ysz).reshape(h, w)
         uv = np.frombuffer(buf, np.uint8, csz, ysz).reshape(h // 2, w // 2, 2)
         if not ident:
-            y = cv2.warpPerspective(y, hm, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-            uv = cv2.warpPerspective(uv, hc, (w // 2, h // 2), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
-                                     borderValue=(128, 128))
+            y = cv2.remap(y, ymap[0], ymap[1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+            uv = cv2.remap(uv, cmap[0], cmap[1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                           borderValue=(128, 128))
         try:
             fout.write(y.tobytes())
             fout.write(uv.tobytes())

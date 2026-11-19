@@ -16,6 +16,8 @@
 
 ## Phase 2: in-car data gathering
 - [ ] mount + intrinsics/extrinsics calibration (focal length from EXIF/sensor, pitch/yaw from the model's own calibration outputs like openpilot's calibrationd)
+  - [x] tools (lane L33, `tools/calib/`, [CALIBRATION.md](CALIBRATION.md)): board, capture, lens solver with uncertainties and refusals, mount estimate from a straight drive (road model's motion + the pictures' vanishing point), apply with backup / rollback and a verification view; validated on rides by turning the camera by a known angle
+  - [ ] the car: board pictures through the windscreen (lens), a straight drive with the current mounting, the three tape measurements; the lens distortion is recorded but not yet used by the input warp
 - [ ] rolling recorder (video + JSON) with ring buffer and USB storage
 - [ ] sign track aggregation (one event per physical sign with best crop and GPS when available)
 - [ ] thermal/battery management, charging strategy in host mode

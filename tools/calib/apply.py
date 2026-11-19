@@ -2,7 +2,7 @@
 """Apply a camera calibration and draw the picture that shows whether it is right.
 
     apply.py --config-dir /etc/roadsense --camera-file camera-dvr.json
-             [--lens lens.json] [--mount mount.json] [--mount-source pose|pictures]
+             [--lens lens.json] [--mount mount.json] [--mount-source recommended|pose|pictures]
              [--pitch RAD --yaw RAD --roll RAD]
              [--height-m H] [--camera-to-front-m X] [--lateral-offset-m Y]
              (--frame PICTURE | --session RECORDING) [--view OUT.jpg] [--dry-run]
@@ -196,28 +196,34 @@ def plan(a, cur_calib, cur_cam):
                                         cam["cy"], cam["k1"], cam["k2"], rep["rms_px"], rep["views_used"]))
     if a.mount:
         rep = geom.load_json(a.mount)
-        src = rep if a.mount_source == "pose" else (rep.get("pictures") or {})
+        if a.mount_source == "recommended":
+            src = rep.get("recommended") or (rep if "pictures" not in rep else {})
+        else:
+            src = rep if a.mount_source == "pose" else (rep.get("pictures") or {})
         if src.get("status") != "ok" or src.get("pitch") is None:
             errors.append("%s (%s): status %r, not a usable mount estimate (%s)" % (
-                a.mount, a.mount_source, src.get("status"), "; ".join(rep.get("reasons", []) or [src.get("reason") or ""])))
+                a.mount, a.mount_source, src.get("status"),
+                "; ".join(rep.get("reasons", []) or [src.get("why") or src.get("reason") or ""])))
         else:
             pitch, yaw = src["pitch"], src["yaw"]
-            ia = rep.get("intrinsics_assumed") or {}
+            ia = rep.get("angles_for") or rep.get("intrinsics_assumed") or {}
             new = (cam.get("focal_px"), cam.get("cx"), cam.get("cy"))
             old = (ia.get("focal_px"), ia.get("cx"), ia.get("cy"))
-            if a.mount_source == "pose" and all(v is not None for v in old + new) and any(
+            if all(v is not None for v in old + new) and any(
                     abs(o - n) > 0.05 for o, n in zip(old, new)):
                 # the estimate fixes where the road vanishes in the picture; keep that pixel under the new lens values
                 vp = geom.Camera(dict(focal_px=old[0], cx=old[1], cy=old[2]), dict(pitch=pitch, yaw=yaw)).vanishing_point()
                 pitch, yaw = geom.angles_from_vanishing_point(vp[0], vp[1], dict(focal_px=new[0], cx=new[1], cy=new[2]))
-                notes.append("mount: the drive was recorded with focal %.1f centre %.1f, %.1f; the angles are re-expressed "
+                notes.append("mount: the estimate is for focal %.1f centre %.1f, %.1f; the angles are re-expressed "
                              "for the new lens values so that the road vanishes at the same pixel (%.1f, %.1f). Record "
                              "a straight drive with the new values and run mount.py again to confirm"
                              % (old[0], old[1], old[2], vp[0], vp[1]))
             calib["pitch"], calib["yaw"] = round(float(pitch), 5), round(float(yaw), 5)
             sg = src.get("sigma") or {}
+            which = a.mount_source if "source" not in src else "recommended: pitch from %s, yaw from %s" % (
+                src["source"]["pitch"], src["source"]["yaw"])
             notes.append("mount (%s): pitch %+.4f rad (%+.2f deg) +- %.2f, yaw %+.4f rad (%+.2f deg) +- %.2f deg; was pitch "
-                         "%+.4f, yaw %+.4f" % (a.mount_source, calib["pitch"], calib["pitch"] / DEG,
+                         "%+.4f, yaw %+.4f" % (which, calib["pitch"], calib["pitch"] / DEG,
                                               sg.get("pitch", float("nan")) / DEG, calib["yaw"], calib["yaw"] / DEG,
                                               sg.get("yaw", float("nan")) / DEG, cur_calib.get("pitch", 0.0),
                                               cur_calib.get("yaw", 0.0)))
@@ -333,8 +339,8 @@ def main(argv=None):
                     "camera.json, camera-replay.json)")
     ap.add_argument("--lens", help="lens.json from lens.py solve")
     ap.add_argument("--mount", help="mount.json from mount.py")
-    ap.add_argument("--mount-source", choices=("pose", "pictures"), default="pose",
-                    help="which of mount.py's two estimates to apply (default: the road model's motion)")
+    ap.add_argument("--mount-source", choices=("recommended", "pose", "pictures"), default="recommended",
+                    help="which of mount.py's estimates to apply (default: what mount.py recommends)")
     ap.add_argument("--pitch", type=float, help="rad, by hand")
     ap.add_argument("--yaw", type=float, help="rad, by hand")
     ap.add_argument("--roll", type=float, help="rad, by hand")
