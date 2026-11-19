@@ -95,14 +95,19 @@ def lead_message(layer, es, road, lead, ego_T, cfg=LEAD_CFG):
     if lead is not None:
         others = sorted(s for s, t in lead.last_seen.items() if T - t <= 0.3 and (cam is None or s != cam.src))
         cam_seen = desig and z is not None and f["evidence"] != "none"
-        parts = others + (["vision"] if cam_seen or (desig and not others) else []) + (["ego"] if src == "vehicle" else [])
+        kinds = []                          # by sensor kind ("radar"), as the topic has named them; ids are in `sources`
+        for o in others:
+            k = layer.models[o][0].name if o in layer.models else o
+            if k not in kinds:
+                kinds.append(k)
+        parts = kinds + (["vision"] if cam_seen or (desig and not others) else []) + (["ego"] if src == "vehicle" else [])
         out["source"] = "+".join(parts)
         out["mode"] = f["mode"] if desig else ("track" if T - max(lead.last_seen.values()) <= 0.25 else "coast")
         out["track_id"] = lead.id
     rad = None
     if lead is not None and others:
         s = others[0]
-        rad = {"sensor": s, "id": lead.id, "dist_m": round(float(lead.x[X]), 2), "lateral_m": round(-float(lead.x[Y]), 2),
+        rad = {"sensor": s, "id": (lead.mem.get("attrs") or {}).get("id", lead.id), "dist_m": round(float(lead.x[X]), 2), "lateral_m": round(-float(lead.x[Y]), 2),
                "v_rel_mps": round(float(lead.x[VX]) - v_ego, 2), "age_s": round(T - lead.last_seen[s], 3)}
     out["radar"] = rad
     out["vision_scale"] = (f or {}).get("vision_scale") if f else (cam.lead_fields(None, ts)["vision_scale"] if cam else None)
