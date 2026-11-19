@@ -32,8 +32,13 @@ DEFAULT_CFG = dict(
         recover_window_s=10.0, recover_min_n=30, recover_share=0.25),
     pair_quantity=dict(
         # `fault`: True = a disagreement is isolated by vote, else by rank; "vote" = by vote only (else `suspect`)
-        speed=dict(min_evidence=3.0, fault=True, cusum_k=1.5, cusum_h=25.0, abs_delta=0.8, min_delta=0.06),
-        yaw_rate=dict(min_evidence=0.05, fault="vote", cusum_k=0.75, cusum_h=20.0, abs_delta=0.012, min_delta=0.15),
+        # The CUSUM limits were first set on the simulator, where they catch a 10 % scale error and a gyro bias of
+        # 0.02 rad/s. On the reference car's two healthy drives those limits raised alarms (the camera's speed
+        # carries a slow bias of up to 0.9 m/s, the three yaw sensors differ by 5-9 % in scale and more in
+        # transients): the limits below are the ones that are quiet on those drives. They are tuned to that
+        # thin data; what they cost in sensitivity is in the fault table.
+        speed=dict(min_evidence=3.0, fault=True, cusum_k=1.5, cusum_h=25.0, abs_delta=1.2, min_delta=0.10),
+        yaw_rate=dict(min_evidence=0.05, fault="vote", cusum_k=1.0, cusum_h=20.0, abs_delta=0.015, min_delta=0.30),
     ),
     witness=dict(                # sources with poor timing: ratio of medians over a long window
         mode="ratio", lag_s=3.0, max_gap_s=0.5, pending_s=1.0, max_step_s=3.0, z_bad=4.0,

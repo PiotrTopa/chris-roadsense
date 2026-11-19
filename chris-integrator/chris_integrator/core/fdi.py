@@ -30,7 +30,9 @@ DEFAULT_CFG = dict(
     outlier_z=8.0, outlier_share=0.04,
     clear_s=4.0,                      # a finding ends after this long without its condition
     clock_base_s=20.0, clock_window=15, clock_jump_s=0.2,
-    trend_tau_s=20.0, trend_fire=5.0, trend_clear=2.5, trend_min_n=40,
+    # (fire level and the correlation allowance: quiet on the reference car's healthy drives, where innovations
+    # of one class stay correlated for seconds; set on that thin data)
+    trend_tau_s=20.0, trend_fire=6.0, trend_clear=3.0, trend_min_n=60, trend_corr=10.0,
 )
 
 UNITS = ((3.6, "km/h read as m/s"), (1.0 / 3.6, "m/s read as km/h"), (2.237, "mph read as m/s"), (57.2958, "deg read as rad"),
@@ -185,8 +187,8 @@ class Trend:
         self.m = a * self.m + z
         self.w = a * self.w + 1.0
         self.n += 1
-        # innovations of one class are correlated over a few samples: count a third of them as independent
-        self.score = self.m / math.sqrt(max(self.w * 3.0, 1.0))
+        # innovations of one class are correlated over many samples: count one in `trend_corr` as independent
+        self.score = self.m / math.sqrt(max(self.w * self.c["trend_corr"], 1.0))
         if self.n >= self.c["trend_min_n"]:
             self.high = abs(self.score) > (self.c["trend_clear"] if self.high else self.c["trend_fire"])
         return self.high
