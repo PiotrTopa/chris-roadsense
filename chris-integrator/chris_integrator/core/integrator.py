@@ -202,14 +202,16 @@ class Integrator:
         t = ts / NS
         fused = False
         for spec in specs:
-            last = self.src_t.get(spec.id)
+            # ordering is per stream: several sensors may share a message type (`objects` of each radar and camera)
+            key = spec.id if "sensor" not in msg else (spec.id, msg["sensor"])
+            last = self.src_t.get(key)
             if last is not None and t <= last:
                 if t < last - self.cfg["epoch_back_s"]:
                     self._new_epoch()
                 else:
                     self.counts["dropped"][spec.id] = self.counts["dropped"].get(spec.id, 0) + 1
                     continue
-            self.src_t[spec.id] = t
+            self.src_t[key] = t
             if self.now is None or t > self.now:
                 self.now = t
             g = self.groups[spec.group]

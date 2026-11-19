@@ -89,14 +89,15 @@ def cmd_sim(a):
           " lead: tracked false rms(m) rms v(m/s) ids")
     cal = {}
     for seed in a.seeds:
-        sens = default_sensors(**true)
-        cfg = {}
+        tk = {k: dict(v, seed=100 * seed + i) for i, (k, v) in enumerate(dict(true, map={}).items())}
+        sens = default_sensors(**tk)
+        cfg = {"gnss_absolute": True}          # the simulated receiver is a decent one (2 m correlated, 1 m white)
         src = []
         if a.radar:
-            sens.append(RadarSim(misalign_deg=1.0))
+            sens.append(RadarSim(misalign_deg=1.0, seed=100 * seed + 7))
             src += RADAR
         if a.cam2:
-            sens.append(CameraObjectsSim())
+            sens.append(CameraObjectsSim(seed=100 * seed + 8))
             src.append({"kind": "camera_objects", "id": "cam_wide"})
         if src:
             cfg["sources"] = src

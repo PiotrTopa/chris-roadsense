@@ -68,7 +68,7 @@ From the audit and L37 (recordings of 2026-11-19), plus two things settled in th
   usable drives, displacement speed between fixes is 0.97-1.03 of the CAN speed at a lag of 1.75-2.5 s with
   sigma 0.9-1.6 m/s. The **speed field** is a different, more delayed and smoothed output: its best lag per
   60 s window ranges 1.5-8.75 s within one drive and it reads 0.82-0.97 of the CAN speed in the median with
-  windows near 0; it reports 1.2-2.2 m/s (median) while the car stands. L35 (4-10 % low at the best lag per
+  windows near 0. L35 (4-10 % low at the best lag per
   drive) and L37 (half, at a fixed 3 s lag) both looked at this field. Conclusion: the receiver is not biased
   in scale; its positions are usable with their real noise and a lag of about 2 s, its speed field is not a
   measurement of the current speed and is kept as a reported witness only. 113201 is a poor-reception drive
@@ -89,6 +89,7 @@ One extended Kalman filter on one time axis. The kinematic state is planar with 
 | `al` | yaw acceleration (rad/s2) | random walk |
 | `z` | altitude (m) | integrates `v sin(th)` |
 | `th` | road grade (rad) | random walk |
+| `sv` | scale of the speed state against the ground (as built): `v` is the speed as the car's own speed signal scales it, known to cm/s, which is what consumers and the object layer want; distance over ground is `v / (1 + sv)` | random walk, tiny |
 
 Everything else in the state belongs to a source and is **declared by the source** (`AuxState`: name, initial
 value and sigma, process: random walk with a PSD or first-order Gauss-Markov with a time constant). The core
@@ -96,19 +97,30 @@ only appends them to the state vector and propagates them. This stack's sources 
 
 | source | calibration states (each estimated, each published with its std) |
 |---|---|
-| vehicle | speed scale `s_v` (CAN speed = (1 + s_v) v); gyro bias `b_g` and scale `s_g`; wheel-difference yaw scale `s_wy`; accelerometer offsets `b_ax` (longitudinal, with grade), `b_ay` (lateral: bank and bias) |
-| vision | time delay `tau` (the image pair, prior 0.125 s); speed scale `s`; a Gauss-Markov error `m` of the speed (the error correlated over seconds: a coloured-noise state instead of pretending the error is white); mount yaw and pitch against the calibration in use (`dyaw`, `dpitch`) |
-| gnss | time delay `tau` (prior 2 s, sigma 1.5 s) |
-| map match | none |
+| vehicle | gyro bias `b_g` and scale `s_g`; wheel-difference yaw scale `s_wy`; accelerometer offsets `b_ax` (longitudinal, with grade), `b_ay` (lateral: bank and bias) |
+| vision | time delay `tau` (the image pair, prior 0.125 s); speed scale `s`; yaw-rate scale `s_w`; a Gauss-Markov error `m` of the speed (the error correlated over seconds: a coloured-noise state instead of pretending the error is white); mount yaw and pitch against the calibration in use (`dyaw`, `dpitch`) |
+| gnss | time delay `tau` (prior 2 s, sigma 1.5 s); east / north error correlated over 20 s (Gauss-Markov) |
+| map match | the car's offset from the matched road's centre line (Gauss-Markov, 120 s): a thousand matches must not pretend to know the position across the road to centimetres |
 | radar (each) | mount yaw misalignment `dyaw`; time delay `tau` |
 
-Observability, stated rather than assumed: `s_v` is observable only against an absolute source (GNSS
+Observability, stated rather than assumed: `sv` is observable only against an absolute source (GNSS
 positions over distance, a radar's stationary targets); with neither it keeps its prior and says so through
 its std. `b_ax` and `th` are separable only with an altitude source: without one their sum is observable and
 the published grade carries the bias prior as uncertainty. The absolute yaw scale is split between `s_g`,
 `s_wy` and the camera by their priors until a heading reference (GNSS track over turns, map bearing) decides.
 Time delays are observable only under excitation (acceleration for a speed delay, speed for a position
 delay); their process noise is tiny and the std says how far they are known.
+
+**What the build taught about calibration states (as built).** (1) A scale state's Jacobian is the quantity
+it multiplies; near zero that quantity is its own estimation noise and teaches the scale nonsense (the
+errors-in-variables bias of an EKF: the gyro scale walked to -0.4 on a straight road in simulation). A scale
+is therefore learned only where its regressor stands clear of the noise (yaw rate above 0.05 rad/s, speed above
+3 m/s). (2) The same holds for the delay of the camera's yaw rate, whose Jacobian is the poorly known yaw
+acceleration: the camera's delay is learned from the speed rows only. (3) States a row cannot tell apart are
+**consider states** for it (Schmidt-Kalman: their uncertainty counts, they are not corrected): the camera's
+rows never correct another source's calibration; the camera's own scale is frozen while no other source holds
+the speed; the receiver's and the map's rows do not teach the speed and yaw scales unless the receiver is
+declared good (`gnss_absolute`; the reference car's is not).
 
 **Time delays as states.** A measurement stamped `t` by a source with delay `tau` is `h(x(t - tau))`. It is
 inserted into the buffer at `t - tau_hat` (the current estimate) and its Jacobian carries
@@ -134,12 +146,14 @@ sparse Jacobian)` supplied by the source's model. Rows carry a noise class:
   inflated by `max(1, (|nu| / (k sqrt(S)))^2)`-type factor, so a wild sample moves the state by a bounded
   amount instead of being either believed or thrown away; beyond a hard gate (chi-square 0.9999) it is not
   applied and counted. A robust row is only gated while an exact row anchors the same quantity (L37's lesson:
-  a lone camera must be followed, not locked out by its own filter).
+  a lone camera must be followed, not locked out by its own filter). As built: the Student-t weight (4 degrees
+  of freedom) scales the whole innovation variance, so the state moves by weight x the Kalman step however
+  small the row's own noise is.
 * `monitor`: not fused (a witness); it feeds the monitors only.
 
 | source | rows (noise) |
 |---|---|
-| vehicle | speed `(1+s_v) v` (0.03 + 0.002 v, exact); gyro `(1+s_g) w + b_g` (0.004 + 0.03 abs(w)); rear wheel difference `(1+s_wy) w` (0.02 + 0.05 abs(w), robust); accelerometer long `a + g sin(th) + b_ax` (0.25); lateral `v w + b_ay` (0.5); standstill rows; mean wheel speed (monitor); warm-up after a feed silence (L37) |
+| vehicle | speed `v` (0.03 + 0.002 v, exact); gyro `(1+s_g) w + b_g` (0.004 + 0.03 abs(w)); rear wheel difference `(1+s_wy) w` (0.02 + 0.05 abs(w), robust); accelerometer long `a + g sin(th) + b_ax` (0.25); lateral `v w + b_ay` (0.5); standstill rows; mean wheel speed (monitor); warm-up after a feed silence (L37) |
 | vision | speed `(1+s) v + m` at `t - tau` (max of characterised and stated sigma for the white part, robust); yaw rate `w` (0.007 + 0.25 abs(w), robust); `vy`, `vz` (mount rows, robust, at speed) |
 | gnss | position east, north at `t - tau` (hacc x adaptive scale, robust); course while moving straight (robust, 15 degrees); altitude (robust); speed field (monitor) |
 | map match | cross-track distance to the matched road = 0 (sigma: lane geometry, at least 2.5 m, robust); heading = road bearing while moving (8 degrees, robust); only when matched, not ambiguous, confidence >= 0.5 |
@@ -190,6 +204,13 @@ Three layers, because each catches what the others cannot:
    `nu^2 / S` against its chi-square bounds. It adapts noise where the source allows it (GNSS), marks a
    source `suspect`, and for sources with no raw pair (position, heading, mount angles) it is the fault
    detector: a persistent excess faults the source if a higher-ranked one anchors the quantity.
+
+As built: innovation monitors use the scaled median over 8 s. A row class whose innovations are far beyond the
+stated uncertainty (`pos`, `heading`, `map_cross`, `map_heading`, `mount`, `alt`) is **set aside**: its rows
+are still evaluated, so it returns by itself, but they are not applied. Absolute positions set aside for 8 s
+mean the position is lost: the local frame is anchored again on the next usable fix (`reanchors`). Blame by
+rank waits while a vote is forming (an independent third source agrees with the lower-ranked one and drifts
+away from the higher), and a disagreement held only by its recovery hysteresis blames nobody anew.
 
 A faulted source leaves the estimate at once (the buffer is re-run without it), its calibration states freeze,
 its detections leave the object layer, and everything made from it goes out `valid: false` with the reason.

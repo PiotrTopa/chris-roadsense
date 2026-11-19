@@ -39,6 +39,9 @@ class SecondCamera(unittest.TestCase):
         self.assertGreater(side["tracked"], 0.95)
         self.assertLess(side["dup"], 0.05)
         self.assertLess(side["rms_x"], 0.6)             # with the radar the range is right
+        sens = self.all.tracks[-1][1]["sensors"]
+        self.assertGreater(sens["cam_wide"]["scans"], 2000)         # both object sensors are heard, each in its own order
+        self.assertGreater(sens["radar_front"]["scans"], 3500)
         three = [k for t, tr in self.all.tracks[500:] for k in tr["tracks"] if len(k["sources"]) >= 3]
         self.assertGreater(len(three), 300)             # the lead: road model + second camera + radar
 
