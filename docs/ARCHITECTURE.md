@@ -1754,6 +1754,18 @@ than 1.5 deg (the camera was moved) the older blocks are dropped. `/v2/health` s
 `modeld_replay` has the same estimator, off unless `--auto-calib on|observe`; `tools/vision_eval/
 calib_from_pose.py` runs it on a recorded session and prints a `calib.json` line.
 
+### Calibration tools (`tools/calib/`, lane L33)
+
+How the numbers in the camera file and in `calib.json` are measured and installed: [CALIBRATION.md](CALIBRATION.md)
+(the owner's procedure) and [lanes/L33-calibration-tools.md](lanes/L33-calibration-tools.md). `board.html` is the
+target, `capture.py` takes stills from the frame ring on the camera host (read-only, standard library),
+`lens.py` solves focal length, picture centre and distortion, `mount.py` estimates pitch and yaw from a recorded
+straight drive (the road model's `pose`, and the vanishing point of the recorder's pictures), `apply.py` writes the
+files, keeps the previous ones in `<config dir>/calibration-backups/<stamp>/`, and draws a verification view.
+Keys they add, all flat scalars that today's daemons ignore: `k1`, `k2`, `p1`, `p2`, `k3` in the camera file (the
+lens distortion, OpenCV's model; the input warp is still a pinhole), `camera_to_front_m` and `lateral_offset_m` in
+`calib.json` (tape measurements; `camera_to_front_m` is also written to `lead.json`, where the lead tracker reads it).
+
 ## Build and deploy
 
 C++17, CMake, one binary per daemon. In the reference deployment (Poco F1,
