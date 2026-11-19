@@ -66,6 +66,18 @@ class EgoModel:
         self._gm = []                      # (index, tau_s, sigma)
         self._clamp = []
         self.heading_free = True           # False: the heading does not move the position yet (not initialised)
+        self._rho_cache = {}
+        self._diag = None
+
+    @staticmethod
+    def apply_F(F, M):
+        """F @ M for the transition `predict` returned (kinematic block and a diagonal)."""
+        Fc, rho = F
+        out = M.copy()
+        out[:NCORE, :] = Fc @ M[:NCORE, :]
+        if rho is not None:
+            out *= rho[:, None]
+        return out
 
     def add_aux(self, owner, aux):
         name = "%s.%s" % (owner, aux.name)
@@ -78,6 +90,7 @@ class EgoModel:
         self._psd = np.append(self._psd, 0.0 if aux.tau_s else aux.psd)
         if aux.tau_s:
             self._gm.append((i, aux.tau_s, aux.sigma0))
+            self._rho_cache.clear()
         if aux.lo is not None or aux.hi is not None:
             self._clamp.append((i, aux.lo, aux.hi))
         return i
@@ -112,65 +125,65 @@ class EgoModel:
         x[V] = v + a * dt
         x[W] = w + al * dt
         x[Z] += ds * sth
-        F = np.eye(n)
-        F[PE, PSI] = -ds * sm
-        F[PE, V] = dt * cm * g
-        F[PE, A] = 0.5 * dt2 * cm * g
-        F[PE, SV] = -ds * g * cm
-        F[PN, SV] = -ds * g * sm
-        F[Z, SV] = -ds * g * sth
-        F[PE, W] = -ds * sm * 0.5 * dt
-        F[PE, AL] = -ds * sm * dt2 / 6.0
-        F[PN, PSI] = ds * cm
-        F[PN, V] = dt * sm * g
-        F[PN, A] = 0.5 * dt2 * sm * g
-        F[PN, W] = ds * cm * 0.5 * dt
-        F[PN, AL] = ds * cm * dt2 / 6.0
-        F[PSI, W] = dt
-        F[PSI, AL] = 0.5 * dt2
-        F[V, A] = dt
-        F[W, AL] = dt
-        F[Z, V] = dt * sth * g
-        F[Z, A] = 0.5 * dt2 * sth * g
-        F[Z, TH] = ds * cth
-        for i, tau, sig in self._gm:
-            rho = math.exp(-dt / tau)
-            x[i] *= rho
-            F[i, i] = rho
-        P = F @ P @ F.T
-        # process noise
+        # the transition matrix is the identity but for the kinematic block (the calibration states are random
+        # walks or Gauss-Markov: a diagonal). Built as a list, the covariance propagated block-wise: this is
+        # the filter's inner loop.
+        dsm, dcm, h = -ds * sm, ds * cm, 0.5 * dt
+        Fc = np.array((
+            (1.0, 0.0, dsm, dt * cm * g, 0.5 * dt2 * cm * g, dsm * h, dsm * dt2 / 6.0, 0.0, 0.0, -ds * g * cm),
+            (0.0, 1.0, dcm, dt * sm * g, 0.5 * dt2 * sm * g, dcm * h, dcm * dt2 / 6.0, 0.0, 0.0, -ds * g * sm),
+            (0.0, 0.0, 1.0, 0.0, 0.0, dt, 0.5 * dt2, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0, dt, 0.0, 0.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 0.0, 0.0, 1.0, dt, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, dt * sth * g, 0.5 * dt2 * sth * g, 0.0, 0.0, 1.0, ds * cth, -ds * g * sth),
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)))
+        rho = None
+        if self._gm:
+            rho = self._rho_cache.get(dt)
+            if rho is None:
+                if len(self._rho_cache) > 256:
+                    self._rho_cache.clear()
+                r = np.ones(n)
+                q = np.zeros(n)
+                for i, tau, sig in self._gm:
+                    r[i] = math.exp(-dt / tau)
+                    q[i] = sig * sig * (1.0 - math.exp(-2.0 * dt / tau))
+                rho = self._rho_cache[dt] = (r, q)
+            x *= rho[0]
+        P = P.copy()
+        P[:NCORE, :] = Fc @ P[:NCORE, :]
+        P[:, :NCORE] = P[:, :NCORE] @ Fc.T
+        if rho is not None:
+            P *= rho[0][:, None]
+            P *= rho[0][None, :]
+        F = (Fc, None if rho is None else rho[0])
+        # process noise (white jerk and yaw jerk integrated over dt; position noise along the heading)
         dt3, dt4, dt5 = dt2 * dt, dt2 * dt2, dt2 * dt2 * dt
         qj, qy = c["jerk_psd"], c["yaw_jerk_psd"]
-        P[V, V] += qj * dt3 / 3.0
-        P[V, A] += qj * dt2 / 2.0
-        P[A, V] += qj * dt2 / 2.0
-        P[A, A] += qj * dt
-        u = (cm, sm)
-        for i, ui in ((PE, cm), (PN, sm)):
-            for j, uj in ((PE, cm), (PN, sm)):
-                P[i, j] += qj * dt5 / 20.0 * ui * uj
-            P[i, V] += qj * dt4 / 8.0 * ui
-            P[V, i] += qj * dt4 / 8.0 * ui
-            P[i, A] += qj * dt3 / 6.0 * ui
-            P[A, i] += qj * dt3 / 6.0 * ui
-            P[i, i] += c["pos_psd"] * dt
-        P[PSI, PSI] += qy * dt5 / 20.0
-        P[PSI, W] += qy * dt4 / 8.0
-        P[W, PSI] += qy * dt4 / 8.0
-        P[PSI, AL] += qy * dt3 / 6.0
-        P[AL, PSI] += qy * dt3 / 6.0
-        P[W, W] += qy * dt3 / 3.0
-        P[W, AL] += qy * dt2 / 2.0
-        P[AL, W] += qy * dt2 / 2.0
-        P[AL, AL] += qy * dt
+        q55, q44, q33 = qj * dt5 / 20.0, qj * dt4 / 8.0, qj * dt3 / 6.0
+        pp = c["pos_psd"] * dt
+        Qk = np.array((
+            (q55 * cm * cm + pp, q55 * cm * sm, 0.0, q44 * cm, q33 * cm, 0.0, 0.0),
+            (q55 * cm * sm, q55 * sm * sm + pp, 0.0, q44 * sm, q33 * sm, 0.0, 0.0),
+            (0.0, 0.0, qy * dt5 / 20.0, 0.0, 0.0, qy * dt4 / 8.0, qy * dt3 / 6.0),
+            (q44 * cm, q44 * sm, 0.0, qj * dt3 / 3.0, qj * dt2 / 2.0, 0.0, 0.0),
+            (q33 * cm, q33 * sm, 0.0, qj * dt2 / 2.0, qj * dt, 0.0, 0.0),
+            (0.0, 0.0, qy * dt4 / 8.0, 0.0, 0.0, qy * dt3 / 3.0, qy * dt2 / 2.0),
+            (0.0, 0.0, qy * dt3 / 6.0, 0.0, 0.0, qy * dt2 / 2.0, qy * dt)))
+        P[:7, :7] += Qk
         P[Z, Z] += c["alt_psd"] * dt
         P[TH, TH] += c["grade_psd"] * dt
         P[SV, SV] += c["scale_psd"] * dt
         if n > NCORE:
-            d = np.arange(NCORE, n)
+            d = self._diag
+            if d is None or len(d) != n - NCORE:
+                d = self._diag = np.arange(NCORE, n)
             P[d, d] += self._psd * dt
-            for i, tau, sig in self._gm:
-                P[i, i] += sig * sig * (1.0 - math.exp(-2.0 * dt / tau))
+            if rho is not None:
+                P[d, d] += rho[1][NCORE:]
         if dt > 0.5:
             # a gap without data: the white-noise model would let the uncertainty of bounded quantities grow
             # without limit; a car's speed, acceleration and yaw rate are bounded, a heading is at most unknown

@@ -83,6 +83,12 @@ class Pair:
         self.suspect = False
         self.stats = {"n": 0, "share": None, "ratio": None}
         self.changed_t = None
+        self.last_delta = None
+        self.times = collections.deque(maxlen=64)
+        self.gp = self.gn = self.var = 0.0     # mean mode: CUSUM sums, learned variance of the difference
+        self.n_ok = self.n_mean = 0
+        self.recent = collections.deque(maxlen=8 if cfg["mode"] == "mean" else 24)
+        self.cusum_on = self.by_cusum = False
 
     def offer(self, t, v, s, ref_series, now):
         """A measurement of the tested group; paired at once when the reference brackets its time, else later."""
@@ -106,11 +112,73 @@ class Pair:
 
     def _sample(self, t, v, s, rv, rs):
         c = self.c
+        if c["mode"] == "share" and c.get("cusum_h"):
+            # beside the share-of-bad-samples test: a CUSUM of the normalised difference, for what never puts a
+            # single sample beyond z_bad (a bias, a 10 % scale error, a slow drift). It sees every sample, also
+            # those too small to be evidence for the share test (a gyro bias shows on a straight road).
+            z = max(-6.0, min(6.0, (v - rv) / math.hypot(s, rs)))
+            self.gp = min(max(0.0, self.gp + z - c["cusum_k"]), 2.0 * c["cusum_h"])
+            self.gn = min(max(0.0, self.gn - z - c["cusum_k"]), 2.0 * c["cusum_h"])
+            self.recent.append((v - rv, abs(rv)))
+            g = max(self.gp, self.gn)
+            if g >= c["cusum_h"]:
+                md = abs(statistics.fmean(d for d, _ in self.recent))
+                self.cusum_on = md > max(c["abs_delta"], c["min_delta"] * statistics.median(r for _, r in self.recent))
+            elif g < 0.5 * c["cusum_h"]:
+                self.cusum_on = False
         if max(abs(v), abs(rv)) < c["min_evidence"]:
+            if c["mode"] == "share" and c.get("cusum_h") and self.cusum_on != (self.verdict == "disagree") and self.verdict != "unknown":
+                return self._evaluate(t)
             return False
         z = (v - rv) / math.hypot(s, rs)
         self.win.add(t, (abs(z) > c["z_bad"], v, rv))
+        self.last_delta = v - rv
+        self.times.append(t)
+        if c["mode"] == "mean":
+            return self._evaluate_mean(t, math.hypot(s, rs))
         return self._evaluate(t)
+
+    def _evaluate_mean(self, t, sigma):
+        """A noisy, slow source (a receiver's track against the odometer): no single sample says anything, their
+        accumulation does. A two-sided CUSUM of the normalised difference about zero (both measure the same
+        quantity), normalised by the spread the pair itself showed while it agreed (learned; the stated sigma
+        until then): a large fault is decided in two or three samples, a small one when its evidence has added
+        up, and a persistent fault cannot become the new normal (the spread is not learned while disagreeing)."""
+        c = self.c
+        d = self.last_delta
+        self.n_mean += 1
+        sd = math.sqrt(self.var) if self.n_ok >= c["min_n"] else sigma
+        sd = max(sd, 0.3 * sigma)
+        z = max(-6.0, min(6.0, d / sd))
+        self.gp = max(0.0, self.gp + z - c["cusum_k"])
+        self.gn = max(0.0, self.gn - z - c["cusum_k"])
+        self.recent.append((d, z))
+        items = self.win.last(c["fire_window_s"])
+        mr = statistics.median(r for _, _, r in items)
+        ratio = statistics.median(v for _, v, _ in items) / mr if abs(mr) > 1e-3 else None
+        g = max(self.gp, self.gn)
+        self.stats = {"n": len(items), "share": min(1.0, g / c["cusum_h"]), "ratio": ratio}
+        old = self.verdict
+        if old == "disagree":
+            last = list(self.recent)[-c["recover_n"]:]
+            if len(last) >= c["recover_n"] and all(abs(zz) < c["recover_z"] for _, zz in last):
+                self.verdict = "agree"
+                self.gp = self.gn = 0.0
+        else:
+            last = list(self.recent)[-2:]
+            big = abs(sum(x for x, _ in last) / len(last)) > c["min_delta"] * max(abs(mr), 1.0)
+            if g >= c["cusum_h"] and big:
+                self.verdict = "disagree"
+            elif self.n_mean >= c["min_n"]:
+                self.verdict = "agree"
+            if abs(z) < 3.0 and g < 0.5 * c["cusum_h"]:           # the healthy spread of this pair
+                self.n_ok += 1
+                self.var += (d * d - self.var) / min(self.n_ok, 20)
+        self.suspect = False
+        if self.verdict != old:
+            self.changed_t = t
+            return True
+        return False
 
     def _evaluate(self, t):
         c = self.c
@@ -130,13 +198,20 @@ class Pair:
             self.suspect = False
         elif old == "disagree":
             rec = self.win.last(c["recover_window_s"])
-            if len(rec) >= c["recover_min_n"] and self.win.span() >= 0.9 * c["recover_window_s"] \
+            if self.by_cusum:
+                if not self.cusum_on and (share is None or share <= c["recover_share"]):
+                    self.verdict, self.by_cusum = "agree", False
+            elif len(rec) >= c["recover_min_n"] and self.win.span() >= 0.9 * c["recover_window_s"] \
                     and sum(1 for b, _, _ in rec if b) / len(rec) <= c["recover_share"] \
-                    and n >= c["min_n"] and share <= c["recover_share"]:
+                    and n >= c["min_n"] and share <= c["recover_share"] and not self.cusum_on:
                 self.verdict = "agree"
-        elif n >= c["min_n"]:
-            self.verdict = "disagree" if share >= c["fire_share"] else "agree"
-            self.suspect = self.verdict == "agree" and share >= c["suspect_share"]
+        elif n >= c["min_n"] or self.cusum_on:
+            fire = n >= c["min_n"] and share >= c["fire_share"]
+            self.verdict = "disagree" if fire or self.cusum_on else "agree"
+            self.by_cusum = self.cusum_on and not fire
+            self.suspect = self.verdict == "agree" and share is not None and share >= c["suspect_share"]
+            if self.by_cusum:
+                self.stats["share"] = 1.0              # the strength of the evidence, for the vote logic
         if self.verdict != old:
             self.changed_t = t
             return True
@@ -156,13 +231,28 @@ class Pair:
         bits = []
         if s["ratio"] is not None:
             bits.append("ratio %.2f" % s["ratio"])
-        if s["share"] is not None and self.c["mode"] != "ratio":
+        if s["share"] is not None and self.c["mode"] == "share":
             bits.append("%d %% of %d samples beyond %g sigma" % (round(100 * s["share"]), s["n"], self.c["z_bad"]))
+        kind, what = self.kind_of()
+        if kind is not None:
+            bits.append("looks like %s: %s" % (kind, what))
         return txt + (" (" + ", ".join(bits) + ")" if bits else "")
+
+    def kind_of(self):
+        """The kind of the disagreement (sign, unit, scale, bias) from the samples of the window."""
+        from .fdi import describe_pair
+        return describe_pair([(v, r) for _, v, r in self.win.last(self.c["fire_window_s"])])
+
+    def fresh(self, since_t):
+        """Samples valid after a time (evidence gathered since a disagreement began)."""
+        return sum(1 for t in self.times if t >= since_t)
 
     def reset_data(self):
         self.win.clear()
         self.pending.clear()
+        self.gp = self.gn = 0.0
+        self.recent.clear()
+        self.cusum_on = False
 
 
 class SelfCheck:
@@ -225,6 +315,7 @@ class NisMonitor:
         self.value = None
         self.high = False
         self.n_total = 0
+        self.t_eval = -1e18
 
     def offer(self, t, d2):
         q = self.q
@@ -232,7 +323,8 @@ class NisMonitor:
         while q and q[0][0] < t - self.c["window_s"]:
             q.popleft()
         self.n_total += 1
-        if len(q) >= self.c["min_n"]:
+        if len(q) >= self.c["min_n"] and (t - self.t_eval >= 0.2 or t < self.t_eval):    # the median is not free: 5 Hz
+            self.t_eval = t
             self.value = statistics.median(d for _, d in q) / self.MED
             old = self.high
             self.high = self.value > (self.c["recover"] if old else self.c["fire"])

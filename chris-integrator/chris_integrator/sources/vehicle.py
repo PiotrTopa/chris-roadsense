@@ -108,7 +108,7 @@ class VehicleSource(Source):
                 def h_ax(x):
                     th = x[E.TH]
                     return x[E.A] + E.G * np.sin(th) + x[ibax], i_ax, np.array([1.0, E.G * np.cos(th), 1.0])
-                out.append(Meas("accel", t, float(a), 0.25, h_ax, "vehicle.accel"))
+                out.append(Meas("accel", t, float(a), 0.25, h_ax, "vehicle.accel", mon=(float(a), 0.25)))
             ay = msg.get("accel_lat_mps2")
             if fin(ay) and self.fuse_accel_lat:
                 i_ay = np.array([E.V, E.W, ibay], dtype=np.intp)
@@ -142,18 +142,6 @@ class VehicleSource(Source):
             # sensors' scales are then learned relative to the gyro's.
             out.append(Meas("yaw_rate", t, r, sg, h_g, "vehicle.yaw", mon=(r, sg),
                             consider=(isg,) if ysrc == "yaw_rate" else None))
-        ws = msg.get("wheel_speeds_mps")
-        if ysrc == "yaw_rate" and not still and isinstance(ws, (list, tuple)) and len(ws) == 4 \
-                and all(fin(w) for w in ws):
-            rw = (ws[3] - ws[2]) / self.track_m
-            if msg.get("reverse"):
-                rw = -rw
-            i_wy = np.array([E.W, iswy], dtype=np.intp)
-
-            def h_wy(x, vw=vw):
-                k = 1.0 + x[iswy]
-                return k * x[E.W], i_wy, np.array([k, clear_reg(x[E.W], vw, SCALE_MIN_YAW)])
-            out.append(Meas("yaw_rate", t, rw, 0.02 + 0.05 * abs(rw), h_wy, "vehicle.wheel_yaw", robust=True))
         return out
 
     def report(self, ctx):
@@ -183,7 +171,9 @@ class WheelsSource(Source):
     family = "vehicle"
     types = ("ego",)
     stale_s = 0.6
-    info = "mean of the wheel speeds: a second reading of the speed"
+    track_m = TRACK_M
+    independent = ("yaw_rate",)  # its yaw rate comes from the wheels, not from the gyro: an opinion of its own
+    info = "mean of the wheel speeds: a second reading of the speed; rear wheel difference: a second yaw rate"
 
     def measure(self, msg, ctx):
         t = msg["ts_mono_ns"] / NS
@@ -196,4 +186,21 @@ class WheelsSource(Source):
         if msg.get("reverse"):
             m = -m
         # the scale of wheel speeds against the speed signal is a car's own (0.98 here): the tolerance covers it
-        return [Meas("speed", t, m, 0.10 + 0.04 * abs(m), src="wheels.speed", role="monitor")]
+        out = [Meas("speed", t, m, 0.10 + 0.04 * abs(m), src="wheels.speed", role="monitor")]
+        # the rear wheels' difference is a yaw rate of its own (another sensor than the gyro): fused, with its
+        # scale against the gyro's as a state (declared by the vehicle source, which owns the feed's calibration)
+        iswy = ctx.integ.model.index.get("vehicle.s_wy")
+        still = bool(msg.get("standstill")) and msg.get("speed_mps") == 0.0
+        if iswy is not None and len(ws) == 4 and not still and msg.get("yaw_source") == "yaw_rate":
+            rw = (ws[3] - ws[2]) / self.track_m
+            if msg.get("reverse"):
+                rw = -rw
+            vw = float(ctx.P[E.W, E.W])
+            i_wy = np.array([E.W, iswy], dtype=np.intp)
+
+            def h_wy(x, vw=vw):
+                k = 1.0 + x[iswy]
+                return k * x[E.W], i_wy, np.array([k, clear_reg(x[E.W], vw, SCALE_MIN_YAW)])
+            sg = 0.02 + 0.05 * abs(rw)
+            out.append(Meas("yaw_rate", t, rw, sg, h_wy, "wheels.yaw", robust=True, mon=(rw, sg)))
+        return out

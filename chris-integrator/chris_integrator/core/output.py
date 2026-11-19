@@ -5,6 +5,7 @@ import math
 from . import ego as E
 from .registry import NS
 
+TABLES_S = 0.2
 _SPEED_KINDS = ("speed", "standstill")
 _YAW_KINDS = ("yaw_rate", "standstill_w")
 
@@ -44,9 +45,17 @@ def _health(I, g, T):
             elif q in ("pos", "heading", "map_cross"):
                 checked = True             # no raw partner exists for a position: its innovations are its check
         state = "suspect" if suspect else "ok" if checked else "unchecked"
+    qf = {q: f for (gg, q), f in I.qfaults.items() if gg == g.name}
+    if qf and g.fault is None:
+        # single quantities of the source are set aside; the rest of it is used
+        if usable:
+            state = "suspect"
+        reason = "; ".join("%s set aside: %s" % (q, f["reason"]) for q, f in sorted(qf.items()))
     n = sum(1 for a in g.arrivals if a > I.now - 2.0)
     out = {"state": state, "reason": reason, "usable": usable,
            "age_s": None if age is None else round(age, 3), "rate_hz": round(n / 2.0, 1)}
+    if qf:
+        out["set_aside"] = sorted(qf)
     if g.fault is not None:
         out["isolation"] = g.fault["rule"]
         out["since_s"] = None if g.fault["since"] is None else round(max(0.0, I.now - g.fault["since"]), 1)
@@ -147,8 +156,6 @@ def calibration(I, x, P):
                                         "known": sd < 0.5 * I.model.c["scale_sigma0"]},
                         "note": "speed is in the vehicle speed signal's scale; ground distance = speed / (1 + speed_scale)"}}
     for s in I.specs:
-        if not s.aux:
-            continue
         d = {}
         for a in s.aux:
             i = s.ix[a.name]
@@ -156,6 +163,8 @@ def calibration(I, x, P):
             d[a.name] = {"value": round(float(x[i]), 5), "std": round(sd, 5), "unit": a.unit,
                          "known": sd < 0.5 * a.sigma0}
         d.update(s.calib_state(I.ctx[s.id]) or {})
+        if not d:
+            continue
         if s.mount is not None:
             d["mount"] = s.mount.as_dict()
         out[s.id] = d
@@ -177,6 +186,12 @@ def ego_state(I, ts_mono_ns, ts_real_ns=None):
     if still["value"] and still["source"] is not None and speed["valid"] and I.still_exact.get(still["source"]) and \
             any(s.startswith(still["source"] + ".") for s in speed["sources"]) and abs(speed["value"]) < 0.05:
         speed = dict(speed, value=0.0, std=0.0)      # the wheels stand: exactly zero, not a small number
+    dsp = I.disputed.get("speed")
+    if dsp is not None and speed["valid"]:
+        # two sources of the speed disagree and no third has decided yet: the value is the higher-ranked one's,
+        # its uncertainty covers both readings
+        speed = dict(speed, std=round(max(speed["std"], 0.5 * dsp[2]), 3), mode="disputed",
+                     reason="%s and %s disagree, vote pending" % (dsp[0], dsp[1]))
     pos, head = _position(I, T, sm, speed)
     grade = _quantity(I, T, sm, E.TH, None, 4) if speed["valid"] else _none(speed["reason"])
     # odometer: the path length of the published speed (a consumer's distance base)
@@ -190,11 +205,22 @@ def ego_state(I, ts_mono_ns, ts_real_ns=None):
         sig[name] = {"value": v, "age_s": round(max(0.0, T - t), 3)}
     x, P = sm if sm is not None else (I.x_now, I.P_now)
     rej = dict(I.ekf.rejected)
-    return {"type": "ego_state", "api": 3, "seq": I.seq, "ts_mono_ns": ts_mono_ns, "ts_real_ns": ts_real_ns,
-            "epoch": I.epoch, "speed": speed, "accel": accel, "yaw_rate": yr, "standstill": still,
-            "position": pos, "heading": head, "grade": grade, "odometer_m": round(I.odometer, 2),
-            "signals": sig, "calibration": calibration(I, x, P),
+    # the tables (calibration, per-source health, the monitors' verdicts, findings) are rebuilt five times a
+    # second and at once when anything about a fault changes; the quantities above are fresh every frame
+    key = (I.epoch, id(I.ekf), tuple(sorted((n, g.fault["rule"]) for n, g in I.groups.items() if g.fault is not None)),
+           tuple(sorted(I.qfaults)), tuple(sorted(I.disputed)), len(I.fdi.findings), len(I.fdi.events), len(I.pairs))
+    tb = getattr(I, "_tables", None)
+    if tb is None or tb[0] != key or not (0.0 <= T - tb[1] < TABLES_S):
+        tb = I._tables = (key, T, {
+            "calibration": calibration(I, x, P),
             "sources": {n: _health(I, g, T) for n, g in I.groups.items()},
             "checks": [p.report() for p in I.pairs.values()] + [s.report() for s in I.selfs.values()]
             + [m.report() for m in I.nis.values() if m.value is not None],
+            "diagnostics": I.fdi.report(T)})
+    tables = tb[2]
+    return {"type": "ego_state", "api": 3, "seq": I.seq, "ts_mono_ns": ts_mono_ns, "ts_real_ns": ts_real_ns,
+            "epoch": I.epoch, "speed": speed, "accel": accel, "yaw_rate": yr, "standstill": still,
+            "position": pos, "heading": head, "grade": grade, "odometer_m": round(I.odometer, 2),
+            "signals": sig, "calibration": tables["calibration"], "sources": tables["sources"], "checks": tables["checks"],
+            "diagnostics": tables["diagnostics"], "tables_age_s": round(T - tb[1], 3),
             "reanchors": getattr(I, "reanchors", 0), "rejected": rej, "late": dict(I.counts["late"]), "dropped": dict(I.counts["dropped"])}

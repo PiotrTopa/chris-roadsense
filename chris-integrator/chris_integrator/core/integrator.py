@@ -7,6 +7,7 @@ import numpy as np
 
 from . import ego as E
 from .ekf import Filter, Row, wrap_pi
+from .fdi import Diagnostics
 from .monitors import NisMonitor, Pair, SelfCheck, Series
 from .registry import NS, Ctx, Meas, lin
 
@@ -30,8 +31,9 @@ DEFAULT_CFG = dict(
         z_bad=4.0, fire_window_s=5.0, min_n=15, fire_share=0.5, suspect_share=0.35,
         recover_window_s=10.0, recover_min_n=30, recover_share=0.25),
     pair_quantity=dict(
-        speed=dict(min_evidence=3.0, fault=True),
-        yaw_rate=dict(min_evidence=0.05, fault=False),      # a disagreement makes the source `suspect` only
+        # `fault`: True = a disagreement is isolated by vote, else by rank; "vote" = by vote only (else `suspect`)
+        speed=dict(min_evidence=3.0, fault=True, cusum_k=1.5, cusum_h=25.0, abs_delta=0.8, min_delta=0.06),
+        yaw_rate=dict(min_evidence=0.05, fault="vote", cusum_k=0.75, cusum_h=20.0, abs_delta=0.012, min_delta=0.15),
     ),
     witness=dict(                # sources with poor timing: ratio of medians over a long window
         mode="ratio", lag_s=3.0, max_gap_s=0.5, pending_s=1.0, max_step_s=3.0, z_bad=4.0,
@@ -42,10 +44,13 @@ DEFAULT_CFG = dict(
     nis=dict(window_s=8.0, max_n=80, min_n=8, fire=6.0, recover=3.0),
     # row classes that are set aside while their innovations are far beyond the stated uncertainty (their rows
     # are still evaluated, so the class comes back by itself): the classes with no raw partner to be judged by
-    quarantine=("pos", "heading", "alt", "map_cross", "map_heading", "mount"),
+    quarantine=("pos", "heading", "alt", "map_cross", "map_heading", "mount_yaw"),
     reanchor_s=8.0,              # absolute positions set aside this long = the position is lost: anchor again
+    vote_wait_s=25.0,            # a disagreement of two sources waits this long at most for a third source's evidence
+    vote_settle_s=1.0, vote_fresh_n=2,     # ... which must be this many samples valid this long after the disagreement began
     gnss_absolute=False,         # may the receiver's positions teach the speed scale and the yaw scales
                                  # (a good receiver: yes; one that scatters 10-15 m with a claimed 3 m: no)
+    fdi={},                      # overrides of fdi.DEFAULT_CFG (signal, timing and trend detectors)
     objects={},                  # overrides of objects.DEFAULT_CFG
     lead={},                     # the camera-lead source's constants (sources/camera_lead.py) and the lead message's
     sources=None,                # extra sources of this car: [{"kind": "radar", "id": ..., "mount": {...}}, ...]
@@ -88,8 +93,10 @@ class Integrator:
         for k, v in (cfg or {}).items():
             self.cfg[k] = dict(self.cfg[k], **v) if isinstance(self.cfg.get(k), dict) and isinstance(v, dict) else v
         self.model = E.EgoModel(self.cfg["process"])
+        self.fdi = Diagnostics(self.cfg["fdi"])
         self.specs, self.by_type, self.groups, self.ctx = [], collections.defaultdict(list), {}, {}
         self.pairs, self.selfs, self.nis = {}, {}, {}
+        self.qfaults = {}                  # (group, quantity) -> {"since", "reason", "rule"}: that quantity's rows are out
         self.seq = 0
         self.epoch = 0
         self.frame_id = 0                  # bumps when the local position frame is re-anchored
@@ -138,6 +145,7 @@ class Integrator:
         self._foreign_ix = {}
         self.ekf = Filter(self.model, x, P, c["horizon_s"], c["gate_chi2"])
         self.ekf.stat = self._nis_stat
+        self.ekf.stat_nu = self._innovation
         if keep and old is not None and old.latest() is not None:
             self.ekf.rebase(t, x, P)
         if not keep:
@@ -154,6 +162,9 @@ class Integrator:
         self._anchor_first = None
         self._pos_high_t = None
         self._lost = False
+        self.disputed = {}
+        self._dispute_t = -1e18
+        self.qfaults = getattr(self, "qfaults", {})
 
     def _cache(self):
         l = self.ekf.latest()
@@ -201,6 +212,7 @@ class Integrator:
             return
         t = ts / NS
         fused = False
+        self.fdi.stamp((msg["type"], msg.get("sensor")), specs[0].group, t)
         for spec in specs:
             # ordering is per stream: several sensors may share a message type (`objects` of each radar and camera)
             key = spec.id if "sensor" not in msg else (spec.id, msg["sensor"])
@@ -231,6 +243,9 @@ class Integrator:
                         g.last_t = t if g.last_t is None else max(g.last_t, t)
                     if g.fault is None:
                         self.objects.add_scan(sc)
+        if self.disputed and self.now - self._dispute_t > 0.5:      # a pending vote has a deadline
+            self._dispute_t = self.now
+            self._isolate()
         if fused:
             self.ekf.prune(self.now)
             self._cache()
@@ -241,6 +256,9 @@ class Integrator:
         """The device clock restarted: drop what is tied to the old time axis. Calibration states and their
         covariance stay; a fault survives as carried; the position stays with its uncertainty inflated."""
         self.epoch += 1
+        self.fdi.reset()
+        self.fdi.event("clock", "epoch", None, "the device clock restarted (epoch %d): buffers dropped, calibration kept" % self.epoch,
+                       quantity="time")
         l = self.ekf.latest()
         x, P = self.model.initial()
         if l is not None:
@@ -295,9 +313,13 @@ class Integrator:
             if m.z and m.src is not None and not g.witness:
                 # exact for a source that knows (wheels at zero); a source that infers it gives its sigma
                 k = 1.0 if m.sigma is None else (m.sigma / 1e-3) ** 2
+                # a standstill says what the motion is, nothing about any calibration: scale and bias states are
+                # consider states of these rows (the sources' own rows learn their biases from the known zero).
+                # Correlations built at speed would otherwise be cashed in at v = 0, where they mean nothing.
+                fz = self._aux_ix()
                 for name, var in (("v", 1e-6), ("a", 1e-4), ("w", 1e-8), ("al", 1e-4)):
                     self._fuse(m.t, Row("standstill" if name == "v" else "standstill_" + name, 0.0, var * k, _H0[name],
-                                        m.src, g.name, robust=m.sigma is not None))
+                                        m.src, g.name, robust=m.sigma is not None, freeze=fz))
                 return True
             return False
         if role == "self":
@@ -310,7 +332,8 @@ class Integrator:
             return False
         fused = False
         if role == "fuse" and not g.witness:
-            self._fuse(m.t, Row(m.q, m.z, m.sigma * m.sigma, m.h, m.src, g.name, robust=m.robust, wrap=m.wrap,
+            sig = m.sigma * self.fdi.noise_scale(g.name, m.q)     # a noise burst: weighted by its present noise
+            self._fuse(m.t, Row(m.q, m.z, sig * sig, m.h, m.src, g.name, robust=m.robust, wrap=m.wrap,
                                 cb=m.cb, freeze=self._freeze(spec, m)))
             fused = True
         if m.mon is not None or (role == "monitor"):
@@ -323,6 +346,12 @@ class Integrator:
         if m.consider:
             c = np.array(list(m.consider), dtype=np.intp)
             f = c if f is None else np.concatenate([f, c])
+        return f
+
+    def _aux_ix(self):
+        f = self._foreign_ix.get(None)
+        if f is None:
+            f = self._foreign_ix[None] = np.array([E.SV] + list(range(E.NCORE, self.model.n)), dtype=np.intp)
         return f
 
     def _foreign(self, spec):
@@ -350,6 +379,10 @@ class Integrator:
         if row.q == "pos" and m.high and self._pos_high_t is not None and t - self._pos_high_t > self.cfg["reanchor_s"]:
             self._lost = True              # acted on after this filter pass (on_message)
 
+    def _innovation(self, row, nu, s, t):
+        if not row.q.startswith("standstill"):
+            self.fdi.innovation(row.group, row.q, t, nu, s)
+
     def _monitor(self, g, q, t, v, s):
         ser = g.series.get(q)
         if ser is None:
@@ -360,9 +393,12 @@ class Integrator:
                 hi, lo = (o, g) if (o.rank, o.name) > (g.rank, g.name) else (g, o)
                 wit = hi.witness or lo.witness
                 cfg = dict(self.cfg["witness"]) if wit else dict(self.cfg["pair"], **self.cfg["pair_quantity"].get(q, {}))
+                for gg in (hi, lo):          # a source may say how it is to be compared (a slow, noisy one: by its mean)
+                    if not wit:
+                        cfg.update(getattr(gg.sources[0], "pair", None) or {})
                 self.pairs[(hi.name, lo.name, q)] = Pair(hi.name, lo.name, q, cfg)
         ser.add(t, v, s)
-        changed = False
+        changed = self.fdi.raw(g.name, q, t, v, s)
         for (hi, lo, pq), p in self.pairs.items():
             if pq != q:
                 continue
@@ -422,6 +458,11 @@ class Integrator:
         self.anchored = False
         self._anchor_first = None
         self.reanchors = getattr(self, "reanchors", 0) + 1
+        for sp in self.specs:
+            if hasattr(sp, "on_reanchor"):
+                sp.on_reanchor(self.ctx[sp.id])
+        self.fdi.event("position", "reanchor", None, "the absolute position disagreed with the estimate for %.0f s: position "
+                       "declared lost and anchored again (which of the two was wrong is not known)" % self.cfg["reanchor_s"], quantity="position")
         for k, m in self.nis.items():
             if k[1] in ("pos", "heading", "map_cross", "map_heading"):
                 m.reset_data()
@@ -491,20 +532,50 @@ class Integrator:
         p = self.pairs.get((a, b, q)) or self.pairs.get((b, a, q))
         return p.verdict if p is not None else "unknown"
 
+    def _indep(self, c, a, b, q):
+        """Is group c an independent opinion on quantity q beside a and b? Groups of one family share sensors,
+        unless a source says its reading of q comes from a sensor of its own (`independent`)."""
+        cg = self.groups[c]
+        if c in (a, b) or cg.witness:
+            return False
+        for o in (a, b):
+            if cg.family == self.groups[o].family and not (
+                    q in getattr(cg.sources[0], "independent", ()) or q in getattr(self.groups[o].sources[0], "independent", ())):
+                return False
+        return True
+
+    def _critical(self, group, q):
+        """Does a fault of quantity q take the whole group out (its main signal), or only that quantity's rows?"""
+        return q in getattr(self.groups[group].sources[0], "critical", ("speed",))
+
     def _isolate(self):
-        """Which groups are faulted, from the monitors' verdicts (docs/INTEGRATOR.md section 5)."""
-        found = {}
+        """Which groups (or single quantities of a group) are faulted, from the monitors' verdicts and the
+        detectors' findings (docs/DESIGN.md sections 5, 5a)."""
+        found = {}                         # group -> [(rule, text)]: the whole group is out
+        qfound = {}                        # (group, quantity) -> [(rule, text)]: only that quantity's rows
+        self.disputed = {}
+
+        def blame(group, q, rule, txt):
+            if q is None or self._critical(group, q):
+                found.setdefault(group, []).append((rule, txt))
+            else:
+                qfound.setdefault((group, q), []).append((rule, txt))
         for (gname, q), sc in self.selfs.items():
             if sc.fault:
-                found.setdefault(gname, []).append(("self", sc.describe()))
+                blame(gname, None, "self", sc.describe())
+        # a source that shows a fault by itself (a frozen value, a noise burst) needs no second opinion, and no rank
+        evident = set()
+        for name, g in self.groups.items():
+            for q, txt in (() if g.witness else self.fdi.self_evident(name)):
+                evident.add((name, q))
+                blame(name, q, "self", "%s %s" % (q, txt))
         for (hi, lo, q), p in self.pairs.items():
-            if p.verdict != "disagree" or not p.c.get("fault") or p.c["mode"] == "ratio":
+            mode = p.c.get("fault")
+            if p.verdict != "disagree" or not mode or p.c["mode"] == "ratio":
                 continue
             against_hi = against_lo = 0
-            for c, cg in self.groups.items():
-                # a witness is reported, it does not vote; neither does a group that shares its sensors with one
-                # of the two
-                if c in (hi, lo) or cg.witness or cg.family in (self.groups[hi].family, self.groups[lo].family):
+            for c in self.groups:
+                if not self._indep(c, hi, lo, q):
                     continue
                 v_lo, v_hi = self._verdict(c, lo, q), self._verdict(c, hi, q)
                 if v_lo == "agree" and v_hi == "disagree":
@@ -515,19 +586,31 @@ class Integrator:
                 culprit, other, rule = hi, lo, "vote"
             else:
                 culprit, other, rule = lo, hi, "vote" if against_lo else "rank"
+            if (other, q) in evident and (culprit, q) not in evident:
+                continue                   # the partner is already known to be the faulty one
             cg = self.groups[culprit]
-            if cg.fault is None or cg.carried:
-                # blaming a group anew needs a disagreement that is still going on (a verdict held only by its
+            known = (cg.fault is not None and not cg.carried) or (culprit, q) in self.qfaults
+            if rule == "rank" and not known:
+                # two sources disagree and rank alone would decide. If the higher-ranked one shows a condition of
+                # its own, or an independent third source is about to have an opinion, nobody is blamed yet: the
+                # quantity is published as disputed (its uncertainty covers both readings) until the vote is in
+                if self.fdi.suspected(other) or self._third_pending(hi, lo, q, p):
+                    self.disputed[q] = (hi, lo, abs(p.last_delta or 0.0))
+                    continue
+            if rule == "rank" and mode == "vote":
+                continue                   # this quantity is isolated by vote only: suspect, nobody blamed
+            if not known:
+                # blaming anew needs a disagreement that is still going on (a verdict held only by its
                 # recovery hysteresis is not one) ...
                 sh = p.stats.get("share")
-                if sh is not None and sh <= p.c["recover_share"]:
+                if sh is not None and sh <= p.c["recover_share"] and not p.by_cusum:
                     continue
                 # ... and, by rank alone, no independent third source that sides with the lower-ranked one and
                 # is drifting away from the higher: then the vote is still forming and nobody is blamed yet
                 if rule == "rank" and self._vote_forming(hi, lo, q):
                     continue
             txt = "%s disagrees with %s" % (q, other) + p.describe()[len("%s disagrees with %s" % (q, p.ref)):]
-            found.setdefault(culprit, []).append((rule, txt))
+            blame(culprit, q, rule, txt)
         for name, g in self.groups.items():
             f = found.get(name)
             if f:
@@ -540,12 +623,38 @@ class Integrator:
             elif g.fault is not None and (not g.carried or self._cleared(name)):
                 g.fault = None
                 g.carried = False
+        old = self.qfaults
+        self.qfaults = {k: {"since": old[k]["since"] if k in old else self.now, "reason": "; ".join(t for _, t in f),
+                            "rule": "vote" if any(r == "vote" for r, _ in f) else f[0][0]} for k, f in qfound.items()}
         self._apply_faults()
+
+    def _third_pending(self, hi, lo, q, p):
+        """An independent third source of the quantity exists, has been delivering, and has not yet gathered
+        fresh evidence since this disagreement began (bounded wait)."""
+        c = self.cfg
+        since = p.changed_t if p.changed_t is not None else self.now
+        waited = self.now - since > c["vote_wait_s"]
+        for name, cg in self.groups.items():
+            if cg.fault is not None or not self._indep(name, hi, lo, q):
+                continue
+            p_lo = self.pairs.get((name, lo, q)) or self.pairs.get((lo, name, q))
+            p_hi = self.pairs.get((name, hi, q)) or self.pairs.get((hi, name, q))
+            if p_lo is None or p_hi is None or (p_lo.verdict == "unknown" and p_hi.verdict == "unknown"):
+                continue
+            newest = max([p_lo.times[-1]] if p_lo.times else [] + [p_hi.times[-1]] if p_hi.times else [], default=None)
+            if newest is None or self.now - newest > 15.0:
+                continue                   # it has stopped delivering: nothing to wait for
+            if max(p_lo.fresh(since + c["vote_settle_s"]), p_hi.fresh(since + c["vote_settle_s"])) < c["vote_fresh_n"]:
+                return True
+            # the third source has spoken and sides with neither against the other: the disagreement is inside
+            # its resolution. Rank would be a guess; the quantity stays disputed (its uncertainty covers both)
+            if not waited or (p_lo.verdict == "agree" and p_hi.verdict == "agree"):
+                return True
+        return False
 
     def _vote_forming(self, hi, lo, q):
         for c, cg in self.groups.items():
-            if c in (hi, lo) or cg.witness or cg.family in (self.groups[hi].family, self.groups[lo].family) \
-                    or cg.fault is not None:
+            if cg.fault is not None or not self._indep(c, hi, lo, q):
                 continue
             p_lo = self.pairs.get((c, lo, q)) or self.pairs.get((lo, c, q))
             p_hi = self.pairs.get((c, hi, q)) or self.pairs.get((hi, c, q))
@@ -571,7 +680,8 @@ class Integrator:
 
     def _apply_faults(self):
         bad = [n for n, g in self.groups.items() if g.fault is not None]
-        self.ekf.set_disabled(bad)
+        self.ekf.set_disabled(bad + list(self.qfaults))
+        self.fdi.qfaults = self.qfaults
         if self.objects is not None:
             self.objects.set_faulted(bad)
         self._cache()

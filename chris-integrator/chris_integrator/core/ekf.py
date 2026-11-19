@@ -59,6 +59,7 @@ class Filter:
         self.quarantine = frozenset()      # (group, q): rows still evaluated (their innovations are watched), not applied
         self.rejected = {}                 # src -> rows not applied (hard gate)
         self.stat = None                   # callable(row, d2, t): first-pass normalised innovation of a row
+        self.stat_nu = None                # callable(row, nu, s, t): ... its signed innovation and variance
         self.reruns = 0                    # entries re-processed because of late rows (cost accounting)
         self.reset()
 
@@ -146,12 +147,12 @@ class Filter:
                 x, P, F = predict(x, P, dt)
             else:
                 F = None
-                x, P = x.copy(), P
             e.xp, e.Pp, e.F = x, P, F
+            own = dirty = False
             for r in e.rows:
                 was = r.rejected
                 r.used = r.rejected = False
-                if r.group in disabled:
+                if r.group in disabled or (r.group, r.q) in disabled:
                     continue
                 pred, idx, coef = r.h(x)
                 ph = P[:, idx] @ coef
@@ -166,6 +167,8 @@ class Filter:
                     r.counted = True
                     if stat is not None:
                         stat(r, d2, e.t)
+                    if self.stat_nu is not None:
+                        self.stat_nu(r, nu, s0 + var, e.t)
                     if r.cb is not None:
                         r.cb(nu, s0, e.t)
                 if self.quarantine and (r.group, r.q) in self.quarantine:
@@ -186,19 +189,23 @@ class Filter:
                     anchor[r.q] = e.t
                 s = s0 + var
                 k = ph / s
-                x = x.copy()
+                if not own:
+                    x, own = x.copy(), True                # (the predicted state is kept in the entry)
                 if r.freeze is None:
                     x += k * nu
-                    P = P - np.outer(k, ph)
+                    P = P - k[:, None] * ph[None, :]
                 else:
                     # Schmidt-Kalman: the frozen states' uncertainty is in S, but they are not corrected by this
                     # row (the gain is no longer optimal: the Joseph form of the covariance update)
                     k[r.freeze] = 0.0
                     x += k * nu
-                    kp = np.outer(k, ph)
-                    P = P - kp - kp.T + s * np.outer(k, k)
-                P = 0.5 * (P + P.T)
+                    kp = k[:, None] * ph[None, :]
+                    P = P - kp - kp.T + s * (k[:, None] * k[None, :])
+                    P = 0.5 * (P + P.T)
                 r.used = True
+                dirty = True
+            if dirty:
+                P = 0.5 * (P + P.T)
             e.x, e.P, t, e.anchor = x, P, e.t, dict(anchor)
 
     # ---- output --------------------------------------------------------------------------------------
@@ -252,14 +259,14 @@ class Filter:
                 e, a = self.entries[j], self.entries[j - 1]
                 if e.F is None:
                     continue
-                C = np.linalg.solve(e.Pp, e.F @ a.P).T
+                C = np.linalg.solve(e.Pp, self.model.apply_F(e.F, a.P)).T
                 xs = a.x + C @ self._diff(xs, e.xp)
                 Ps = a.P + C @ (Ps - e.Pp) @ C.T
             e = self.entries[j0]
             dt = e.t - T
             if dt > 0.0:                               # and from entry j0 back to the node at T
                 xp, Pp, F = self.model.predict(x, P, dt)
-                C = np.linalg.solve(Pp, F @ P).T
+                C = np.linalg.solve(Pp, self.model.apply_F(F, P)).T
                 xs = x + C @ self._diff(xs, xp)
                 Ps = P + C @ (Ps - Pp) @ C.T
             Ps = 0.5 * (Ps + Ps.T)

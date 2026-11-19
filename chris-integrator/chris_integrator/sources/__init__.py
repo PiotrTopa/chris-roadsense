@@ -4,13 +4,14 @@ states. The core imports none of them; `default_sources()` is the stack's defaul
 
 def default_sources(cfg=None):
     from .camera_lead import CameraLeadSource
-    from .gnss import GnssSource, GnssSpeedSource
+    from .gnss import GnssSource, GnssSpeedSource, GnssTrackSource
     from .mapmatch import MapMatchSource
     from .vehicle import VehicleSignals, VehicleSource, WheelsSource
+    from .signrows import SignRowsSource
     from .vision import VisionSource
     cfg = cfg or {}
-    out = [VehicleSource(), VehicleSignals(), WheelsSource(), VisionSource(), GnssSource(), GnssSpeedSource(),
-           MapMatchSource(), CameraLeadSource(cfg.get("lead"))]
+    out = [VehicleSource(), VehicleSignals(), WheelsSource(), VisionSource(), GnssSource(), GnssSpeedSource(), GnssTrackSource(),
+           MapMatchSource(), CameraLeadSource(cfg.get("lead")), SignRowsSource()]
     for spec in cfg.get("sources") or ():
         out.append(build(spec))
     return out

@@ -122,6 +122,14 @@ def catalogue(radar=False):
     return c
 
 
+FAMILY = {"vehicle": ("vehicle", "wheels"), "wheels": ("vehicle", "wheels"), "gnss": ("gnss", "gnss_track", "gnss_speed", "position")}
+
+
+def _family(groups):
+    """The groups that share the faulted sensor: naming any of them is naming the right one."""
+    return set(groups) | {x for g in groups for x in FAMILY.get(g, ())}
+
+
 def _alarms(es):
     """{group: (level, text)} the integrator names at this frame."""
     out = {}
@@ -129,7 +137,8 @@ def _alarms(es):
         if s["state"] in ALARM:
             out[g] = (s["state"], s.get("reason") or s["state"])
     for d in es.get("diagnostics") or ():
-        if d.get("level") in ("fault", "warn") and d.get("source") not in out:
+        if (d.get("level") in ("fault", "warn") or d.get("kind") in ("epoch", "reanchor", "mount_step") and d.get("since_s", 99) < 5) \
+                and d.get("source") not in out:
             out[d["source"]] = ("finding", "%s: %s" % (d.get("kind"), d.get("text", "")))
     cv = (es.get("calibration") or {}).get("vision") or {}
     if cv.get("state") in ("moved",) and "vision" not in out:
@@ -139,8 +148,9 @@ def _alarms(es):
 
 def _blamed(es):
     """Groups declared faulted (the integrator's isolation), and those a finding at fault level names."""
-    b = [g for g, s in es["sources"].items() if s["state"] == "fault"]
-    b += [d["source"] for d in es.get("diagnostics") or () if d.get("level") == "fault" and d["source"] not in b]
+    b = [g for g, s in es["sources"].items() if s["state"] in ("fault", "stale", "absent")]
+    b += [d["source"] for d in es.get("diagnostics") or () if (d.get("level") == "fault" or d.get("kind") == "epoch" and d.get("since_s", 99) < 5)
+          and d["source"] not in b]
     return b
 
 
@@ -155,13 +165,29 @@ def _frame_row(t, es, ld):
             "events": [d for d in es.get("diagnostics") or () if d.get("kind") in ("mount_step",)]}
 
 
-def _score(rows, ref, faults, groups, t0, t1, quiet_alarms=()):
+def _base_al(base, t):
+    """Groups the unfaulted run names at time t (base: [(t, [groups])] at changes)."""
+    cur = ()
+    for bt, gs in base or ():
+        if bt > t:
+            break
+        cur = gs
+    return cur
+
+
+def _score(rows, ref, faults, groups, t0, t1, base=None):
     """rows: per frame _frame_row + "err": {quantity: (error, sigma)}; ref: None (errors already against truth)."""
     res = {"n": len(rows)}
     pre = set()
     for r in rows:
         if t0 - 20.0 <= r["t"] < t0:
             pre |= set(r["al"])
+    if base is not None:                                   # what the unfaulted run names at the same time is not this fault's
+        for r in rows:
+            if r["t"] >= t0:
+                gs = _base_al(base, r["t"])
+                r["al"] = {g: v for g, v in r["al"].items() if g not in gs or g in r["bl"] and v[0] in ("fault", "finding")}
+                r["bl"] = [g for g in r["bl"] if g not in gs or r["al"].get(g, ("",))[0] == "fault"]
     det = who = None
     named = []
     for r in rows:
@@ -172,7 +198,7 @@ def _score(rows, ref, faults, groups, t0, t1, quiet_alarms=()):
             det = r["t"] - t0
             res["first"] = {g: r["al"][g][1][:90] for g in new}
         for g in r["bl"]:
-            if g not in named:
+            if g not in named and (g not in pre or r["al"].get(g, ("",))[0] == "fault"):
                 named.append(g)
         if who is None and r["bl"]:
             who = list(r["bl"])
@@ -180,6 +206,8 @@ def _score(rows, ref, faults, groups, t0, t1, quiet_alarms=()):
     res["blamed"] = named
     ok = [g for g in named if g in groups]
     res["isolated"] = "ok" if ok and len(named) == len(ok) else "ok+" if ok else ("none" if not named else "wrong")
+    if res["isolated"] == "none" and any(g in groups for g in res.get("first", ())):
+        res["isolated"] = "named"                          # a finding names the source; nothing was taken out
     wv, mx = {}, {}
     last = rows[0]["t"]
     for r in rows:
@@ -223,7 +251,7 @@ def _sim_stream(seed, scenario, radar):
 
 
 def _run_sim(job):
-    label, specs, seed, scenario, radar, tree = job
+    label, specs, seed, scenario, radar, tree, base = job
     sys.path.insert(0, os.path.join(tree or ROOT, "chris-integrator"))
     from chris_integrator import Integrator
     from chris_integrator.core import ego as E
@@ -237,11 +265,17 @@ def _run_sim(job):
     I = Integrator(cfg)
     rows = []
     shift = 0.0                                              # an epoch fault moves the stamps: truth follows
+    last_frame = None
     for m in FM.apply(msgs, faults):
         if m["type"] != "road":
             I.on_message(m)
-            continue
-        es, tr, ld = I.frame(m)
+            # without camera frames the state is published on vehicle samples (as the daemon does)
+            if m["type"] != "ego" or last_frame is None or m["ts_mono_ns"] / NS - last_frame < 0.3:
+                continue
+            es, tr, ld = I.tick(m["ts_mono_ns"])
+        else:
+            es, tr, ld = I.frame(m)
+            last_frame = m["ts_mono_ns"] / NS
         if es is None:
             continue
         T = m["ts_mono_ns"] / NS
@@ -269,25 +303,42 @@ def _run_sim(job):
             err["lead"] = (r["lead"][0], 0.0)               # a lead that is not there
         r["err"] = err
         rows.append(r)
-    groups = {f.group for f in faults if f.group} | ({"wheels", "vehicle"} if any(f.group in ("wheels",) for f in faults) else set())
+    groups = _family({f.group for f in faults if f.group})
     if any(f.target == "clock" for f in faults):
-        groups = set()
-    res = _score(rows, None, faults, groups, T0, min(max(f.t1 for f in faults), T_END))
+        groups = {"clock"}
+    res = _score(rows, None, faults, groups, T0, min(max(f.t1 for f in faults), T_END), base)
     res.update(label=label, seed=seed, target=sorted(groups))
+    if label == "no fault":
+        tl, prev = [], None
+        for r in rows:
+            cur = sorted(r["al"])
+            if cur != prev:
+                tl.append((r["t"], cur))
+                prev = cur
+        res["alarm_tl"] = tl
     return res
 
 
 def cmd_sim(a):
     cat = [c for c in catalogue(a.radar) if not a.only or a.only.lower() in c[0].lower()]
-    jobs = [(label, specs, seed, a.scenario, a.radar, a.tree) for label, specs in cat for seed in a.seeds]
     with mp.Pool(a.jobs) as pool:
-        out = pool.map(_run_sim, jobs, chunksize=1)
+        nof = pool.map(_run_sim, [("no fault", [("vehicle.speed", "bias", T0, T1, dict(b=0.0))], seed, a.scenario, a.radar, a.tree, None)
+                                  for seed in a.seeds], chunksize=1)
+        base = {r["seed"]: r for r in nof}
+        out = pool.map(_run_sim, [(label, specs, seed, a.scenario, a.radar, a.tree, base[seed]["alarm_tl"])
+                                  for label, specs in cat for seed in a.seeds], chunksize=1)
+    # what the unfaulted run of the same seed shows in the same window is not the fault's doing
+    for r in out:
+        b = base[r["seed"]]
+        if r is not b:
+            r["wrong_valid_s"] = {q: round(v - b["wrong_valid_s"].get(q, 0.0), 1) for q, v in r["wrong_valid_s"].items()
+                                  if v - b["wrong_valid_s"].get(q, 0.0) >= 0.5}
+            r["max_err"] = {q: v for q, v in r["max_err"].items() if q in r["wrong_valid_s"]}
     _save(a, out, dict(mode="sim", radar=a.radar, scenario=a.scenario, tree=a.tree or "this"))
 
 
 def _healthy(job):
     seed, scenario, radar, tree = job
-    r = _run_sim(("healthy", [], seed, scenario, radar, tree)) if False else None
     sys.path.insert(0, os.path.join(tree or ROOT, "chris-integrator"))
     from chris_integrator import Integrator
     w, msgs = _sim_stream(seed, scenario, radar)
@@ -382,9 +433,9 @@ def _run_real(job):
             elif r["lead"] and not o["lead"] and o["lead_valid"]:
                 err["lead"] = (r["lead"][0], 0.0)
         r["err"] = err
-    groups = {f.group for f in faults if f.group} | ({"wheels", "vehicle"} if any(f.group == "wheels" for f in faults) else set())
+    groups = _family({f.group for f in faults if f.group})
     if any(f.target == "clock" for f in faults):
-        groups = set()
+        groups = {"clock"}
     res = _score(rows, ref, faults, groups, f0, f1)
     res.update(label=label, target=sorted(groups), session=os.path.basename(os.path.normpath(path)))
     # the reference run's own alarms in the window: what "healthy" looks like on this slice
@@ -405,7 +456,7 @@ def _cell(r):
     wv = r["wrong_valid_s"]
     return "%s | %s | %s | %s | %s" % (
         "-" if r["det_s"] is None else "%.1f" % r["det_s"],
-        {"ok": "ok", "ok+": "ok + " + ",".join(g for g in r["blamed"] if g not in r["target"]), "none": "none",
+        {"ok": "ok", "named": "named (warning)", "ok+": "ok + " + ",".join(g for g in r["blamed"] if g not in r["target"]), "none": "none",
          "wrong": "WRONG: " + ",".join(r["blamed"])}[r["isolated"]],
         ", ".join("%s %.0f s" % (q, v) for q, v in sorted(wv.items()) if v >= 0.5) or "0",
         ", ".join("%s %.3g" % (q, v) for q, v in sorted(r["max_err"].items())) or "-",

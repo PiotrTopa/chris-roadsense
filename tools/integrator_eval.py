@@ -345,6 +345,129 @@ def cmd_inject(a):
                     es["calibration"]["odometry"]["speed_scale"]["value"], es["calibration"]["odometry"]["speed_scale"]["std"]))
 
 
+# ---- position against mapd's filter --------------------------------------------------------------------------------
+def cmd_position(a):
+    """The integrator's position against mapd's own position filter (today's car), on the same recording and
+    the same fixes: both get every second fix and the vehicle's motion, neither gets the map (mapd's engine runs
+    without a map pack, the integrator without its map source); both are judged on the fixes they did not get:
+    distance from the held-out fix to the estimate, and that distance against the estimate's own stated
+    uncertainty. There is no truth on the car: this says who predicts the receiver better and who is honest
+    about it, not who is nearer the road."""
+    sys.path.insert(0, os.path.join(os.path.dirname(HERE), "mapd"))
+    from roadsense_mapd.engine import Engine
+    from roadsense_mapd import geo
+    from chris_integrator.sources import default_sources
+    for path in a.sessions:
+        msgs = [m for m in session(path, a) if m.get("type") in ("ego", "vehicle", "gnss", "calib", "road")]
+        veh = Veh(msgs)
+        I = Integrator(sources=[s for s in default_sources() if s.id != "map"], objects=False)
+        Eg = Engine()
+        k_g = 0
+        rows = []
+        rej = 0
+        for m in msgs:
+            t = m["type"]
+            ts = m["ts_mono_ns"]
+            if t == "ego":
+                mm = {k: v for k, v in m.items() if k in ("speed_mps", "yaw_rate_rps", "wheel_speeds_mps", "gear", "reverse", "steering_wheel_deg",
+                                                          "accel_long_mps2", "accel_lat_mps2", "ts_mono_ns") and v is not None}
+                mm.update(type="motion", source=m.get("tag") or "vehicle")
+                rej += Eg.on_input(mm, ts) is not None
+            if t == "gnss" and m.get("fix") in ("2d", "3d") and m.get("lat") is not None:
+                k_g += 1
+                v = veh.at(ts / NS)
+                if k_g % 2 == 0:                          # held out from both
+                    if v is None or v[0] < 3.0:
+                        continue
+                    row = [ts / NS]
+                    sig = max(float(m.get("hacc_m") or 10.0), 3.0)
+                    if I.anchored and I.speed_now() is not None:
+                        itau = I.model.index["gnss.tau"]
+                        sm = I.ekf.at(ts / NS - float(I.x_now[itau]))
+                        if sm is not None:
+                            x, P = sm
+                            e, n = E.to_local(I.origin, m["lat"], m["lon"])
+                            d = np.array([e - x[E.PE], n - x[E.PN]])
+                            row += [float(np.hypot(*d)), float(d @ np.linalg.solve(P[:2, :2] + np.eye(2) * sig ** 2, d)),
+                                    math.sqrt(max(P[0, 0] + P[1, 1], 0.0))]
+                    if len(row) == 1:
+                        row += [float("nan")] * 3
+                    f = Eg.filter
+                    if f.initialised:
+                        Eg._advance(ts, 0.0, None, False) if False else None
+                        lat, lon = f.latlon
+                        d = geo.haversine_m(lat, lon, m["lat"], m["lon"]) if hasattr(geo, "haversine_m") else math.hypot(
+                            math.radians(m["lon"] - lon) * 6371000.0 * math.cos(math.radians(lat)), math.radians(m["lat"] - lat) * 6371000.0)
+                        h = float(f.hacc)
+                        row += [d, d * d / (h * h + sig * sig), h]
+                    else:
+                        row += [float("nan")] * 3
+                    rows.append(row)
+                    continue
+                rej += Eg.on_input({k: v for k, v in m.items() if not k.startswith("_")}, ts) is not None
+            if t == "road":
+                I.on_road(m)
+            else:
+                I.on_message(m)
+        r = np.array(rows)
+        print("== %s: %d held-out fixes with the car moving (mapd rejected %d inputs)" % (name_of(path), len(r), rej))
+        for label, c in (("integrator (L41)", 1), ("mapd position filter", 4)):
+            k = np.isfinite(r[:, c])
+            if k.sum() < 5:
+                print("   %-22s no estimate" % label)
+                continue
+            print("   %-22s n %4d: distance to the held-out fix p50 %5.1f p90 %5.1f m; distance^2 / (stated variance + fix variance): median %.2f "
+                  "mean %.2f (2 dof: expect median 1.39, mean 2); inside the 95 %% bound %.3f; stated 1-sigma p50 %.1f m" % (
+                      label, k.sum(), np.median(r[k, c]), np.percentile(r[k, c], 90), np.median(r[k, c + 1]), np.mean(r[k, c + 1]),
+                      np.mean(r[k, c + 1] <= 5.99), np.median(r[k, c + 2])))
+        both = np.isfinite(r[:, 1]) & np.isfinite(r[:, 4])
+        if both.sum() >= 5:
+            print("   on the %d fixes both have: integrator nearer in %.0f %% of them; median distance %.1f against %.1f m" % (
+                both.sum(), 100.0 * np.mean(r[both, 1] < r[both, 4]), np.median(r[both, 1]), np.median(r[both, 4])))
+
+
+# ---- mount ---------------------------------------------------------------------------------------------------------
+def cmd_mount(a):
+    """The camera's mount over a day: the sessions in order through ONE integrator (a restart of the phone is a
+    clock epoch; calibration states and the sign-row reference are kept). Per session: the residual angles, the
+    state word, pitch steps reported, the sign rows, and every mount finding with its time."""
+    I = Integrator()
+    for path in a.sessions:
+        msgs = [m for m in session(path, a) if m.get("type") in INPUTS + ("road", "signs")]
+        veh = Veh(msgs)
+        t0 = msgs[0]["ts_mono_ns"] / NS
+        seen, n, mv, faulted = {}, 0, 0, 0
+        ratio = []
+        for m in msgs:
+            if m["type"] != "road":
+                I.on_message(m)
+                continue
+            es, tr, ld = I.frame(m)
+            n += 1
+            T = m["ts_mono_ns"] / NS
+            v = veh.at(T)
+            if v is not None and v[0] >= 5.0:
+                mv += 1
+                faulted += es["sources"]["vision"]["state"] == "fault"
+                ratio.append(m["pose"]["vx"] / v[0])
+            for d in es["diagnostics"]:
+                if d["quantity"] == "mount" or d["kind"] in ("mount_step", "epoch"):
+                    k = (d["kind"], round(T - d["since_s"], -1) if d["kind"] in ("camera_handled", "mount_step") else 0)
+                    if k not in seen:
+                        seen[k] = (T - t0 - (d["since_s"] if d["level"] != "info" else 0.0), d["text"])
+        c = es["calibration"]
+        cv, cs = c["vision"], c.get("signrows", {})
+        print("== %s: %d frames, %d with the vehicle >= 5 m/s (camera faulted in %.0f %% of them; model speed / vehicle speed median %s)" % (
+            name_of(path), n, mv, 100.0 * faulted / max(mv, 1), "%.2f" % np.median(ratio) if ratio else "-"))
+        print("   calibration in use %s; residual pitch %+.4f +- %.4f, yaw %+.4f +- %.4f; state %s; mount samples %d; pitch steps so far %d; "
+              "last step %s; handled events so far %d" % (
+                  cv.get("in_use"), cv["dpitch"]["value"], cv["dpitch"]["std"], cv["dyaw"]["value"], cv["dyaw"]["std"], cv["state"], cv["samples"],
+                  cv.get("pitch_steps", 0), cv.get("last_pitch_step"), cv.get("handled", 0)))
+        print("   sign rows: %s" % cs)
+        for (kind, _), (t, txt) in sorted(seen.items(), key=lambda kv: kv[1][0]):
+            print("   %7.1f s  %-18s %s" % (t, kind, txt))
+
+
 # ---- gnss ----------------------------------------------------------------------------------------------------------
 def cmd_gnss(a):
     for path in a.sessions:
@@ -454,7 +577,7 @@ def main():
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--radar", action="store_true")
     p.add_argument("--cam2", action="store_true")
-    for name in ("real", "heldout", "gnss"):
+    for name in ("real", "heldout", "gnss", "mount", "position"):
         p = sub.add_parser(name)
         p.add_argument("sessions", nargs="+")
         p.add_argument("--pos")
