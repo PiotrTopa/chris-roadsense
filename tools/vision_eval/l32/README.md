@@ -10,5 +10,6 @@ their paths as arguments.
 | the regression bisect by configuration (pre-2.0 chain / 2.0 code with supercombo / with vision / new backend with the old frontend) | `bisect.sh`, `bisect_table.py` |
 | host motion injected (exact, yaw-rate bias, speed-proportional yaw-rate error) | `inject.sh` (`chain_api.py --ego ...`) |
 | calibration perturbation replays and their comparison | `sweep.sh`, `sweep2.sh`, `sens.py`, `sens_speed.py` (by own speed), `byspeed.py` |
-| before / after replays with the online calibration, scoring | `ac.sh`, `ac_all.sh`, `ac_sc.sh` (supercombo), `score.sh`, `tables.py` |
+| before / after replays with the online calibration, scoring | `ac.sh`, `ac_all.sh`, `ac_krakow.sh`, `ac_sc.sh` (supercombo), `score.sh`, `tables.py`, `eval_table.py` |
+| modeld as a daemon with camerad-replay (wrong calibration, restart) | `daemon_test.sh` |
 | the car's recordings | `gates.py`, `yawrate.py`, `still.py`; `../calib_from_pose.py` |
