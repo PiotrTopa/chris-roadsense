@@ -78,6 +78,22 @@ class RadarModel(SensorModel):
                       4.0 * sv * sv + 1.0 + 25.0 * sb * sb, 9.0, 4.0])
         return x0, P0
 
+    first_gate_m, first_gate_rel = 3.0, 0.25
+
+    def gate(self, track, det, nu, S, d2):
+        """A track no range sensor has measured yet (a camera's: its range is the poor coordinate and its first
+        covariance is wide) takes a first range only within the camera's range error, the same bound under which a
+        camera adopts a range sensor's track (sources/camera_lead.py `adopt_gate_*`): the chi-square gate alone
+        lets a stationary return 30 m behind a fresh camera track pull it there."""
+        if not track.mem.get("ranged"):
+            r = det.z[0] - nu[0]
+            if abs(nu[0]) > max(self.first_gate_m, self.first_gate_rel * r):
+                return False
+        return True
+
+    def on_hit(self, layer, track, det, scan):
+        track.mem["ranged"] = True
+
     def coverage(self, x):
         dx, dy = x[X] - self.mx, x[Y] - self.my
         r = math.hypot(dx, dy)

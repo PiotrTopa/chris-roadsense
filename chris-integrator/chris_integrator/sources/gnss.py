@@ -101,6 +101,12 @@ class GnssSource(Source):
     def _alive(ts):
         return [Meas("signal:gnss_fix", ts, True, role="signal")]
 
+    def on_reanchor(self, ctx):
+        """The position was declared lost and is anchored again on this receiver: whether the old position or
+        the new fixes were wrong is not known, so the fixes are believed at their widest for a while."""
+        ctx.mem["scale2"] = self.scale_max ** 2
+        ctx.mem["scale_k"] = 0
+
     def report(self, ctx):
         m = ctx.mem
         n = m.get("n", 0)
@@ -130,3 +136,62 @@ class GnssSpeedSource(Source):
         acc = msg.get("speed_acc_mps")
         return [Meas("speed", msg["ts_mono_ns"] / NS, float(v), max(float(acc), 0.5) if fin(acc) else 1.5,
                      src="gnss.speed", role="monitor")]
+
+
+class GnssTrackSource(Source):
+    """The receiver's track as a speed: path length over a few fixes divided by their time. Slow (one value
+    every few seconds, seconds old) and noisy, but independent of every speed sensor of the car and with no
+    scale of its own: the third opinion that decides between the vehicle's speed and the camera's when they
+    disagree (a vote), and a check on both when they agree. Never fused."""
+    id = "gnss_track"
+    group = "gnss_track"
+    rank = 0
+    family = "gnss"
+    types = ("gnss",)
+    stale_s = 1e9                # it speaks only while the car moves: its silence says nothing
+    info = "receiver track speed (path over a few fixes): the independent third opinion on the speed"
+    chord_n = 3                  # fixes per value
+    min_speed, max_accel = 3.0, 1.5
+    max_gap_s = 2.5
+    # compared by its mean, over a long window (monitors.Pair mode "mean")
+    pair = dict(mode="mean", max_step_s=8.0, pending_s=8.0, fire_window_s=60.0, recover_window_s=60.0, min_n=4,
+                cusum_k=1.0, cusum_h=5.0, min_delta=0.06, recover_n=4, recover_z=2.5)
+
+    def reset(self):
+        pass
+
+    def measure(self, msg, ctx):
+        mem = ctx.mem
+        lat, lon = msg.get("lat"), msg.get("lon")
+        if msg.get("fix") not in FIXES or not fin(lat) or not fin(lon) or ctx.integ.origin is None:
+            return []
+        ts = msg["ts_mono_ns"] / NS
+        e, n = E.to_local(ctx.integ.origin, float(lat), float(lon))
+        pts = mem.setdefault("pts", [])
+        if pts and (ts - pts[-1][0] > self.max_gap_s or ts <= pts[-1][0]):
+            del pts[:]
+        if pts and e == pts[-1][1] and n == pts[-1][2]:
+            del pts[:]                                   # a repeated position: the receiver holds (standing, or no fix)
+            return []
+        pts.append((ts, e, n))
+        if len(pts) <= self.chord_n:
+            return []
+        d = sum(math.hypot(pts[i + 1][1] - pts[i][1], pts[i + 1][2] - pts[i][2]) for i in range(len(pts) - 1))
+        T = pts[-1][0] - pts[0][0]
+        mid = 0.5 * (pts[-1][0] + pts[0][0])
+        del pts[:-1]
+        i = ctx.integ.model.index.get("gnss.tau")
+        tau = float(ctx.x[i]) if i is not None else 0.0
+        # the value belongs to the middle of the chord, minus the receiver's delay. While that delay is poorly
+        # known and the car accelerates, the time the value belongs to is not known well enough to compare it
+        # with anything: no evidence then, rather than evidence with a timing error in it
+        s_tau = max(math.sqrt(max(float(ctx.P[i, i]), 0.0)) if i is not None else 0.5, 0.15)
+        a0, a1 = ctx.ego_at(mid - tau - 0.5 * T), ctx.ego_at(mid - tau + 0.5 * T)
+        if not (a0[3] and a1[3]) or abs(a1[0] - a0[0]) / T * s_tau > 0.35:
+            return []
+        # ... and a chord that contains a start, a stop or hard braking is not the speed at its middle
+        if min(abs(a0[0]), abs(a1[0]), d / T) < self.min_speed or abs(a1[0] - a0[0]) / T > self.max_accel:
+            return []
+        hacc = msg.get("hacc_m")
+        sig = 1.4 * min(max(float(hacc), 1.0) if fin(hacc) else 5.0, 8.0) / T
+        return [Meas("speed", mid - tau, d / T, sig, src="gnss_track.speed", role="monitor")]

@@ -103,7 +103,7 @@ only appends them to the state vector and propagates them. This stack's sources 
 | source | calibration states (each estimated, each published with its std) |
 |---|---|
 | vehicle | gyro bias `b_g` and scale `s_g`; wheel-difference yaw scale `s_wy`; accelerometer offsets `b_ax` (longitudinal, with grade), `b_ay` (lateral: bank and bias) |
-| vision | time delay `tau` (the image pair, prior 0.125 s); speed scale `s`; yaw-rate scale `s_w`; a Gauss-Markov error `m` of the speed (the error correlated over seconds: a coloured-noise state instead of pretending the error is white); mount yaw and pitch against the calibration in use (`dyaw`, `dpitch`) |
+| vision | time delay `tau` (the image pair, prior 0.125 s); speed scale `s`; yaw-rate scale `s_w`; two Gauss-Markov errors of the speed, `m` (0.45 m/s, 3.5 s) and `mf` (0.38 m/s, 0.35 s), fitted to the autocorrelation of the car's residuals (0.80 at one frame, 0.42 at 1 s, 0.21 at 3 s: hardly any of the error is white); mount yaw and pitch against the calibration in use (`dyaw`, `dpitch`) |
 | gnss | time delay `tau` (prior 2 s, sigma 1.5 s); east / north error correlated over 20 s (Gauss-Markov) |
 | map match | the car's offset from the matched road's centre line (Gauss-Markov, 120 s): a thousand matches must not pretend to know the position across the road to centimetres |
 | radar (each) | mount yaw misalignment `dyaw`; time delay `tau` |
@@ -118,25 +118,63 @@ delay); their process noise is tiny and the std says how far they are known.
 
 **What the build taught about calibration states (as built).** (1) A scale state's Jacobian is the quantity
 it multiplies; near zero that quantity is its own estimation noise and teaches the scale nonsense (the
-errors-in-variables bias of an EKF: the gyro scale walked to -0.4 on a straight road in simulation). A scale
-is therefore learned only where its regressor stands clear of the noise (yaw rate above 0.05 rad/s, speed above
-3 m/s). (2) The same holds for the delay of the camera's yaw rate, whose Jacobian is the poorly known yaw
+errors-in-variables bias of an EKF: the gyro scale walked to -0.4 on a straight road in simulation). The
+regressor is therefore shrunk towards zero by its own uncertainty (zero inside 3 sigma or 0.02 rad/s, the
+value itself far outside). A fixed floor (0.05 rad/s, the first build) also removed the scale's *uncertainty*
+from every gentle bend: an unlearned gyro scale of 8 % at 0.04 rad/s is 3 degrees of heading in a long
+motorway bend that the covariance did not contain. (1a) Nothing in a yaw-rate sensor says what its scale is:
+the gyro's scale is a consider state of the gyro's own row, corrected only through heading references; the
+other yaw sensors' scales are learned relative to it. Without that gauge all yaw scales walked together
+(to -0.25, stated +- 0.03) whenever no absolute source was allowed to teach them. (1b) A standstill says what
+the motion is and nothing about a calibration: standstill rows do not correct calibration states, or the
+correlations built at speed are cashed in at v = 0, where they mean nothing. (1c) A coloured-noise state
+scaled by a speed-dependent sigma is a second scale factor; the filter split the camera's scale between the
+two and got it wrong by 8 %: coloured-noise states have a constant sigma. (2) The same holds for the delay of the camera's yaw rate, whose Jacobian is the poorly known yaw
 acceleration: the camera's delay is learned from the speed rows only. (3) States a row cannot tell apart are
 **consider states** for it (Schmidt-Kalman: their uncertainty counts, they are not corrected): the camera's
 rows never correct another source's calibration; the camera's own scale is frozen while no other source holds
 the speed; the receiver's and the map's rows do not teach the speed and yaw scales unless the receiver is
 declared good (`gnss_absolute`; the reference car's is not).
 
+**Unobservable directions have to be in the covariance.** A position placed on a fix is that fix carried
+forward by speed x delay along the heading: at constant speed the receiver's delay and the along-track
+position are one quantity. The anchor therefore gives the position the delay's uncertainty along the track
+and the heading's across it, correlated with those states; the filter learns the delay when the speed
+changes and the stated position uncertainty is honest until it does. (The first build anchored with an
+uncorrelated 7 m and became overconfident by 15-35 m along the track.)
+
 **Time delays as states.** A measurement stamped `t` by a source with delay `tau` is `h(x(t - tau))`. It is
 inserted into the buffer at `t - tau_hat` (the current estimate) and its Jacobian carries
 `dh/dtau = -H f(x)` (the state's rate), so the filter corrects `tau` whenever the state moves.
 
-**Camera mounting.** `pose.vy`, `pose.vz` are measurements of `v` times the direction of travel in the device
-frame, `dyaw` and `dpitch` (plus the yaw-rate lever arm of the camera ahead of the rear axle). They are used
-only at speed, with the *integrator's* speed (not the camera's), and only while the camera is not faulted:
-the calibrator's blind spot (it judged "fast enough" by the camera's own motion sense) is closed by
-construction. Published as `calibration.vision`: angles, std, `state` (`converging`, `ok`, `moved` when the
-windowed innovations say the mount jumped, `unknown` while the camera is faulted).
+**Camera mounting (revised in L41).** The mount model follows the hardware: on the reference car the mount has
+one degree of freedom, pitch (it is re-aimed by hand); yaw and roll are fixed. So `dyaw` is a constant to be
+found once, and `dpitch` is a constant *between steps*.
+
+* The rows are about the direction of the pose: `pose.vy`, `pose.vz` against the pose's *own* `vx` (plus the
+  yaw-rate lever arm). The regressor is the measured `vx`, not the speed state: with the state there the rows
+  were a speed measurement in disguise, and a camera without a reference "learned" its own scale from them.
+  They are used only at speed (judged by the integrator's speed, not the camera's) and never while the camera
+  is faulted.
+* Two row classes, `mount_yaw` and `mount_pitch`, judged separately. A two-sided CUSUM on the pitch row's
+  residual finds a step in a few frames; the state is then put at the step's estimate with an uncertainty
+  that says so, converges again within seconds, and the step is reported with its size ("camera pitch
+  changed by +1.8 deg"). The yaw row has no such mechanism: a persistent yaw residual is reported as a trend
+  of the camera, not followed as a movement of the mount.
+* A calibration change does not move the camera: the residual against the new calibration is the old
+  residual plus what the calibration changed by.
+* The pose moving while another source knows the car stands is somebody handling the camera: the pitch is
+  free again (prior uncertainty) until the next drive.
+* Far outside its range (measured: a camera tilted by about 16 degrees) the road model returns a collapsed
+  speed, an exploded stated std, a phantom near lead, and a pose direction that reads "aligned". That direction
+  is not a mount measurement: the camera is faulted, the mount is `unknown`, and the finding says what this
+  looks like. The size of such a change cannot be estimated from the model's outputs.
+* `sources/signrows.py`: the image rows of sign detections at equal box size, against a reference learned
+  while the camera was believed. Rows / focal length is a pitch change that does not pass through the road
+  model; coarse (about 2 degrees), needs ten sign tracks per size class, keeps working when the model is lost.
+
+Published as `calibration.vision` (angles, std, `state`: `converging`, `ok`, `offset`, `pitch_changed`, `moved`,
+`unknown`; `pitch_steps`, `last_pitch_step`, `handled`) and `calibration.signrows`.
 
 **Standstill** (vehicle: speed and every wheel exactly 0) is a set of exact pseudo-measurements (`v`, `a`,
 `w`, `al` = 0): the gyro then measures its bias, the accelerometer its offset plus grade.
@@ -220,6 +258,53 @@ away from the higher), and a disagreement held only by its recovery hysteresis b
 A faulted source leaves the estimate at once (the buffer is re-run without it), its calibration states freeze,
 its detections leave the object layer, and everything made from it goes out `valid: false` with the reason.
 Recovery needs evidence of agreement (hysteresis as in L37). Faults survive epochs and restarts (carried).
+
+## 5a. Fault detection as a general capability (L41)
+
+Section 5 is isolation between sources. Below it sits detection that knows nothing about any particular
+source or incident (`core/fdi.py`), and above it the campaign that scores all of it (`sim/faults.py`,
+`tools/fault_campaign.py` in chris-roadsense, `tests/test_faults.py`).
+
+**Taxonomy** (the campaign injects each into every source and quantity it applies to): bias, scale error, slow
+drift, stuck value, repeated samples, drop-out, noise burst, outliers, delay and delay jump of the content,
+time-stamp error, clock epoch change, stale-after-silence, sign / unit / frame error, mount change of a camera
+or a radar, ghosts and mis-association in the object layer, a source lying about its uncertainty, two sources
+failing together, slowly developing faults.
+
+**Detectors.**
+
+| family | sees | needs |
+|---|---|---|
+| signal integrity of one raw stream (`Stream`) | stuck, repeated samples, noise burst (robust sigma of the second difference against the characterised one), outliers, not-a-number | nothing: *self-evident*, the culprit is known whatever its rank |
+| timing integrity of one message stream (`Clock`) | a step of its stamps against the other streams' stamps at arrival (stamp offset, latency jump); staleness and epochs as before | the other streams as a clock |
+| pair monitors (`monitors.Pair`) | bias, scale, sign, unit between two raw sources: a share-of-bad-samples test for gross faults, a CUSUM for what never puts one sample beyond the gate, a CUSUM in units of the pair's own learned spread for slow noisy sources; the kind of the disagreement is named from the samples | a second source |
+| innovation consistency (`NisMonitor`, `Trend`) | a source's stated uncertainty against what its innovations show; a signed innovation that keeps its sign (bias, drift, a calibration that moved) | the filter |
+| source-specific (`sources/`) | camera pitch step, handled camera, road model out of range, sign rows | that source's physics |
+
+**Responses**, by what is known: a self-evident fault takes the quantity out at once; a noise burst below the
+fault level stays in with the weight its measured noise deserves (adaptive measurement noise); a
+disagreement of two is decided by vote when an independent third exists, and while the third has not yet
+spoken the quantity is published `mode: disputed` with a std that covers both readings; by rank only when no
+third exists. Faults are per (source, quantity) unless the quantity is the source's main signal: a gyro
+fault sets the gyro's rows aside and keeps the vehicle's speed.
+
+**Independent opinions on today's car.** Speed: the vehicle's speed signal (wheels: same family), the camera,
+and the receiver's *track* (`gnss_track`: path length over three fixes; slow, noisy, no scale of its own).
+Yaw rate: gyro, rear wheel difference, camera. Position, heading: the receiver against dead reckoning and the
+map's geometry.
+
+**What cannot be detected with the present sensors** (the campaign shows each as such):
+
+| fault | why | what would make it detectable |
+|---|---|---|
+| which of two is wrong, when only two measure the quantity | no third opinion | a third source (speed: radar ego-speed, a second receiver) |
+| two sources wrong the same way (vehicle and camera speed both x 0.7) | they outvote the truth | a second absolute source of the speed (radar on stationary objects) |
+| a persistent offset or slow drift of the receiver's positions | the only absolute source; the map gives the cross-track part only | a second receiver, or map matching of landmarks |
+| mirrored / swapped receiver coordinates | distances stay right; only turns disagree | as above |
+| the camera's lead range or a phantom lead | one sensor reports the lead | a radar (the object layer then cross-checks) |
+| a gyro sign error on a straight road | nothing turns | time: it shows at the first bend |
+| a delay of the whole vehicle feed with fresh stamps | camera and vehicle disagree in time, not which one is late | honest time stamps from the feeder (`age_ms`) |
+| an accelerometer bias | it is the same thing as road grade | an altitude source |
 
 ## 6. The object layer
 

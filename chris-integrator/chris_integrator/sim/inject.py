@@ -4,9 +4,20 @@ recorded:
 
   * the car's motion is the recording's own (CAN speed and gyro, dead-reckoned into a path);
   * the lead vehicle is where the recording's camera-only lead track says it is, smoothed non-causally (a
-    pseudo-truth: good for association, continuity and fault behaviour; not an accuracy reference);
+    pseudo-truth: good for association, continuity and fault behaviour; not an accuracy reference). Camera
+    tracks that are one vehicle seen with a gap (the next track starts where the previous one, carried on by
+    its own closing speed, would be; `link_tracks`) are joined and the vehicle is injected through the gap:
+    a vehicle does not vanish because the camera lost it for a second;
   * roadside objects are invented but stand still in the world the car drives through, so their range rates
-    are consistent with the car's motion; clutter and double-bounce ghosts as in sim/radar.py.
+    are consistent with the car's motion. They are placed beside the road actually driven: at their lateral
+    offset from the recording's whole dead-reckoned path (known in advance offline), and dropped where another
+    part of the path passes closer than `roadside_min_m` (a junction, a hairpin). (Before L41 they were placed
+    straight ahead of the pose at the moment they came into range, which in a bend put some on the road;
+    `statics_mode="ahead"` keeps that for comparison.) Clutter and double-bounce ghosts as in sim/radar.py.
+
+Every injected detection carries `synthetic` (lead / static / ghost / clutter) and, for the vehicle and the
+roadside objects, `synthetic_id`: for the evaluation only; no source reads them. `world` (a dict) receives the
+`Injected` description (vehicles and objects over time) for the evaluation.
 
     msgs = list(read_session(...))
     for m in inject(msgs, radars=[{"sensor": "radar_front", "mount": (2.2, 0.0, 0.0)}]): ...
@@ -58,9 +69,14 @@ class _Ego:
         return L(self.v), L(self.w), L(self.x), L(self.y), L(self.psi), L(self.s)
 
 
-def lead_truth(msgs, integrator=None):
+def lead_truth(msgs, integrator=None, split=True, jump_m=1.5, jump_rel=0.08, unsplit=None):
     """The recording's camera-only lead track, smoothed non-causally per track: lists (t, gap, lateral left, lead
-    speed over ground), one list per track id."""
+    speed over ground), one list per track id. split: a track is cut where its distance steps by more than its
+    own relative speed explains (more than max(jump_m, jump_rel x distance) between two frames, or a silence of
+    0.5 s): the camera's track keeps its id when it re-measures the same vehicle at another distance
+    ("relocated"), and smoothing across such a step would inject a vehicle moving at tens of m/s, which no
+    tracker should follow. Each piece is then a vehicle of its own (`link_tracks` joins the consistent ones).
+    unsplit: a list that receives the tracks smoothed without splitting (what L38 used), for comparison."""
     from ..core.integrator import Integrator
     I = integrator or Integrator()
     rows = {}
@@ -68,67 +84,190 @@ def lead_truth(msgs, integrator=None):
         if m.get("type") == "road":
             es, tr, ld = I.frame(m)
             if ld and ld.get("present") and ld.get("valid"):
-                rows.setdefault(ld["track_id"], []).append((m["ts_mono_ns"] / NS, ld["dist_m"], -ld["lateral_m"], ld["v_lead_mps"]))
+                rows.setdefault(ld["track_id"], []).append((m["ts_mono_ns"] / NS, ld["dist_m"], -ld["lateral_m"], ld["v_lead_mps"],
+                                                             ld.get("v_rel_mps") if ld.get("v_rel_mps") is not None else 0.0))
         else:
             I.on_message(m)
-    out = []
+    pieces = []
     for tid, r in rows.items():
-        if len(r) < 13:
-            continue
-        a = np.array(r)
-        k = 13                                         # about 1 s of frames
-        ker = np.ones(k) / k
-        pad = lambda c: np.convolve(np.pad(c, k // 2, mode="edge"), ker, mode="valid")
-        out.append(np.column_stack([a[:, 0], pad(a[:, 1]), pad(a[:, 2]), pad(a[:, 3])]))
-    return out
+        cur = [r[0]]
+        for p, q in zip(r, r[1:]):
+            dt = q[0] - p[0]
+            step = abs(q[1] - p[1] - 0.5 * (p[4] + q[4]) * dt)
+            if split and (dt > 0.5 or step > max(jump_m, jump_rel * q[1])):
+                pieces.append(cur)
+                cur = []
+            cur.append(q)
+        pieces.append(cur)
+    def smooth(parts):
+        out = []
+        for r in parts:
+            if len(r) < 13:
+                continue
+            a = np.array(r)
+            k = 13                                     # about 1 s of frames
+            ker = np.ones(k) / k
+            pad = lambda c: np.convolve(np.pad(c, k // 2, mode="edge"), ker, mode="valid")
+            out.append(np.column_stack([a[:, 0], pad(a[:, 1]), pad(a[:, 2]), pad(a[:, 3])]))
+        out.sort(key=lambda a: a[0, 0])
+        return out
+    if unsplit is not None:
+        unsplit.extend(smooth(rows.values()))
+    return smooth(pieces)
+
+
+def link_tracks(tracks, max_gap_s=3.0, tol_m=1.5, tol_rel=0.08, tol_rate=0.5, tol_lat_m=1.5, tol_v=3.0):
+    """Join camera tracks that are one vehicle seen with a gap: the next track starts within max_gap_s after the
+    previous one ended, where the previous one's distance carried on by its own rate of change (over its last
+    second) would be (within max(tol_m, tol_rel x distance), the step `lead_truth` splits at, plus tol_rate per
+    second of gap), at the same lateral place and speed. Returns one array (t, gap, lateral left, speed) per
+    vehicle, the gaps filled by linear interpolation, and per vehicle the indices of the tracks it joined."""
+    tr = sorted((a for a in tracks if len(a)), key=lambda a: a[0, 0])
+    groups = []
+    for k, a in enumerate(tr):
+        g = groups[-1] if groups else None
+        if g is not None:
+            b = g[-1][1]
+            gap = a[0, 0] - b[-1, 0]
+            m = b[:, 0] >= b[-1, 0] - 1.0
+            slope = 0.0
+            if m.sum() >= 3:
+                slope = float(np.polyfit(b[m, 0] - b[-1, 0], b[m, 1], 1)[0])
+            pred = b[-1, 1] + slope * max(gap, 0.0)
+            if -0.3 <= gap <= max_gap_s and abs(a[0, 1] - pred) <= max(tol_m, tol_rel * max(pred, 0.0)) + tol_rate * max(gap, 0.0) \
+                    and abs(a[0, 2] - b[-1, 2]) <= tol_lat_m and abs(a[0, 3] - b[-1, 3]) <= tol_v:
+                g.append((k, a))
+                continue
+        groups.append([(k, a)])
+    out, members = [], []
+    for g in groups:
+        parts = []
+        for n, (k, a) in enumerate(g):
+            if n:
+                b = parts[-1]
+                t0, t1 = b[-1, 0], a[0, 0]
+                if t1 - t0 > 0.1:
+                    ts = np.arange(t0 + 1.0 / 13.0, t1 - 0.02, 1.0 / 13.0)
+                    if len(ts):
+                        u = ((ts - t0) / (t1 - t0))[:, None]
+                        parts.append(np.column_stack([ts, (b[-1, 1:] * (1 - u) + a[0, 1:] * u)]))
+                a = a[a[:, 0] > parts[-1][-1, 0]]
+            if len(a):
+                parts.append(a)
+        out.append(np.vstack(parts))
+        members.append([k for k, _ in g])
+    return out, members
+
+
+class Injected:
+    """What was injected, for the evaluation: the vehicles (car frame, from the pseudo-truth) and the roadside
+    objects (fixed in the dead-reckoned world) at any time."""
+
+    def __init__(self, ego, vehicles, stat_world, stat_s, members=None):
+        self.ego, self.vehicles, self.members = ego, vehicles, members
+        self.stat_world = stat_world          # [(x, y)] world positions (None where dropped / not yet placed)
+        self.stat_s = stat_s
+        self._vt = [v[:, 0] for v in vehicles]
+        self.path = (ego.x, ego.y)
+
+    def vehicle_at(self, t, max_dt=0.3):
+        """[(vehicle index, gap, lateral left, speed)] of the vehicles present at t."""
+        out = []
+        for k, (a, ta) in enumerate(zip(self.vehicles, self._vt)):
+            if ta[0] <= t <= ta[-1]:
+                i = min(bisect.bisect_left(ta, t), len(ta) - 1)
+                if abs(ta[i] - t) < max_dt:
+                    out.append((k, float(a[i, 1]), float(a[i, 2]), float(a[i, 3])))
+        return out
+
+    def statics_at(self, t, e=None, lo_m=-10.0, hi_m=170.0):
+        """[(object index, x, y)] in the car frame of the roadside objects placed so far around the pose at t."""
+        e = e if e is not None else self.ego.at(t)
+        if e is None:
+            return []
+        v, w, x, y, psi, s = e
+        c, sn = math.cos(psi), math.sin(psi)
+        lo, hi = bisect.bisect_left(self.stat_s, s + lo_m), bisect.bisect_right(self.stat_s, s + hi_m)
+        out = []
+        for j in range(lo, hi):
+            p = self.stat_world[j]
+            if p is None:
+                continue
+            dx, dy = p[0] - x, p[1] - y
+            out.append((j, c * dx + sn * dy - AXLE, -sn * dx + c * dy))
+        return out
+
+    def path_distance(self, j):
+        """Distance of roadside object j from the whole driven path (m)."""
+        p = self.stat_world[j]
+        if p is None:
+            return None
+        return float(np.min(np.hypot(self.path[0] - p[0], self.path[1] - p[1])))
+
+
+def _place_statics(ego, rng, mode, roadside_min_m):
+    """Arc lengths and lateral offsets of the roadside objects; for mode "path" also their world positions."""
+    stat = []
+    if len(ego.s):
+        sj = 15.0
+        end = ego.s[-1] + (150.0 if mode == "ahead" else 0.0)
+        while sj < end:
+            stat.append((sj, rng.choice([-1, 1]) * rng.uniform(4.0, 9.0)))
+            sj += rng.uniform(10.0, 40.0)
+    world = [None] * len(stat)
+    if mode == "path" and stat:
+        # the path by arc length (s is non-decreasing; keep the first sample of each arc length)
+        s, idx = np.unique(ego.s, return_index=True)
+        px, py, ps = ego.x[idx], ego.y[idx], ego.psi[idx]
+        # the path thinned to about 1 m for the distance test
+        keep = np.concatenate([[0], np.nonzero(np.diff(np.floor(s)) > 0)[0] + 1])
+        tx, ty = px[keep], py[keep]
+        for j, (sj, dj) in enumerate(stat):
+            x, y, psi = (float(np.interp(sj, s, a)) for a in (px, py, ps))
+            qx, qy = x - math.sin(psi) * dj, y + math.cos(psi) * dj
+            if float(np.min(np.hypot(tx - qx, ty - qy))) < roadside_min_m:
+                continue                       # another stretch of the road passes here
+            world[j] = (qx, qy)
+    return stat, world
 
 
 def inject(msgs, radars=(), camera2=None, seed=7, hz=17.0, latency=0.05, lead=None, statics=True, clutter=1.0,
-           ghost=0.3, sigma=(0.2, 0.4, 0.12), p_d=0.92, speed_fault=None, integrator=None):
+           ghost=0.3, sigma=(0.2, 0.4, 0.12), p_d=0.92, speed_fault=None, integrator=None, statics_mode="path",
+           roadside_min_m=3.5, link=True, world=None):
     """Yield the recording's messages with synthetic `objects` scans merged in at their arrival times.
     radars: [{"sensor", "mount": (x, y, yaw rad), "fov_deg", "max_range"}]. camera2: {"sensor", "mount", ...}:
     a second camera's object list. speed_fault (t0, t1, factor) in session seconds: the recording's vehicle speed
-    and wheel speeds are multiplied by factor in that window (a decoding fault of the speed signal)."""
+    and wheel speeds are multiplied by factor in that window (a decoding fault of the speed signal).
+    statics_mode: "path" (beside the driven road) or "ahead" (the L38 placement). link: join camera tracks of one
+    vehicle across gaps (`link_tracks`). world: a dict that receives "injected" (an `Injected`)."""
     rng = random.Random(seed)
     ego = _Ego(msgs)
     tracks = lead_truth(msgs, integrator) if lead is None else lead
+    if link:
+        tracks, members = link_tracks(tracks)
+    else:
+        members = [[k] for k in range(len(tracks))]
     t0 = min(m["ts_mono_ns"] for m in msgs if isinstance(m.get("ts_mono_ns"), int)) / NS
     t1 = max(m["ts_mono_ns"] for m in msgs if isinstance(m.get("ts_mono_ns"), int)) / NS
     # roadside objects along the dead-reckoned path
-    stat = []
-    if statics and len(ego.s):
-        sj = 15.0
-        while sj < ego.s[-1] + 150.0:
-            stat.append((sj, rng.choice([-1, 1]) * rng.uniform(4.0, 9.0)))
-            sj += rng.uniform(10.0, 40.0)
+    stat, stat_world = _place_statics(ego, rng, statics_mode, roadside_min_m) if statics else ([], [])
     stat_s = [a for a, _ in stat]
-
-    def lead_at(t):
-        for a in tracks:
-            if a[0, 0] <= t <= a[-1, 0]:
-                i = min(bisect.bisect_left(a[:, 0].tolist(), t), len(a) - 1)
-                if abs(a[i, 0] - t) < 0.3:
-                    return float(a[i, 1]), float(a[i, 2]), float(a[i, 3])
-        return None
+    W = Injected(ego, tracks, stat_world, stat_s, members)
+    if world is not None:
+        world["injected"] = W
 
     def world_statics(e):
         v, w, x, y, psi, s = e
-        lo, hi = bisect.bisect_left(stat_s, s - 10.0), bisect.bisect_right(stat_s, s + 160.0)
-        out = []
         c, sn = math.cos(psi), math.sin(psi)
-        for j in range(lo, hi):
-            sj, dj = stat[j]
-            # where the path will be at arc length sj: straight ahead of the current pose is good enough for a
-            # roadside object's place (it only has to stand still once placed): place it once, in the world
-            key = j
-            if key not in placed:
-                ahead = sj - s
-                placed[key] = (x + c * ahead - sn * dj, y + sn * ahead + c * dj)
-            px, py = placed[key]
-            dx, dy = px - x, py - y
-            out.append((c * dx + sn * dy - AXLE, -sn * dx + c * dy, 0.0, 0.0))
-        return out
-    placed = {}
+        if statics_mode == "ahead":
+            lo, hi = bisect.bisect_left(stat_s, s - 10.0), bisect.bisect_right(stat_s, s + 160.0)
+            for j in range(lo, hi):
+                if stat_world[j] is None:
+                    # straight ahead of the current pose, placed once in the world when it comes into range
+                    sj, dj = stat[j]
+                    ahead = sj - s
+                    stat_world[j] = (x + c * ahead - sn * dj, y + sn * ahead + c * dj)
+        return [(xc, yc, 0.0, 0.0, j) for j, xc, yc in W.statics_at(None, e, hi_m=160.0)]
     scans = []
     for k, rd in enumerate(list(radars) + ([dict(camera2, _cam=True)] if camera2 else [])):
         mx, my, yaw = rd.get("mount", (2.2, 0.0, 0.0))
@@ -141,14 +280,12 @@ def inject(msgs, radars=(), camera2=None, seed=7, hz=17.0, latency=0.05, lead=No
             if e is not None:
                 v, w = e[0], e[1]
                 objs = []
-                ld = lead_at(t)
-                things = []
-                if ld is not None:
-                    things.append((ld[0], ld[1], ld[2], 0.0, True))
+                things = [(gx, gy, gv, 0.0, ("lead", vid)) for vid, gx, gy, gv in W.vehicle_at(t)]
                 if not rd.get("_cam"):
-                    things += [(a, b, c, d, False) for a, b, c, d in world_statics(e)]
+                    things += [(a, b, c, d, ("static", j)) for a, b, c, d, j in world_statics(e)]
                 near = None
-                for x, y, vx, vy, veh in things:
+                for x, y, vx, vy, (tag, oid) in things:
+                    veh = tag == "lead"
                     dx, dy = x - mx, y - my
                     r = math.hypot(dx, dy)
                     az = (math.atan2(dy, dx) - yaw + math.pi) % (2.0 * math.pi) - math.pi
@@ -158,18 +295,18 @@ def inject(msgs, radars=(), camera2=None, seed=7, hz=17.0, latency=0.05, lead=No
                         er, ec = rng.gauss(0, 0.3 + 0.05 * r), rng.gauss(0, 0.08 + 0.005 * r)
                         cx, cy = r * math.cos(az), r * math.sin(az)
                         objs.append({"x_m": round(cx + er * cx / r - ec * cy / r, 2), "y_m": round(cy + er * cy / r + ec * cx / r, 2),
-                                     "class": "car", "prob": 0.9})
+                                     "class": "car", "prob": 0.9, "synthetic": tag, "synthetic_id": oid})
                         continue
                     vsx, vsy = v - w * my, w * (mx + AXLE)
                     rr = (dx * (vx - vsx) + dy * (vy - vsy)) / r
                     objs.append({"range_m": round(r + rng.gauss(0, sr), 2), "azimuth_deg": round(math.degrees(az + rng.gauss(0, sa)), 3),
-                                 "range_rate_mps": round(rr + rng.gauss(0, sv), 3), "synthetic": "lead" if veh else "static"})
+                                 "range_rate_mps": round(rr + rng.gauss(0, sv), 3), "synthetic": tag, "synthetic_id": oid})
                     if veh and (near is None or r < near[0]):
-                        near = (r, az, rr)
+                        near = (r, az, rr, oid)
                 if not rd.get("_cam"):
                     if near is not None and 2.0 * near[0] < rmax and rng.random() < ghost:
                         objs.append({"range_m": round(2.0 * near[0], 2), "azimuth_deg": round(math.degrees(near[1]), 3),
-                                     "range_rate_mps": round(2.0 * near[2], 3), "synthetic": "ghost"})
+                                     "range_rate_mps": round(2.0 * near[2], 3), "synthetic": "ghost", "synthetic_id": near[3]})
                     for _ in range(rng.choice([0, 1, 2, 3])):
                         if rng.random() < clutter / 1.5:
                             objs.append({"range_m": round(rng.uniform(3.0, rmax), 2), "azimuth_deg": round(math.degrees(rng.uniform(-fov, fov)), 3),

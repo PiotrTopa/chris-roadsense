@@ -230,10 +230,12 @@ Not hidden:
   recordings, not on a real radar.
 * No 6-axis IMU is modelled: roll and bank are not states, grade and accelerometer bias are separable only with
   an altitude source, sideslip is ignored.
-* Position is the weak part. In simulated motorway driving (steady speed, long gentle curves) a receiver's
-  unknown delay and the along-track position are not told apart and the filter becomes overconfident (about
-  20 m). With a poor receiver the position is often declared unknown. Speed, yaw rate, grade and the object
-  layer do not depend on it.
+* Position has no truth on the reference car. In simulation it is consistent (town and motorway). With the
+  poor receiver it is often declared unknown, and a persistent offset of the only absolute source cannot be
+  told from a movement of the car.
+* Fault detection is scored by a campaign over a fault taxonomy (docs/DESIGN.md section 5a). Not detectable
+  with one camera, one speed chain and one receiver: which of two disagreeing sources is wrong when no third
+  exists, two sources wrong the same way, a wrong camera lead range, a slow drift of the receiver.
 * Monitor thresholds rest on a small amount of real driving (town, daylight).
 * Pure Python and numpy: about 4 ms per camera frame on a laptop core for the whole stack (the estimator about
   half of it), more with radars. The filter core is the candidate for a compiled implementation.

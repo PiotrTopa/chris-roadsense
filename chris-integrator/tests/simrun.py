@@ -11,6 +11,7 @@ import numpy as np  # noqa: E402
 from chris_integrator import Integrator  # noqa: E402
 from chris_integrator.core import ego as E  # noqa: E402
 from chris_integrator.sim import World, default_sensors  # noqa: E402
+from chris_integrator.sim.world import geo  # noqa: E402
 
 
 def wrap(a):
@@ -49,7 +50,9 @@ class Run:
                            sth=math.sqrt(P[E.TH, E.TH]), mode=es["speed"]["mode"])
                 if I.anchored:
                     c, s = math.cos(tru["psi"]), math.sin(tru["psi"])
-                    de, dn = x[E.PE] - tru["pe"], x[E.PN] - tru["pn"]
+                    # the estimator's local frame has its origin at the first fix: the truth goes into that frame
+                    oe, on = E.to_local(I.origin, *geo(0.0, 0.0))
+                    de, dn = x[E.PE] - (tru["pe"] + oe), x[E.PN] - (tru["pn"] + on)
                     Pp = P[:2, :2]
                     d = np.array([de, dn])
                     row.update(de=de, dn=dn, along=c * de + s * dn, cross=-s * de + c * dn,

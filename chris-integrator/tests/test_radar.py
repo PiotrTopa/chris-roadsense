@@ -105,10 +105,15 @@ class Vote(unittest.TestCase):
         err = [abs(x["dv"]) for x in r.rows if 114.0 <= x["t"] < 138.0 and "dv" in x]
         self.assertLess(np.percentile(err, 95), 1.0)                 # the estimate stays with the true speed
         self.assertEqual(seen[-1][1]["vehicle"][0], "ok")           # and the vehicle comes back when it agrees again
-        # without the radar the same fault costs the camera (rank), as documented
-        r2 = Run(sensors=default_sensors(vehicle=dict(speed_fault=(100.0, 140.0, 0.7))), seed=3,
-                 on_frame=lambda run, t, es, tr, ld: seen.append(("b", t, es["sources"]["vision"].get("isolation"))))
-        self.assertIn("rank", {x[2] for x in seen if x[0] == "b"})
+        # without the radar the receiver's track is the third opinion (L41): the vehicle is isolated by vote there
+        # too, later (the track speaks once in three seconds), and the camera is never blamed by rank
+        seen = []
+        Run(sensors=default_sensors(vehicle=dict(speed_fault=(100.0, 140.0, 0.7))), seed=3,
+            on_frame=lambda run, t, es, tr, ld: seen.append((t, es["sources"]["vision"]["state"], es["sources"]["vehicle"].get("isolation"), es["speed"])))
+        self.assertTrue(all(x[1] != "fault" for x in seen))
+        self.assertTrue(all(x[2] == "vote" for x in seen if 122.0 <= x[0] < 138.0))
+        # ... and until the vote is in, the speed is published as disputed, its std covering both readings
+        self.assertTrue(any(x[3]["mode"] == "disputed" and x[3]["std"] > 1.0 for x in seen if 101.0 <= x[0] < 122.0))
 
     def test_radar_blackout_and_camera_only_fallback(self):
         sens = default_sensors() + [RadarSim(blackout=[(80.0, 110.0)])]

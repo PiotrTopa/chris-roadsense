@@ -108,8 +108,10 @@ class VisionSim:
             still = tp["v"] == 0.0
             vx = (1.0 + self.speed_scale) * v + (0.0 if still else gm.at(t) * (0.4 + 0.06 * v) / self.gm_sigma * self.gm_sigma + rng.gauss(0, sig))
             vx_std = 0.05 if still else 0.25 + 0.03 * v
-            vy = v * self.mount_yaw - tp["w"] * self.lever + rng.gauss(0, 0.02 + 0.004 * v)
-            vz = -v * self.mount_pitch + rng.gauss(0, 0.02 + 0.004 * v)
+            # the whole pose shares the model's monocular scale: its direction (vy / vx, vz / vx) is the mount
+            k = 1.0 + self.speed_scale
+            vy = k * (v * self.mount_yaw - tp["w"] * self.lever) + rng.gauss(0, 0.02 + 0.004 * v)
+            vz = -k * v * self.mount_pitch + rng.gauss(0, 0.02 + 0.004 * v)
             if knocked:
                 vx = self.knock[2] * v + rng.gauss(0, 0.5 + 0.2 * v)
                 vx_std = 2.0 + 0.5 * v
@@ -160,7 +162,8 @@ class GnssSim:
     def generate(self, w):
         rng = random.Random(self.seed)
         ge, gn = _GM(rng, self.sigma_gm, self.tau_gm), _GM(rng, self.sigma_gm, self.tau_gm)
-        t = w.t0 + 0.4
+        # the world has no past before its start: the first fix is the first one that describes a time inside it
+        t = w.t0 + 0.4 + math.ceil(max(self.lag, self.speed_lag))
         while t < w.t0 + w.T:
             rel = t - w.t0
             if not any(a <= rel < b for a, b in self.outage):

@@ -51,8 +51,8 @@ class Nominal(unittest.TestCase):
             self.assertAlmostEqual(val, true, delta=tol, msg="%s.%s" % (src, name))
             self.assertLess(abs(val - true), 4.0 * std + 1e-4, "%s.%s: %g +- %g against %g" % (src, name, val, std, true))
         self.assertEqual(r.es["calibration"]["vision"]["state"], "offset")       # 3.4 degrees off the calibration in use
-        self.assertEqual({k: v["state"] for k, v in r.es["sources"].items() if k != "gnss_speed"},
-                         {"vehicle": "ok", "wheels": "ok", "vision": "ok", "gnss": "ok", "map": "ok"})
+        self.assertEqual({k: v["state"] for k, v in r.es["sources"].items() if k not in ("gnss_speed", "signrows")},
+                         {"vehicle": "ok", "wheels": "ok", "vision": "ok", "gnss": "ok", "gnss_track": "ok", "map": "ok"})
 
     def test_message_shape(self):
         es = base().es

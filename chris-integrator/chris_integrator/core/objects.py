@@ -32,6 +32,8 @@ DEFAULT_CFG = dict(
     merge_gate=9.0, merge_s=0.3, # two tracks of different sensors this close (chi-square, 4 dof) for this long are one
     ghost_range_tol=0.12, ghost_az_rad=0.06, ghost_rate_tol=2.0,
     stationary_speed=0.8, moved_speed=1.5,
+    moved_confirm_s=0.5,         # "has moved": the speed over ground above moved_speed by 2 sigma (along the velocity,
+                                 # vy's uncertainty included) for this long without a break
     corridor_m=1.3, corridor_rel=0.012,      # on the path: |offset| <= corridor_m + corridor_rel * distance
     path_max_m=150.0,
     lead_radar_only=True,        # a track no camera designates may be the lead when it is on the path
@@ -216,6 +218,7 @@ class ObjectLayer:
         self.cfg = dict(DEFAULT_CFG, **(cfg or {}))
         self.faulted = frozenset()
         self.lead_cfg = None
+        self._ve = self._sv = self._sw = 0.0
         self.next_id = 1
         self.seq = 0
         self.reset()
@@ -436,9 +439,25 @@ class ObjectLayer:
         # speed marks
         for tr in self.tracks:
             sp = math.hypot(tr.x[VX], tr.x[VY])
-            sd = math.sqrt(max(tr.P[VX, VX], 0.0))
-            if sp > c["moved_speed"] + 2.0 * sd:
-                tr.moved = True
+            # the speed over ground is the relative velocity plus the car's own: the car's speed and yaw rate errors
+            # (a yaw rate error w reads as a lateral speed w x range) are biases the track's covariance does not hold
+            ego_var = self._sv ** 2 + (self._sw * math.hypot(tr.x[X] + c["ref_to_axle_m"], tr.x[Y])) ** 2
+            if sp > 1e-3:
+                u = np.array([tr.x[VX], tr.x[VY]]) / sp
+                sd = math.sqrt(max(float(u @ tr.P[2:4, 2:4] @ u), 0.0) + ego_var)
+            else:
+                sd = math.sqrt(max(tr.P[VX, VX], tr.P[VY, VY], 0.0) + ego_var)
+            # a single excursion of a young or weakly observed track (radar: vy only through the azimuth's rate)
+            # is not motion; "has moved" needs a significant speed held for moved_confirm_s
+            t_prev = tr.mem.get("move_T")
+            dt = 0.0 if t_prev is None else max(T - t_prev, 0.0)
+            tr.mem["move_T"] = T
+            if sp - 2.0 * sd > c["moved_speed"]:
+                tr.mem["move_s"] = tr.mem.get("move_s", 0.0) + dt
+                if tr.mem["move_s"] >= c["moved_confirm_s"]:
+                    tr.moved = True
+            else:
+                tr.mem["move_s"] = 0.0
             tr.flags.discard("stationary")
             if not tr.moved and sp < c["stationary_speed"]:
                 tr.flags.add("stationary")
@@ -478,12 +497,15 @@ class ObjectLayer:
                 P = np.linalg.inv(w * Pa + (1.0 - w) * Pb)
                 x = P @ (w * Pa @ a.x + (1.0 - w) * Pb @ b.x)
                 older, other = (a, b) if (a.designated is not None, -a.t0) >= (b.designated is not None, -b.t0) else (b, a)
+                self.take_identity(older, other)
                 older.x, older.P = x, 0.5 * (P + P.T)
                 older.sources |= other.sources
                 older.last_seen.update(other.last_seen)
                 older.hits += other.hits
                 older.logodds = max(older.logodds, other.logodds)
                 older.moved = older.moved or other.moved
+                if other.mem.get("vehicle"):
+                    older.mem["vehicle"] = True
                 if older.state == "tentative" and other.state != "tentative":
                     older.state = other.state
                 for k, v in other.mem.items():
@@ -492,6 +514,15 @@ class ObjectLayer:
                 dead.add(other.id)
         if dead:
             self.tracks = [t for t in tr if t.id not in dead]
+
+    def take_identity(self, keep, gone):
+        """Two tracks found to be one object: `keep` lives on (it may carry a camera's designation), `gone` is
+        removed. The object keeps the identity it has been reported under: the lead's id if either is the lead,
+        else the older one's. The id of a physical object survives the loss or the arrival of one of its
+        sensors."""
+        if gone.id == self.lead_id or (keep.id != self.lead_id and gone.t0 < keep.t0):
+            keep.id = gone.id
+        keep.t0 = min(keep.t0, gone.t0)
 
     def _ghosts(self):
         """Double-bounce ghosts of a range sensor: about twice the range and twice the closing speed of a nearer
@@ -548,8 +579,9 @@ class ObjectLayer:
             if not (desig and pol.get("fresh", True)):
                 if not desig and (not c["lead_radar_only"] or tr.hits < c["lead_min_hits"] or tr.exist < c["lead_min_exist"]):
                     continue
-                if "stationary" in tr.flags and not tr.moved:
-                    continue               # a range sensor's stationary return alone is not a vehicle ahead
+                if not (tr.moved or tr.mem.get("vehicle")):
+                    continue               # a return that never moved and that no camera called a vehicle is not
+                                           # a vehicle ahead (a stationary-never-moved object, clutter, a ghost)
             if best is None or tr.x[X] < best.x[X]:
                 best = tr
         return best
@@ -571,6 +603,8 @@ class ObjectLayer:
         ego_T = (e[0] if e is not None else 0.0, (yr.get("value") or 0.0) if yr.get("valid") else 0.0,
                  0.0 if stands else (sp.get("std") or 0.0), stands)
         self._ve = ego_T[0]
+        self._sv = ego_T[2]
+        self._sw = float(yr.get("std") or 0.0) if yr.get("valid") else 0.0
         self.es = es
 
         def ego_fn(t):
