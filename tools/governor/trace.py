@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""trace.py OUT.jsonl SECONDS [--url http://127.0.0.1:8090] [--stop-cmd CMD] [--stop-c 95]   (on the device)
+"""trace.py OUT.jsonl SECONDS [--url http://127.0.0.1:8090] [--stop-cmd CMD] [--stop-c 95] [--stop-n 3]   (on the device)
 
 What a consumer gets, and what the platform does meanwhile, in one file of JSON lines:
 
@@ -11,7 +11,7 @@ What a consumer gets, and what the platform does meanwhile, in one file of JSON 
   {"k":"sys", "t", "zones":{name: C}, "cool":{name: state}, "freq":{policy: kHz, "gpu": Hz}, "w":rail W,
    "gov":{level, shed, headroom_k, limited, topics}}                                  once a second
 
-Safety: when the hottest zone stays above --stop-c for 3 samples, --stop-cmd is run and the trace ends
+Safety: when the hottest zone stays above --stop-c for --stop-n samples (1 a second; default 3), --stop-cmd is run and the trace ends
 with {"k":"abort"}.
 """
 import asyncio
@@ -31,6 +31,7 @@ def arg(flag, default=None):
 OUT, SECS = sys.argv[1], float(sys.argv[2])
 URL = arg("--url", "http://127.0.0.1:8090")
 STOP_CMD, STOP_C = arg("--stop-cmd"), float(arg("--stop-c", "95"))
+STOP_N = int(arg("--stop-n", "3"))
 IDX = (7, 13, 18)          # X_IDXS 9.2, 31.7, 60.8 m
 
 
@@ -100,7 +101,7 @@ async def main():
             f.flush()
             hot = max([v for v in zones.values() if v is not None and v < 150] or [0])
             hot_n = hot_n + 1 if hot > STOP_C else 0
-            if hot_n >= 3:
+            if hot_n >= STOP_N:
                 put({"k": "abort", "t": round(time.time() - t0, 2), "hot": hot})
                 f.flush()
                 if STOP_CMD:
