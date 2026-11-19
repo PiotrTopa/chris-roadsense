@@ -345,6 +345,52 @@ def cmd_inject(a):
                     es["calibration"]["odometry"]["speed_scale"]["value"], es["calibration"]["odometry"]["speed_scale"]["std"]))
 
 
+# ---- characterise --------------------------------------------------------------------------------------------------
+def cmd_characterise(a):
+    """The road model's speed and yaw rate against the vehicle's, raw (no estimator): sigma and tails per speed
+    class, the model's own stated std against the error, and the error's autocorrelation over frames. This is
+    what the camera's noise model in sources/vision.py is fitted to."""
+    import bisect
+    for path in a.sessions:
+        et, ev, ew, rt, rv, rs, rw = [], [], [], [], [], [], []
+        for m in session(path, a):
+            if m.get("type") == "ego" and m.get("speed_mps") is not None:
+                et.append(m["ts_mono_ns"] / NS), ev.append(m["speed_mps"]), ew.append(m.get("yaw_rate_rps") or 0.0)
+            elif m.get("type") == "road" and m.get("pose"):
+                p = m["pose"]
+                rt.append(m["ts_mono_ns"] / NS), rv.append(p["vx"]), rs.append(p.get("vx_std") or np.nan), rw.append(-(p.get("yaw_rate") or 0.0))
+        if len(et) < 100:
+            print("== %s: no vehicle feed" % name_of(path))
+            continue
+        et, ev, ew, rt, rv, rs, rw = map(np.array, (et, ev, ew, rt, rv, rs, rw))
+        tq = rt - 0.125
+        v, w = np.interp(tq, et, ev), np.interp(tq, et, ew)
+        i = np.clip(np.searchsorted(et, tq), 1, len(et) - 1)
+        ok = (et[i] - et[i - 1] < 0.3) & (v >= 1.0)
+        e = rv - v
+        print("== %s: %d frames with the vehicle >= 1 m/s; model / vehicle speed median %.4f; error sigma %.3f rms %.3f" % (
+            name_of(path), ok.sum(), np.median(rv[ok] / v[ok]), mad(e[ok]), np.sqrt(np.mean(e[ok] ** 2))))
+        for lo, hi in ((1, 4), (4, 8), (8, 12), (12, 16), (16, 25)):
+            k = ok & (v >= lo) & (v < hi)
+            if k.sum() > 100:
+                print("   speed %2d-%2d m/s n %5d: sigma %.3f rms %.3f p95 %.2f p99 %.2f | stated std median %.3f | error / stated: sigma %.2f, "
+                      "within 2 sigma %.3f" % (lo, hi, k.sum(), mad(e[k]), np.sqrt(np.mean(e[k] ** 2)), np.percentile(np.abs(e[k]), 95),
+                                               np.percentile(np.abs(e[k]), 99), np.nanmedian(rs[k]), mad(e[k] / rs[k]), np.mean(np.abs(e[k]) < 2 * rs[k])))
+        ee = np.clip(e - np.median(e[ok]), -1.5, 1.5)
+        idx = np.where(ok)[0]
+        cor = []
+        for lag in (1, 2, 4, 7, 13, 26, 39, 65, 130):
+            j = idx[idx + lag < len(e)]
+            j = j[ok[j + lag] & (rt[j + lag] - rt[j] < lag * 0.12)]
+            cor.append("%.1f s: %.2f" % (lag / 13.0, np.mean(ee[j] * ee[j + lag]) / np.sqrt(np.mean(ee[j] ** 2) * np.mean(ee[j + lag] ** 2))))
+        print("   autocorrelation of the speed error (clipped at 1.5 m/s): " + ", ".join(cor))
+        ey = rw - w
+        for lo, hi in ((0, 0.02), (0.02, 0.1), (0.1, 0.5)):
+            k = ok & (np.abs(w) >= lo) & (np.abs(w) < hi)
+            print("   yaw rate %.2f-%.2f rad/s n %5d: error sigma %.4f rms %.4f%s" % (
+                lo, hi, k.sum(), mad(ey[k]), np.sqrt(np.mean(ey[k] ** 2)), "; model / gyro %.3f" % np.median(rw[k] / w[k]) if lo > 0 else ""))
+
+
 # ---- position against mapd's filter --------------------------------------------------------------------------------
 def cmd_position(a):
     """The integrator's position against mapd's own position filter (today's car), on the same recording and
@@ -579,7 +625,7 @@ def main():
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--radar", action="store_true")
     p.add_argument("--cam2", action="store_true")
-    for name in ("real", "heldout", "gnss", "mount", "position"):
+    for name in ("real", "heldout", "gnss", "mount", "position", "characterise"):
         p = sub.add_parser(name)
         p.add_argument("sessions", nargs="+")
         p.add_argument("--pos")

@@ -393,8 +393,8 @@ def cmd_healthy(a):
 def _run_real(job):
     label, specs, path, pos, t_from, t_to, tree, f0, f1 = job
     sys.path.insert(0, HERE)
-    sys.path.insert(0, os.path.join(tree or ROOT, "chris-integrator"))
-    import replay_lib as rl
+    import replay_lib as rl                               # (it puts this checkout's integrator on the path ...)
+    sys.path.insert(0, os.path.join(tree or ROOT, "chris-integrator"))      # ... the tree asked for goes before it
     from chris_integrator import Integrator
     FM = _faults_mod()
     msgs = [m for m in rl.read_session(path, road_model="vision", pos=rl.load_pos(pos) if pos else None)

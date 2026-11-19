@@ -71,7 +71,9 @@ class Faults(unittest.TestCase):
     def test_gyro_bias_is_voted_out_and_the_speed_is_kept(self):
         """Gyro, wheel difference and camera are three yaw rates: a gyro bias is isolated by vote, only the gyro's
         rows are set aside, the vehicle's speed stays in use."""
-        rows = run([Fault("vehicle.gyro", "bias", T0, 130.0, b=0.02)])
+        # (0.04 rad/s: 2.3 degrees a second. The limits that are quiet on the reference car's healthy drives find
+        # half of that only after 12 s; the fault table has the smaller one)
+        rows = run([Fault("vehicle.gyro", "bias", T0, 130.0, b=0.04)])
         late = [(t, es, tru) for t, es, tru in rows if T0 + 6.0 <= t < 130.0]
         self.assertTrue(all("yaw_rate" in es["sources"]["vehicle"].get("set_aside", ()) for t, es, _ in late))
         self.assertTrue(all(es["sources"]["vehicle"]["state"] != "fault" for t, es, _ in rows))

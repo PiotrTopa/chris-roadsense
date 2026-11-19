@@ -580,8 +580,8 @@ class Integrator:
                 continue
             against_hi = against_lo = 0
             for c in self.groups:
-                if not self._indep(c, hi, lo, q):
-                    continue
+                if not self._indep(c, hi, lo, q) or self.groups[c].fault is not None or (c, q) in self.qfaults:
+                    continue                   # (a source that is itself set aside has no vote)
                 v_lo, v_hi = self._verdict(c, lo, q), self._verdict(c, hi, q)
                 if v_lo == "agree" and v_hi == "disagree":
                     against_hi += 1
