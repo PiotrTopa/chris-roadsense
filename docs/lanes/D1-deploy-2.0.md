@@ -42,3 +42,15 @@ Configs in `/etc/roadsense` kept (installer does not overwrite); new: `laned.jso
 `/home/user/rollback-20261119/` on the phone (root 0700), made before any change: `roadsense-bin.tar.gz`,
 `roadsense-lib-etc-units.tar.gz`, `roadsense-models.tar`, `backend-app.tar.gz`, `car-overlay.tar.gz`,
 `state-before.txt`, `SHA256SUMS`, and `RESTORE.txt` with the exact commands.
+
+## Follow-up: main ef0c2dd (same day, 07:12-07:17 CET)
+
+The only code change since c35dd53 is `api/roadsense_api/lead.py` (vision lead profile `weak_coast_s`
+2.5 -> 1.5). Rollback first: the installed api as `api-before-ef0c2dd.tar.gz` in
+`/home/user/rollback-20261119/` (in `SHA256SUMS`, commands appended to `RESTORE.txt`). The git tree went to
+`/home/user/d1/roadsense` and `scripts/install-phone.sh` ran as before: nothing was relinked and all 14
+installed binaries kept their sha256; the installed api equals the source tree and `lead.py` carries 1.5.
+Check as before (stack through the backend, about 1 min of `krakow-25-35.mjpeg`): api 2.0.0, road model
+vision without fallback, plan at 5 Hz, road / lead / lanes / view 14.8-15.1 a second, governor level 0,
+hottest 74 C, `/v2/governor` and the backend's proxy 200. Left with `roadsense.target` inactive, mode auto,
+fan automatic, lock removed.
