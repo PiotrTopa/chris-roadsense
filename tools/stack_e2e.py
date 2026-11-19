@@ -86,7 +86,7 @@ async def play(a, rundir, chris_run, sent, at_end=None):
         if all(p.clients for p in pubs.values()):
             break
         await asyncio.sleep(0.1)
-    t0 = w0 = r_off = None
+    t0 = w0 = r_off = m_off = None
     n = 0
     for m in read_session(a.session, road_model="vision", pos=load_pos(a.pos) if a.pos else None):
         ts, t = m.get("ts_mono_ns"), m.get("type")
@@ -106,7 +106,12 @@ async def play(a, rundir, chris_run, sent, at_end=None):
         wait = w0 + rel - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)
-        if isinstance(m.get("ts_real_ns"), int):       # wall clock of the replay, so that latencies mean something
+        # the recording's clocks moved onto this host's (one constant offset each), as if the daemons ran now:
+        # the stack compares stamps with its own monotonic clock (staleness of the map, latency markers)
+        if m_off is None:
+            m_off = time.monotonic_ns() - ts
+        ts = m["ts_mono_ns"] = ts + m_off
+        if isinstance(m.get("ts_real_ns"), int):
             if r_off is None:
                 r_off = time.time_ns() - m["ts_real_ns"]
             m["ts_real_ns"] += r_off

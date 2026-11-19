@@ -601,9 +601,11 @@ same lines.
 
 ### 14.6 What the mixer costs
 
-Measured on a laptop core (lane report L39): the dispatch itself is below the measurement noise against the
-hand-wired pipeline it replaced (the same messages, byte for byte); the sync hop to an out-of-process plug-in
-is tens of microseconds to a few hundred per message, paid only by boxes configured that way.
+Measured on a laptop core, a 15 minute drive replayed: the mixer with its ten boxes costs the same as the
+hand-wired pipeline it replaced (3.34 against 3.33 ms per camera frame, the same messages byte for byte);
+the dispatch is not visible in the total. A box moved out of process in sync mode costs its hop on every
+trigger: 0.4 ms per message for the map box, whose input is a 5 kB `ego_state` (serialising it, two pipe
+crossings, parsing the answer); its outputs are the same message for message.
 
 ## 15. The map box (chris-mapper)
 
