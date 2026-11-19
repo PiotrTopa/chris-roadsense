@@ -54,3 +54,25 @@ Check as before (stack through the backend, about 1 min of `krakow-25-35.mjpeg`)
 vision without fallback, plan at 5 Hz, road / lead / lanes / view 14.8-15.1 a second, governor level 0,
 hottest 74 C, `/v2/governor` and the backend's proxy 200. Left with `roadsense.target` inactive, mode auto,
 fan automatic, lock removed.
+
+## Follow-up 2: main dcd043f (online camera calibration), in the car, 13:06-13:14 CET
+
+Phone in the parked car (key off), reached over WireGuard, on the car's 12 V battery (12.75 V at the start,
+lowest 12.34 V during the check, 12.59 V after). Rollback first: `roadsense-before-dcd043f.tar.gz` (binaries,
+api + mapd, `/etc/roadsense`, units, nft rule) in `/home/user/rollback-20261119/`, in `SHA256SUMS`, commands in
+`RESTORE.txt`. Git tree to `/home/user/d1/roadsense`, built there (13:09-13:10; `calibrator_test` all passed),
+`scripts/install-phone.sh` as before. Changed binaries: only `modeld` (783672d6...a9b0 -> d0eed72b8e687798ec345e208f428dd4f748825302ff2b5cf7ddce8e3b9dfb8e)
+and `modeld_replay` (-> 4ef2a636...a33a); the other 12 kept their sha256. Installed api and modeld unit equal
+the tree. `/etc/roadsense/calib.json` (pitch 0.0561, yaw -0.0621, set by hand) unchanged (sha256 41d8a6a2...),
+`calib.json.bak-20261119-nominal` kept, no `modeld.json` (so `auto_calib` is the default `on`).
+
+Check without teaching the estimator another camera: a runtime drop-in
+(`/run/systemd/system/roadsense-modeld.service.d/99-d1-verify.conf`, removed afterwards) ran modeld with
+`--auto-calib observe --calib-state none`. Stack through the backend; first the car's DVR camera for 30 s
+(camera 19.2 fps, road / lead / lanes / view 14.6 a second, vision, no fallback), then 1 min of
+`krakow-25-35.mjpeg` (camerad-dvr stopped for it): camera 19.6 fps, road / lead / lanes / view 14.7-14.8,
+signs / lights 4.5-5.0, vision without fallback, plan at 5 Hz, governor 0, hottest 76 C. `/v2/health`
+`calibration`: source `config` with the hand values, `online.state` `collecting`, `applied` false, 0 blocks.
+No `/var/lib/roadsense/camera-calibration.json` was written. Left: target inactive (the backend starts it at
+key-on), mode auto, fan automatic, no transient units, lock removed. The first drive will start the estimator
+from nothing (`collecting`, then valid after 5 blocks of straight driving above 24 km/h).
