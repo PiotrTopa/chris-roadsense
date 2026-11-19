@@ -417,7 +417,7 @@ continuity, not accuracy; no real radar.
 
 ## 7. Cost
 
-Laptop, one process,  over seconds 700-1300 of 104128 (600 s of driving; vehicle, camera,
+Laptop, one process, `time.process_time` over seconds 700-1300 of 104128 (600 s of driving; vehicle, camera,
 receiver, map, signs; 7280 road frames; every input included), the two trees measured alternately. The machine
 was shared with other lanes (load average 5), so the scatter is about 15 %:
 
@@ -427,7 +427,7 @@ was shared with other lanes (load average 5), so the scatter is about 15 %:
 | state size | 25 | 26 |
 
 Earlier in the lane, on a quieter machine: 2.15 (L38) against 2.10 (L41, before the last detectors). The whole
-drive with  was only measured under load (4.3 ms) and is not a number.
+drive with `integrator_eval.py cost` was only measured under load (4.3 ms) and is not a number.
 
 Where the time goes (profile of the same slice): the filter's row loop and `predict` about half, building
 `ego_state` about a quarter before the change and less after it. Removed: dense transition products (the
