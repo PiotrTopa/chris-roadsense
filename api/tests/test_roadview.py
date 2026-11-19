@@ -129,6 +129,75 @@ class RoadViewTest(unittest.TestCase):
         out = run(rv, 0.0, 2.0, turn=dict(turn, dist_m=0.0, junction_m=60.0), jdist=None)
         self.assertTrue(out["lanes"]["turn"]["here"])               # on the stretch, the same number of lanes
 
+    # ---- L36: no flicker of the turn arrows and the lane boxes --------------------------------------------
+    TURN = {"dist_m": 100.0, "junction_m": 180.0, "lanes": [["left"], ["through"], ["through", "right"]],
+            "count": 3, "path": [False, True, True], "confidence": 0.8}
+
+    def test_map_message_newer_than_the_frame_keeps_junction_and_turn(self):
+        # the camera frame is older than the map message by the model's latency: until L36 such a frame had
+        # neither junction nor turn arrows (every map message made one or two frames blank)
+        rv = RoadView()
+        run(rv, 0.0, 2.0, turn=self.TURN, jdist=180.0)
+        rv.on_map(map_msg(2.55, turn=dict(self.TURN, dist_m=80.0, junction_m=160.0), jdist=160.0))
+        out = rv.on_frame(int(2.5 * NS), 10.0, None, None)        # taken 50 ms before the map message left mapd
+        self.assertIsNotNone(out["junction"])
+        self.assertIsNotNone(out["lanes"]["turn"])
+        self.assertFalse(out["lanes"]["turn"]["held"])
+        self.assertIsNone(out["route"])                           # no navigation source: no route
+        self.assertEqual(out["lanes"]["turn"]["path_source"], "map")
+
+    def test_turn_is_held_through_a_drop_out_and_marked(self):
+        rv = RoadView()
+        out = run(rv, 0.0, 2.0, turn=self.TURN, jdist=None)
+        d0 = out["lanes"]["turn"]["dist_m"]
+        out = run(rv, 2.1, 3.0, turn=None, jdist=None)             # mapd stops announcing it for a second
+        self.assertTrue(out["lanes"]["turn"]["held"])
+        self.assertAlmostEqual(d0 - out["lanes"]["turn"]["dist_m"], 10.0, delta=1.5)   # carried by the distance driven
+        out = run(rv, 3.1, 5.5, turn=None, jdist=None)             # gone for longer than turn_hold_s
+        self.assertIsNone(out["lanes"]["turn"])
+
+    def test_turn_only_for_the_lanes_the_boxes_count(self):
+        out = run(RoadView(), 0.0, 2.0, fwd=1, turn=self.TURN, jdist=None)   # 3 arrows, one lane on the road now
+        self.assertEqual(out["lanes"]["forward"], 1)
+        self.assertIsNone(out["lanes"]["turn"])
+
+    def test_turn_distance_never_grows_on_the_same_stretch(self):
+        rv = RoadView()
+        out = run(rv, 0.0, 2.0, speed=0.0, turn=self.TURN, jdist=None)      # standing 100 m before it
+        self.assertEqual(out["lanes"]["turn"]["dist_m"], 100.0)
+        out = run(rv, 2.5, 3.0, speed=0.0, turn=dict(self.TURN, dist_m=112.0, junction_m=192.0), jdist=None)
+        self.assertEqual(out["lanes"]["turn"]["dist_m"], 100.0)              # the match stepped back: not shown
+
+    def test_a_new_stretch_needs_turn_on_s(self):
+        rv = RoadView()
+        run(rv, 0.0, 1.0, turn=None, jdist=None)
+        rv.on_map(map_msg(1.5, turn=self.TURN, jdist=None))
+        out = rv.on_frame(int(1.5 * NS), 10.0, None, None)
+        self.assertIsNone(out["lanes"]["turn"])                   # seen once: not yet
+        out = rv.on_frame(int(1.9 * NS), 10.0, None, None)
+        self.assertIsNotNone(out["lanes"]["turn"])
+
+    def test_lane_count_settles_before_it_changes(self):
+        rv = RoadView()
+        out = run(rv, 0.0, 2.0, fwd=2, lane=ego_lane([0.1, 0.9], 1), jdist=None)
+        self.assertEqual((out["lanes"]["forward"], out["lanes"]["ego_index"]), (2, 1))
+        out = run(rv, 2.5, 3.5, fwd=3, lane=ego_lane([0.1, 0.8, 0.1], 1), jdist=None)   # a 1 s segment of 3
+        self.assertEqual((out["lanes"]["forward"], out["lanes"]["ego_index"]), (2, 1))
+        self.assertTrue(out["lanes"]["count_held"])
+        out = run(rv, 4.0, 5.0, fwd=2, lane=ego_lane([0.1, 0.9], 1), jdist=None)       # back to 2: never shown 3
+        self.assertEqual(out["lanes"]["forward"], 2)
+        self.assertFalse(out["lanes"]["count_held"])
+        out = run(rv, 5.5, 8.0, fwd=3, lane=ego_lane([0.1, 0.8, 0.1], 1), jdist=None)  # 3 for longer: shown
+        self.assertEqual((out["lanes"]["forward"], out["lanes"]["ego_index"]), (3, 1))
+
+    def test_a_recent_map_message_survives_a_frame_gap(self):
+        rv = RoadView()
+        run(rv, 0.0, 2.0, jdist=180.0)
+        rv.on_map(map_msg(4.6, jdist=150.0))
+        out = rv.on_frame(int(5.0 * NS), 10.0, None, None)        # 3 s without frames, the map came 0.4 s ago
+        self.assertTrue(out["position"]["trusted"])
+        self.assertAlmostEqual(out["junction"]["dist_m"], 146.0, delta=1.0)
+
     def test_view_message_carries_the_road(self):
         vb = ViewBuilder({"road": {"trust_on": 0.5}})
         self.assertEqual(vb.road.cfg["trust_on"], 0.5)
