@@ -901,7 +901,7 @@ tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsens
 | `POST /v2/vehicle`, `POST /v2/position` | vehicle input API over HTTP (body: one message, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
 | `GET /v2/camera` | latest `camera` message + ring header fields |
 | `GET /v2/governor`, `POST /v2/governor` | the load governor (below, "Load governor"): state, and holding a shed level by hand |
-| `GET /v2/health` | `governor` (shed level, what is shed, headroom, per-topic rate / latency / degraded marker); `road_model` (`model`: `vision` or `supercombo`, `fallback`, `plan`: whether `road` carries one, `plan_age_ms`, `policy_hz`, `policy_ms`); `calibration` (the camera calibration modeld warps with: `source` `config` or `auto`, `pitch`, `yaw`, `roll`, `height_m`, and `online`: the estimate's `state`, `applied`, `pitch`, `yaw`, `off_config_deg` = how far calib.json is from it, `spread_deg`, `blocks`; section Calibration); per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
+| `GET /v2/health` | `governor` (shed level, what is shed, headroom, per-topic rate / latency / degraded marker); `road_model` (`model`: `vision` or `supercombo`, `fallback`, `plan`: whether `road` carries one, `plan_age_ms`, `policy_hz`, `policy_ms`); `calibration` (the camera calibration modeld warps with: `source` `config` or `auto`, `pitch`, `yaw`, `roll`, `height_m`, and `online`: the estimate's `state`, `applied`, `pitch`, `yaw`, `off_config_deg` = how far calib.json is from it, `spread_deg`, `error_deg`, `blocks`; section Calibration); per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
 | `GET /v2/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
 | `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `lead`, `lanes` and `view`; mapd's `ego` (the car's motion, while a feeder sends it), `vehicle` and `objects` pass through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,view,ego,vehicle,objects` filters. Per road frame the order is `road`, `lead`, `lanes`, `view`: a consumer that needs one frame complete waits for `view` |
@@ -1717,8 +1717,9 @@ straight its direction is the calibration's remaining error: `yaw = yaw_used + a
 `pitch = pitch_used - atan2(vz, vx)` (measured for both road models: 0.9-1.0 deg per degree). A run counts when
 `pose.vx` >= 6.7 m/s (24 km/h), |yaw rate| <= 1 deg/s and the model's own doubt about the lateral direction
 (`atan2(vy_std, vx)`) is <= 0.5 deg. 100 such runs make a block (its median); the estimate is the median of the
-last 50 blocks, valid from 5 blocks (about 40 s of straight driving) while the blocks agree (robust sigma <= 0.5
-deg) and the estimate is within 0.15 rad of the configured value. Roll and `height_m` are not observable this way
+last 50 blocks, valid from 5 blocks (about 40 s of straight driving) while the blocks agree (standard error of the
+median, 1.25 sigma / sqrt(blocks), <= 0.3 deg to become valid and <= 0.45 deg to stay valid; robust sigma of the
+blocks <= 1.5 deg) and the estimate is within 0.15 rad of the configured value. Roll and `height_m` are not observable this way
 and stay as configured. The yaw estimate also absorbs an error of the principal point `cx` (the two are the same
 shift of the image), the pitch estimate one of `cy`.
 
@@ -1739,6 +1740,7 @@ car: one lane at 60 m). supercombo moved lines and lead together by about 0.4 e,
            "applied": true,         // the warp uses the estimate
            "pitch": 0.0233, "yaw": -0.0594,              // the estimate, rad (null before the first block)
            "spread_pitch": 0.0017, "spread_yaw": 0.0030, // robust sigma of the block medians, rad
+           "se_pitch": 0.0003, "se_yaw": 0.0006,         // standard error of the estimate, rad
            "blocks": 46, "min_blocks": 5, "samples": 12, "block": 100, "accepted": 4612, "seen": 67957,
            "restored": true,        // the blocks were read from the state file at start
            "config": {"pitch": 0, "yaw": 0}}             // calib.json's values

@@ -105,6 +105,25 @@ int main() {
         CHECK(moved_at == 499, "followed the moved camera after %d samples", moved_at);
         CHECK(std::string(oc.status().state) == "valid" && std::fabs(oc.status().yaw + 3.4 * D) < 0.1 * D, "after the move");
     }
+    {   // a town ride: blocks scatter by 0.9 deg; valid once the median is known to 0.3 deg (14 blocks), not before
+        OnlineCalib oc;
+        oc.set_config(Calib(), k);
+        std::normal_distribution<double> bn(0, 0.9 * D);
+        int valid_at = -1;
+        for (int b = 0; b < 40; ++b) {
+            const double off = bn(g);
+            for (int i = 0; i < 100; ++i) {
+                const Calib used = oc.calib();
+                pose_for(used, 0, 2 * D + off, 12, 0, g, 0.1 * D, pose, st);
+                oc.observe(used, pose, st);
+            }
+            if (valid_at < 0 && std::string(oc.status().state) == "valid") valid_at = b + 1;
+        }
+        CHECK(valid_at >= 8 && valid_at <= 30, "valid after %d blocks", valid_at);
+        CHECK(std::fabs(oc.status().yaw - 2 * D) < 0.5 * D, "town estimate %.2f deg", oc.status().yaw / D);
+        printf("town ride: valid after %d blocks, estimate %+.2f deg (truth +2), sigma %.2f, se %.2f deg\n", valid_at,
+               oc.status().yaw / D, oc.status().spread_yaw / D, oc.status().se_yaw / D);
+    }
     {   // too far from the configured value: refused
         OnlineCalib oc;
         oc.set_config(Calib(), k);

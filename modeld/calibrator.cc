@@ -100,6 +100,7 @@ bool OnlineCalib::observe(const Calib &used, const float pose[6], const float po
 
 void OnlineCalib::update_locked() {
     have_ = !blocks_.empty();
+    const bool was_valid = valid_;
     valid_ = unstable_ = out_of_range_ = false;
     if (!have_) return;
     std::vector<double> p, y;
@@ -109,7 +110,9 @@ void OnlineCalib::update_locked() {
     sp_pitch_ = robust_sigma(p, est_pitch_);
     sp_yaw_ = robust_sigma(y, est_yaw_);
     if (int(blocks_.size()) < o_.min_blocks) return;
-    if (sp_pitch_ > o_.max_spread || sp_yaw_ > o_.max_spread) {
+    const double k = 1.2533 / std::sqrt(double(blocks_.size()));
+    const double se_lim = was_valid ? o_.max_se_keep : o_.max_se;
+    if (sp_pitch_ > o_.max_spread || sp_yaw_ > o_.max_spread || k * sp_pitch_ > se_lim || k * sp_yaw_ > se_lim) {
         unstable_ = true;
     } else if (std::fabs(est_pitch_ - config_.pitch) > o_.max_dev || std::fabs(est_yaw_ - config_.yaw) > o_.max_dev) {
         out_of_range_ = true;
@@ -137,6 +140,9 @@ OnlineCalibStatus OnlineCalib::status_locked() const {
     s.yaw = est_yaw_;
     s.spread_pitch = sp_pitch_;
     s.spread_yaw = sp_yaw_;
+    const double kk = blocks_.empty() ? 0.0 : 1.2533 / std::sqrt(double(blocks_.size()));
+    s.se_pitch = kk * sp_pitch_;
+    s.se_yaw = kk * sp_yaw_;
     s.blocks = int(blocks_.size());
     s.samples = int(cur_pitch_.size());
     s.accepted = accepted_;
@@ -159,9 +165,9 @@ std::string OnlineCalib::status_json() const {
     if (s.have)
         std::snprintf(b, sizeof b,
                       "\"online\":{\"state\":\"%s\",\"applied\":%s,\"pitch\":%.6g,\"yaw\":%.6g,\"spread_pitch\":%.4g,"
-                      "\"spread_yaw\":%.4g,\"blocks\":%d,\"min_blocks\":%d,\"samples\":%d,\"block\":%d,\"accepted\":%llu,"
+                      "\"spread_yaw\":%.4g,\"se_pitch\":%.4g,\"se_yaw\":%.4g,\"blocks\":%d,\"min_blocks\":%d,\"samples\":%d,\"block\":%d,\"accepted\":%llu,"
                       "\"seen\":%llu,\"restored\":%s,\"config\":{\"pitch\":%.6g,\"yaw\":%.6g}}",
-                      s.state, s.applied ? "true" : "false", s.pitch, s.yaw, s.spread_pitch, s.spread_yaw, s.blocks,
+                      s.state, s.applied ? "true" : "false", s.pitch, s.yaw, s.spread_pitch, s.spread_yaw, s.se_pitch, s.se_yaw, s.blocks,
                       o_.min_blocks, s.samples, o_.block, (unsigned long long)s.accepted, (unsigned long long)s.seen,
                       s.restored ? "true" : "false", s.config_pitch, s.config_yaw);
     else

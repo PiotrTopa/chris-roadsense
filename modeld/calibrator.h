@@ -17,8 +17,8 @@
 // Method: accepted samples (fast, straight, the model sure of its lateral speed) are absolute observations
 // (used + residual); `block` of them give one block median; the estimate is the median of the last `max_blocks`
 // block medians (when the newest blocks leave it clearly, the camera was moved and the older ones are dropped).
-// It is valid from `min_blocks` blocks on while the blocks agree (robust sigma under
-// `max_spread`) and it stays within `max_dev` of the configured value. A valid estimate replaces the configured
+// It is valid from `min_blocks` blocks on while the blocks agree (standard error of the median under `max_se`,
+// robust sigma under `max_spread`) and it stays within `max_dev` of the configured value. A valid estimate replaces the configured
 // pitch / yaw in the warp when `apply` is set, in steps (only when it left the applied value by `step`).
 // Everything is reported (`calib` message, `online` object): nothing is corrected silently.
 #pragma once
@@ -46,7 +46,12 @@ struct OnlineCalibOptions {
     // (supercombo, camera 3.4 deg off) the model's own figure is 0.3-0.5 deg and 0.25 passes 0-15 % of the straight
     // runs, 0.5 passes about 90 %, with the same estimate (docs/lanes/L32-lead-lateral.md)
     double max_angle_std = 0.00873;
-    double max_spread = 0.0087;     // rad: robust sigma of the block medians (0.5 deg), per angle
+    // Validity, per angle, from the blocks' robust sigma s and their number n: the standard error of the median,
+    // 1.2533 s / sqrt(n), must be <= max_se to become valid (0.3 deg) and <= max_se_keep to stay valid (0.45 deg:
+    // no toggling at the limit), and s itself <= max_spread (1.5 deg: blocks that scatter more are not one camera
+    // position). With 5 blocks that is s <= 0.53 deg; a town ride whose blocks scatter by 0.9 deg needs 14.
+    double max_se = 0.00524, max_se_keep = 0.00785;
+    double max_spread = 0.0262;
     double max_dev = 0.15;          // rad: |estimate - configured|, per angle; beyond it the estimate is refused
     // rad: the applied value follows the estimate when it is this far off (0.25 deg). Every change of the warp
     // costs one frame pair (0.2 s without a `road` message for the vision model): few, visible steps
@@ -64,6 +69,7 @@ struct OnlineCalibStatus {
     bool have = false;           // pitch / yaw below hold an estimate (>= 1 block)
     double pitch = 0, yaw = 0;   // the estimate, rad
     double spread_pitch = 0, spread_yaw = 0;  // robust sigma of the block medians, rad
+    double se_pitch = 0, se_yaw = 0;          // standard error of the estimate (1.2533 sigma / sqrt(blocks)), rad
     int blocks = 0, samples = 0; // blocks kept; samples in the open block
     uint64_t accepted = 0, seen = 0;
     double config_pitch = 0, config_yaw = 0;

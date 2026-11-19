@@ -43,6 +43,7 @@ class CalibrationHealthTest(unittest.TestCase):
         p, y = math.radians(1.33), math.radians(-3.41)
         self.feed(st, calib("auto", p, y, {"state": "valid", "applied": True, "pitch": p, "yaw": y,
                                            "spread_pitch": math.radians(0.1), "spread_yaw": math.radians(0.17),
+                                           "se_pitch": math.radians(0.02), "se_yaw": math.radians(0.03),
                                            "blocks": 46, "min_blocks": 5, "samples": 3, "block": 100, "accepted": 4603,
                                            "seen": 60000, "restored": True, "config": {"pitch": 0, "yaw": 0}}))
         c = st.health()["calibration"]
@@ -52,6 +53,7 @@ class CalibrationHealthTest(unittest.TestCase):
         self.assertEqual((o["state"], o["applied"], o["blocks"], o["restored"]), ("valid", True, 46, True))
         self.assertEqual(o["off_config_deg"], {"pitch": 1.33, "yaw": -3.41})
         self.assertEqual(o["spread_deg"], {"pitch": 0.1, "yaw": 0.17})
+        self.assertEqual(o["error_deg"], {"pitch": 0.02, "yaw": 0.03})
 
 
 if __name__ == "__main__":

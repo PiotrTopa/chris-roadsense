@@ -422,8 +422,12 @@ class State:
             sp = None
             if o.get("spread_pitch") is not None and o.get("spread_yaw") is not None:
                 sp = {"pitch": round(math.degrees(o["spread_pitch"]), 2), "yaw": round(math.degrees(o["spread_yaw"]), 2)}
+            se = None
+            if o.get("se_pitch") is not None and o.get("se_yaw") is not None:
+                se = {"pitch": round(math.degrees(o["se_pitch"]), 2), "yaw": round(math.degrees(o["se_yaw"]), 2)}
             out["online"] = {"state": o.get("state"), "applied": o.get("applied"), "pitch": o.get("pitch"),
-                             "yaw": o.get("yaw"), "off_config_deg": off, "spread_deg": sp, "blocks": o.get("blocks"),
+                             "yaw": o.get("yaw"), "off_config_deg": off, "spread_deg": sp, "error_deg": se,
+                             "blocks": o.get("blocks"),
                              "min_blocks": o.get("min_blocks"), "restored": o.get("restored")}
         return out
 
