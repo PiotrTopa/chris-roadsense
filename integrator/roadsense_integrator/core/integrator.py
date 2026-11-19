@@ -465,6 +465,17 @@ class Integrator:
                 culprit, other, rule = hi, lo, "vote"
             else:
                 culprit, other, rule = lo, hi, "vote" if against_lo else "rank"
+            cg = self.groups[culprit]
+            if cg.fault is None or cg.carried:
+                # blaming a group anew needs a disagreement that is still going on (a verdict held only by its
+                # recovery hysteresis is not one) ...
+                sh = p.stats.get("share")
+                if sh is not None and sh <= p.c["recover_share"]:
+                    continue
+                # ... and, by rank alone, no independent third source that sides with the lower-ranked one and
+                # is drifting away from the higher: then the vote is still forming and nobody is blamed yet
+                if rule == "rank" and self._vote_forming(hi, lo, q):
+                    continue
             txt = "%s disagrees with %s" % (q, other) + p.describe()[len("%s disagrees with %s" % (q, p.ref)):]
             found.setdefault(culprit, []).append((rule, txt))
         for name, g in self.groups.items():
@@ -480,6 +491,20 @@ class Integrator:
                 g.fault = None
                 g.carried = False
         self._apply_faults()
+
+    def _vote_forming(self, hi, lo, q):
+        for c, cg in self.groups.items():
+            if c in (hi, lo) or cg.witness or cg.family in (self.groups[hi].family, self.groups[lo].family) \
+                    or cg.fault is not None:
+                continue
+            p_lo = self.pairs.get((c, lo, q)) or self.pairs.get((lo, c, q))
+            p_hi = self.pairs.get((c, hi, q)) or self.pairs.get((hi, c, q))
+            if p_lo is None or p_hi is None or p_lo.verdict != "agree":
+                continue
+            s_lo, s_hi = p_lo.stats.get("share") or 0.0, p_hi.stats.get("share")
+            if p_hi.verdict == "unknown" or (s_hi is not None and s_hi > s_lo + 0.1):
+                return True
+        return False
 
     def _cleared(self, name):
         """A carried fault ends when a ranked monitor of the group has evidence of agreement."""
