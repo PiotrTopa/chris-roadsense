@@ -194,6 +194,7 @@ def blocks_of(t, ang, block):
 def estimate(inputs, opts=None):
     """The mount estimate from message files / sessions. Returns the report dict."""
     o = dict(DEFAULTS, **(opts or {}))
+    o["min_blocks"] = max(3, int(o["min_blocks"]))        # a spread needs at least three blocks
     rep = dict(status="not_enough", method="pose", reasons=[], notes=[], options={k: round(v, 5) for k, v in o.items()},
                inputs=[])
     all_blocks, all_abs, all_res, t_off, calib_last, models = [], [], [], 0.0, None, set()
@@ -596,7 +597,7 @@ def main(argv=None):
     ap.add_argument("--min-speed", type=float, help="m/s (default %.1f)" % DEFAULTS["min_speed"])
     ap.add_argument("--max-angle-std-deg", type=float, help="the model's own sideways uncertainty limit (default 0.5)")
     ap.add_argument("--block", type=int, help="samples per block (default %d)" % DEFAULTS["block"])
-    ap.add_argument("--min-blocks", type=int, help="blocks needed (default %d)" % DEFAULTS["min_blocks"])
+    ap.add_argument("--min-blocks", type=int, help="blocks needed (default %d, at least 3)" % DEFAULTS["min_blocks"])
     ap.add_argument("--verbose", action="store_true", help="print every block")
     a = ap.parse_args(argv)
     opts = {}

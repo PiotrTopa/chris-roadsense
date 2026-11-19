@@ -28,7 +28,8 @@ import time
 HDR_FMT = "<8s8I3f4xQQ"           # RingHeader (docs/ARCHITECTURE.md), 72 bytes
 SLOT_FMT = "<QqqIfffII"           # SlotHeader, 48 bytes
 WRITE_SEQ_OFF = 56
-STEP = 16                         # the stillness test looks at every 16th pixel of every 16th row
+STEP, ROW_GAP = 16, 4             # the stillness test compares means over cells of 16 pixels x 4 rows (every 4th
+                                  # row), one cell every 32 pixels: about 900 cells of a 1280x720 frame
 
 
 class Ring:
@@ -74,15 +75,22 @@ class Ring:
 
 
 def thumb(y, stride, width, height):
-    """A coarse grid of the luma plane as bytes."""
-    return b"".join(y[r * stride:r * stride + width:STEP] for r in range(0, height, STEP))
+    """A coarse grid of the luma plane: sums over cells of STEP pixels by 4 rows (averaging takes the sensor noise
+    out, so that "holds still" also works in a dim garage)."""
+    out = []
+    for r in range(0, height - 4 * ROW_GAP + 1, 2 * STEP):
+        rows = [y[(r + k * ROW_GAP) * stride:(r + k * ROW_GAP) * stride + width] for k in range(4)]
+        for c in range(0, width - STEP + 1, 2 * STEP):
+            out.append(sum(rows[0][c:c + STEP]) + sum(rows[1][c:c + STEP]) + sum(rows[2][c:c + STEP])
+                       + sum(rows[3][c:c + STEP]))
+    return out
 
 
 def diff(a, b):
     """Mean absolute difference of two thumbs, in grey levels."""
-    if a is None or b is None or len(a) != len(b):
+    if a is None or b is None or len(a) != len(b) or not a:
         return 255.0
-    return sum(abs(p - q) for p, q in zip(a, b)) / float(len(a))
+    return sum(abs(p - q) for p, q in zip(a, b)) / float(len(a) * 4 * STEP)
 
 
 def write_pgm(path, y, stride, width, height):

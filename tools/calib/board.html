@@ -6,7 +6,8 @@
 <title>Calibration board</title>
 <!-- roadsense lens calibration target (tools/calib/board.html). Self-contained: no network resources.
      Screen: open the file, enter the screen's lit width in mm, F11 for full screen, H hides the bar.
-     Paper: set the printed square size, Print, "actual size / 100 %", then measure one square with a ruler.
+     Paper: set the printed square size, Print (A4 landscape is preset; 8x5 squares of 30 mm fit), "actual size /
+     100 %", then measure one square with a ruler.
      The board is OpenCV's ChArUco layout (DICT_4X4_50, marker = 0.75 square, top-left square black) or a plain
      chessboard; tools/calib/lens.py reads both. -->
 <style>
@@ -23,7 +24,7 @@
   #paper { display: none; }
   body.hidden #bar { display: none; }
   @media print {
-    @page { margin: 8mm; }
+    @page { size: A4 landscape; margin: 8mm; }
     #bar, #screen { display: none !important; }
     #paper { display: block; margin: 0 auto; }
     #paperinfo { display: block; text-align: center; font: 9pt ui-monospace, monospace; margin-top: 4mm; }
