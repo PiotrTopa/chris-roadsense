@@ -143,7 +143,7 @@ cores, lights 5 Hz), candidates run from `~/l27`, nothing installed
   0.019 m (30-100 m) on average, like supercombo's; the lead distance differs by 0.37 m on average (0.86 m p95,
   about 1 % of the distance), twice supercombo's 0.19 m. The strict script of the "GPU inference" section
   (maximum over all four lines to 192 m) rejects both models on the bench clip; see the lane report.
-* Governor step `plan` (the policy at 2 runs a second): three policy runs a second less, about 0.7 % of a big
+* Governor step `plan` (the policy at 2 runs a second): three policy runs a second less, about 2 % of a big
   core; it is in the order for completeness, not for its saving.
 
 ### Thermal headroom and the load governor (lane L24, 2026-11-18)
