@@ -64,8 +64,12 @@ class SourceSpec:
     dict the model may keep state in). `rank` orders the groups for isolation by rank; `witness` sources are
     never fused and can never start a fault; `stale_s` is how long the group may be silent."""
 
-    def __init__(self, id, group, rank, types, model, stale_s=1.0, witness=False, info=None, counts=True):
+    def __init__(self, id, group, rank, types, model, stale_s=1.0, witness=False, info=None, counts=True,
+                 family=None):
         self.id, self.group, self.rank, self.types, self.model = id, group, rank, tuple(types), model
+        # groups of one family share their physical sensors (wheel speeds and the speed signal of one car): they
+        # are checked against each other, but neither is an independent vote for the other
+        self.family = family or group
         self.stale_s, self.witness, self.info = stale_s, witness, info
         self.counts = counts               # False: a side channel of the group (its messages do not show it alive)
 
@@ -75,8 +79,9 @@ _H = {"speed": np.array([1.0, 0.0, 0.0]), "accel": np.array([0.0, 1.0, 1.0]), "a
 
 
 class _Group:
-    def __init__(self, name, rank, witness, stale_s):
+    def __init__(self, name, rank, witness, stale_s, family=None):
         self.name, self.rank, self.witness, self.stale_s = name, rank, witness, stale_s
+        self.family = family or name
         self.arrivals = collections.deque(maxlen=64)
         self.last_t = None                 # newest stamp
         self.fault = None                  # {"since", "reason", "rule"} or None
@@ -127,7 +132,7 @@ class Integrator:
         for t in spec.types:
             self.by_type[t].append(spec)
         if spec.group not in self.groups:
-            self.groups[spec.group] = _Group(spec.group, spec.rank, spec.witness, spec.stale_s)
+            self.groups[spec.group] = _Group(spec.group, spec.rank, spec.witness, spec.stale_s, spec.family)
         self.mem[spec.id] = {}
 
     def carry_fault(self, group, reason):
@@ -267,8 +272,10 @@ class Integrator:
             if p.verdict != "disagree" or not p.c.get("fault") or p.c["mode"] == "ratio":
                 continue
             against_hi = against_lo = 0
-            for c in self.groups:
-                if c in (hi, lo):
+            for c, cg in self.groups.items():
+                # a witness is reported, it does not vote; neither does a group that shares its sensors with one
+                # of the two (INTEGRATOR.md 2)
+                if c in (hi, lo) or cg.witness or cg.family in (self.groups[hi].family, self.groups[lo].family):
                     continue
                 v_lo, v_hi = self._verdict(c, lo, q), self._verdict(c, hi, q)
                 if v_lo == "agree" and v_hi == "disagree":
@@ -379,8 +386,10 @@ class Integrator:
             return {"value": None, "std": None, "valid": False, "reason": "no_measurement", "mode": "none",
                     "age_s": None, "sources": []}
         x, P = sm
-        age, srcs = ch.near(T, c["fresh_s"], kinds)
+        age, srcs, floor = ch.near(T, c["fresh_s"], kinds, c["max_coast_s"] + 0.01)
         val, std = float(h @ x), math.sqrt(max(float(h @ P @ h), 0.0))
+        if floor is not None and kinds is not None:
+            std = max(std, floor)
         if age is None or age > c["max_coast_s"]:
             why = "no_measurement"
             if any(g.fault is not None and g.last_t is not None and self.now - g.last_t <= g.stale_s

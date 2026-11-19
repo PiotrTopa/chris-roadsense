@@ -5,6 +5,7 @@ sources (CAN 0x0B4 speed, the road model's 200 ms image pair); a new source brin
     vehicle   `ego` (mapd's relay of the feeder's motion): speed, standstill, accelerometer, yaw rate, turn signal;
               `vehicle`: the brake.                                          rank 3, fused
     wheels    `ego.wheel_speeds_mps`: mean wheel speed, a second reading of the speed with its own decoding.
+              Family `vehicle`: it checks the speed signal's decoding, it is no independent vote (same sensors).
                                                                              rank 2, monitor only
     vision    `road.pose` (the road model): speed and yaw rate of the image pair, its own stated uncertainty,
               a standstill detector for cars without a vehicle feed.         rank 1, fused
@@ -17,6 +18,7 @@ from .core import Measurement, SourceSpec
 NS = 1e9
 VISION_PAIR_LAG_S = 0.125        # the pose describes the 200 ms image pair: this long before the frame's stamp
 VISION_STOP_SPEED, VISION_GO_SPEED, VISION_STOP_CONFIRM_S = 0.15, 0.8, 1.0
+FEED_GAP_S, FEED_WARMUP_S = 1.0, 0.35  # a vehicle feed silent this long is not believed for this long after it resumes
 YAW_SIGMA = {"yaw_rate": (0.004, 0.03), "wheel_speeds": (0.02, 0.05), "steering": (0.03, 0.10)}
 
 
@@ -29,10 +31,25 @@ def vision_speed_sigma(v):
     return 0.25 + 0.035 * abs(v)
 
 
+def _warming(t, mem):
+    """After a silence of the feed its first samples repeat what it held before the silence (measured on the
+    car: 19-25 silences of about 7 s per drive, the first 2-3 samples after each, up to 0.28 s, stale by up to
+    5 m/s): they are not measurements. True while the feed warms up."""
+    last = mem.get("last_t")
+    mem["last_t"] = t
+    if last is not None and t - last > FEED_GAP_S:
+        mem["warm_until"] = t + FEED_WARMUP_S
+        mem["warmups"] = mem.get("warmups", 0) + 1
+    return t < mem.get("warm_until", -1e18)
+
+
 def vehicle_model(msg, mem):
     t = msg["ts_mono_ns"] / NS
     out = []
-    mem["info"] = {"tag": msg.get("tag")}
+    warm = _warming(t, mem)
+    mem["info"] = {"tag": msg.get("tag"), "warmups": mem.get("warmups", 0)}
+    if warm:
+        return out
     sig = msg.get("turn_signal")
     if sig is not None:
         out.append(Measurement("signal:turn_signal", t, sig, role="signal"))
@@ -64,6 +81,8 @@ def vehicle_signals_model(msg, mem):
 
 
 def wheels_model(msg, mem):
+    if _warming(msg["ts_mono_ns"] / NS, mem):
+        return []
     ws = msg.get("wheel_speeds_mps")
     if not isinstance(ws, (list, tuple)) or len(ws) < 2 or not all(_fin(w) for w in ws):
         return []
@@ -142,7 +161,7 @@ def default_sources():
         SourceSpec("vehicle", "vehicle", 3, ("ego",), vehicle_model, stale_s=0.6,
                    info="vehicle motion from the host's feeder (CAN), relayed by mapd"),
         SourceSpec("vehicle.signals", "vehicle", 3, ("vehicle",), vehicle_signals_model, stale_s=0.6, counts=False),
-        SourceSpec("wheels", "wheels", 2, ("ego",), wheels_model, stale_s=0.6,
+        SourceSpec("wheels", "wheels", 2, ("ego",), wheels_model, stale_s=0.6, family="vehicle",
                    info="mean of the wheel speeds: a second reading of the speed"),
         SourceSpec("vision", "vision", 1, ("road",), vision_model, stale_s=0.6,
                    info="the road model's pose (200 ms image pair)"),
