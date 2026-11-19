@@ -24,7 +24,7 @@ OpenCV is not in `.venv-models`; the lane venv is `/home/piotr/datasets/l33/venv
 venv's python and commands run from the checkout.
 
 ```sh
-$PY -m unittest discover -s tools/calib/tests                 # 33 tests OK (53 s on the loaded laptop)
+$PY -m unittest discover -s tools/calib/tests                 # 33 tests OK (about 40-50 s on the loaded laptop)
 python3 -m unittest discover -s tools/calib/tests             # without OpenCV: 33 run, 10 skipped
 PYTHON=/home/piotr/projects/roadsense/.venv-models/bin/python sh tools/smoke_api.sh    # api suite: 252 OK, unchanged
 ```
@@ -129,7 +129,18 @@ What that does to the road model's outputs, measured: a ride (s7-elblag-lowsun, 
 k1 -0.34 by `perturb.py` and replayed, against the same ride unbent. `dist`: the warp is told the true focal
 length; `distf`: the best single focal length for the narrow input (880.4):
 
-DIST_TABLE
+| model | what the warp is told | speed (ratio to the unbent ride) | lane width at 10 / 20 / 40 m (ratio) | left, right line at 10 m (m, moved) | lead distance (ratio, frames) | lead sideways (m, moved) |
+|---|---|---|---|---|---|---|
+| vision | true focal | 0.978 | 1.000 / 1.001 / 1.001 | -0.012, -0.014 | 1.003 (1571) | -0.01 |
+| vision | best single focal | 0.945 | 1.004 / 1.005 / 1.005 | -0.004, +0.009 | 0.993 (1552) | +0.05 |
+| supercombo | true focal | 0.970 | 0.968 / 0.970 / 0.971 | +0.041, -0.058 | 0.991 (1695) | +0.00 |
+| supercombo | best single focal | 0.957 | 0.960 / 0.963 / 0.965 | +0.065, -0.060 | 0.971 (1695) | +0.04 |
+
+So an uncorrected distortion of that size costs a few per cent, not a lane: the model's own speed reads 2-3 % low
+(4-5.5 % with a compromise focal: the true focal is the better thing to tell the warp), supercombo's lane comes out
+3 % narrow (its lines 4-6 cm inwards at 10 m), the vision model's lane and the lead's distance and sideways position
+stay within 1 %. The mount estimate on the bent ride moves by at most 0.12 deg (road model's motion) and 0.16 deg
+(pictures) against the unbent one.
 
 ```sh
 /home/piotr/datasets/l33/scripts/dist_all.sh      # 4 replays (val.sh with K1=-0.34 [FDECL=880.4])
@@ -228,19 +239,61 @@ Reading:
 * Against the rides' own `calib.json` (hand estimates, docs/RIDES.md): both methods agree with each other and
   differ from the files by 0.2-0.5 deg: s7 pitch is -3.0 to -3.2, not -2.86; a1-night is pitch -5.8 to -5.96,
   yaw -3.0 to -3.2, not -6.36 / -2.75. Lane L32's own replays of a1-night with the declared pitch changed by
-  +-1 deg give the same absolute pitch (-5.78, -5.80 deg; `mount.py --min-blocks 3
-  /home/piotr/datasets/l32/sweep/a1-night.vision.pitch-1.jsonl.gz`).
+  as it is and with the declared pitch lowered by 1 deg give the same absolute pitch (-5.78, -5.80 deg;
+  `mount.py --min-blocks 3 /home/piotr/datasets/l32/sweep/a1-night.vision.{base,pitch-1}.jsonl.gz`, one at a time).
 
 Unselected pictures against the hand calibrations (one picture every 2 s of every whole ride, curves, junctions and
 tunnels included, no straight selection because no road messages exist for them; `--pictures` mode):
 
-RIDEPICS_TABLE
+| ride | pictures (agreeing) | support | pictures: pitch, yaw | ride's calib.json | difference |
+|---|---|---|---|---|---|
+| a1-night | 300 (298) | 74 % | -5.92, -3.18 | -6.36, -2.75 | +0.44, -0.43 |
+| a1-night-fog | 360 (325) | 55 % | -2.61, -1.25 | -3.09, -0.40 | +0.49, -0.85 |
+| a1-s8-rain | 400 (398) | 20 % | -4.20, +1.20 | -4.30, +1.26 | +0.09, -0.06 |
+| forest-lubelskie | 400 (394) | 30 % | -4.86, -3.67 | -4.13, -0.69 | -0.73, -2.99 |
+| forest-vistula-spit | 400 (330) | 11 % | -3.51, -5.09 | -2.92, -6.88 | -0.58, +1.78 |
+| gdansk-night-snow | 361 (310) | 15 % | -8.04, -1.51 | -6.59, -1.66 | -1.46, +0.15 |
+| katowice-rain | 400 (378) | 7 % | -0.41, -5.47 | -1.49, -3.78 | +1.08, -1.69 |
+| krakow-2024 | 300 (284) | 8 % | -5.10, +1.59 | -4.87, +0.86 | -0.23, +0.73 |
+| krakow-lights | 400 (340) | 10 % | -9.21, +0.36 | -9.40, +0.74 | +0.18, -0.39 |
+| krakow-night-tunnel | 400 (386) | 46 % | -3.79, -1.88 | -4.01, -1.20 | +0.22, -0.67 |
+| rural-zloczew | 400 (387) | 36 % | -4.41, -5.24 | -4.13, -5.39 | -0.29, +0.14 |
+| s1-roadworks | 229 (206) | 11 % | +1.48, +0.83 | -0.00, +2.86 | +1.48, -2.04 |
+| s7-elblag-lowsun | 400 (396) | 38 % | -3.23, +2.48 | -2.86, +2.52 | -0.36, -0.04 |
+| tunnel-gdansk | 138 (138) | 26 % | -7.50, -0.64 | -6.07, +3.15 | -1.43, -3.80 |
+| tunnel-pow-warsaw | 148 (99) | 6 % | -3.15, +15.81 | -5.39, +9.63 | +2.24, +6.18 |
+| tunnel-swinoujscie | 97 (91) | 15 % | -5.85, +4.20 | -5.16, -2.64 | -0.69, +6.84 |
+| tunnels-s3 | 311 (310) | 46 % | -1.13, -1.41 | -1.89, -3.95 | +0.76, +2.54 |
+| warsaw-city | 400 (375) | 12 % | -5.07, +0.38 | -4.93, +0.86 | -0.14, -0.48 |
+| warsaw-storm | 400 (328) | 5 % | -10.70, -6.84 | -10.20, -7.10 | -0.50, +0.26 |
+| winter-fog | 193 (188) | 40 % | -5.68, -0.83 | -5.16, +0.00 | -0.52, -0.83 |
+| winter-snow-rural | 400 (363) | 10 % | -4.30, -4.83 | -2.92, -5.39 | -1.38, +0.56 |
 
 ```sh
 /home/piotr/datasets/l33/scripts/ridepics.sh; $PY /home/piotr/datasets/l33/scripts/ridepics_eval.py
+$PY tools/calib/mount.py --pictures /mnt/win/linux-scratch/l33/ridepics/winter-fog --focal 690      # one ride
 ```
 
-ADJ_TEXT
+About half of the rides agree within 0.5 deg, the rest differ by 0.7-7 deg. To find out which side is wrong, three of the
+disputed rides were replayed (supercombo, 150-180 s) and measured with straight selection, both methods:
+
+| ride | road model's motion | pictures on the straight stretches | whole ride, unselected (above) | ride's calib.json | verdict |
+|---|---|---|---|---|---|
+| forest-lubelskie | -4.82, -3.58 | -4.83, -3.57 | -4.86, -3.67 | -4.13, -0.69 | the file's yaw is 2.9 deg off; both methods agree to 0.01 deg |
+| tunnel-swinoujscie | -6.58, +1.66 (26 s) | -6.81, +1.96 | -5.85, +4.20 | -5.16, -2.64 | the file's yaw is 4.3-4.6 deg off; unselected pictures of the curved tunnel are 2.2 deg off as well |
+| tunnels-s3 | -1.76, -4.18, **refused**: the two halves of the window differ by 2.05 deg in yaw | -1.55, -4.38 | -1.13, -1.41 | -1.89, -3.95 | within this window the file is right and the unselected whole-ride result is not; the recording is not one steady mounting |
+
+```sh
+for r in "tunnels-s3 60 180" "forest-lubelskie 60 180" "tunnel-swinoujscie 20 150"; do /home/piotr/datasets/l33/scripts/val.sh $r supercombo base 0 0 0 0; done
+$PY tools/calib/mount.py /home/piotr/datasets/l33/val/forest-lubelskie.supercombo.base --frames --min-blocks 3
+```
+
+So: (a) **some rides' hand calibrations are wrong by degrees in yaw** (forest-lubelskie 2.9, tunnel-swinoujscie
+4.3; docs/RIDES.md marks them G and R), which matters for every replay evaluation that reads positions off those
+rides; (b) pictures that were not selected for straight driving are only as good as the road in them: on straight
+motorway rides they are right, in curved tunnels and winding roads they can be 2-3 deg off while still calling
+themselves "ok". `mount.py --pictures` says so in its output; the normal path (a recording) selects the straight
+stretches itself.
 
 ### The car's recordings
 
@@ -332,3 +385,50 @@ against it.
 * Scratch: `/home/piotr/datasets/l33` (venv, build of `modeld_replay` / `camerad-replay` from this branch, `val/`
   replays, scripts), `/mnt/win/linux-scratch/l33` (ride pictures, ring test). Heavy jobs ran in
   `systemd-run --user -p MemoryMax=` units.
+
+## 8. Hand-back (2026-11-19, 12:45 CET)
+
+**FAV**
+
+* The tools exist and are tested: board, capture, lens solver, mount estimator, apply / verify / rollback, the
+  owner's procedure. 33 tool tests pass, the api suite is unchanged at 252.
+* The mount estimate is proven on rides: a camera turned by a known angle and a calibration declared wrong by a known
+  angle both come back, on a day and a night ride, with both road models: the pictures' vanishing point within
+  0.06 deg, the road model's motion within 0.24 deg and inside the error it states.
+* The recorder's sessions are enough (messages at 13.5 a second plus one picture a second). On the car's recordings
+  two independent methods agree: the camera looks **3.3-3.9 deg to the right** of the direction of travel while
+  `calib.json` says 0. That alone puts a vehicle at 60 m 3.5-4.1 m to the right: one lane.
+* The lens distortion is quantified and is not that cause: 0.05-0.2 pixel near the vanishing point, a few per cent
+  on speed and lane width. The change that removes it is specified and costs nothing per frame.
+* The board page draws exactly OpenCV's board (pixel for pixel on a screen, 30.00 mm squares on paper).
+
+**UNFAV**
+
+* The lens path is proven on synthetic pictures only. No picture of a board through the car's camera exists on the
+  laptop; a real screen, the windscreen and the camera's focus are untested.
+* **The camera does not keep its pitch**: +1.3, -1.1, +1.3 to +1.5 deg over three days, and visibly different again
+  on 18 Nov. A one-off calibration will not hold until the mounting is fixed (or pitch is estimated online, lane
+  L32). There is no straight drive with the camera as it is mounted now, and none with the vision model.
+* The road model's motion shows only 88-97 % of a yaw error on the first pass (hence the second drive, or the
+  pictures).
+* Pictures not selected for straight driving can be 2-3 deg off and still say "ok" (curved tunnels); only the
+  recording path selects.
+* Several rides' hand calibrations are wrong by degrees in yaw (forest-lubelskie 2.9, tunnel-swinoujscie 4.3):
+  replay results that depend on sideways positions on those rides carry that error.
+* Phone-side pieces (`capture.py`, `apply.py`) were **not run on the phone**. Roll and height cannot be seen from
+  driving; roll is unchecked.
+* Method 1 duplicates lane L32's `calib_from_pose.py`; two shared doc paragraphs may conflict at merge.
+
+**INSTR**
+
+* Owner, at the car (docs/CALIBRATION.md): fix the camera so that it keeps its aim; record 3-5 minutes of straight
+  driving above 25 km/h with the recorder on; take 30-40 board pictures through the windscreen (corners, tilted
+  views); measure lens height, lens to front bumper, lens off the centre line.
+* Then on the laptop: `lens.py solve`, `mount.py --frames --lens`, `apply.py --dry-run` and look at the view, then
+  `apply.py` on the phone; drive once more and check that `mount.py` reports a residual near zero.
+* For a later lane: the distortion in the input warp (section 2); re-measure the rides' `calib.json` with
+  `mount.py` (one replay per ride); decide which offline pose tool stays (this one or L32's).
+
+**Decision** (owner): merge `v2-l33` and do the car steps; and whether to install the yaw from the existing
+recordings now as an interim (about -3.9 deg from the latest two sessions' pictures, -3.5 from the road model's
+motion; the pitch has to wait for a drive with the present mounting).

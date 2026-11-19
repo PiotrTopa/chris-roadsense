@@ -370,8 +370,8 @@ def draw_coverage(cv2, views, size, rep, path):
     cv2.imwrite(path, img)
 
 
-def print_report(rep, out=sys.stdout):
-    w = out.write
+def print_report(rep, out=None):
+    w = (out or sys.stdout).write
     w("board %s, pictures %d, with the board %d, distinct %d, used %s\n" % (
         rep["board"], rep["views_given"], rep.get("views_detected", 0), rep.get("views_distinct", 0),
         rep.get("views_used", "-")))

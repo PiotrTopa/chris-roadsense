@@ -52,7 +52,8 @@ DEFAULTS = dict(
     min_blocks=5,             # blocks for an estimate (openpilot INPUTS_NEEDED)
     max_spread=0.5 * DEG,     # robust sigma of the block medians, per angle
     max_halves=0.4 * DEG,     # first half of the blocks against the second half
-    gain_loss=0.10,           # share of a calibration error the model's pose does not show (measured: 0.0-0.1)
+    gain_loss=0.10,           # share of a calibration error the model's pose does not show (measured on rides:
+                              # 0.03-0.12 of a yaw error, about nothing of a pitch error; lane report L33)
 )
 
 
@@ -490,7 +491,7 @@ def recommend(rep):
     """Which estimate to apply, per angle: the one with the smaller error when the two methods agree; the road
     model's motion when there are no usable pictures; nothing when they contradict each other."""
     p = rep.get("pictures") or {}
-    pose_ok = rep.get("status") == "ok"
+    pose_ok = rep.get("status") == "ok" and rep.get("method") != "pictures" and "pitch" in rep
     pic_ok = p.get("status") == "ok"
     if not pose_ok and not pic_ok:
         return None
@@ -516,8 +517,8 @@ def recommend(rep):
     return out
 
 
-def print_report(rep, out=sys.stdout):
-    w = out.write
+def print_report(rep, out=None):
+    w = (out or sys.stdout).write
     d = lambda v: "%+.2f" % (v / DEG)   # noqa: E731
     for i in rep["inputs"]:
         line = "%-44s %6d road msgs" % (i["path"][-44:], i["road_messages"])
@@ -636,6 +637,9 @@ def main(argv=None):
         else:
             rep["reasons"] = [p.get("reason") or p.get("status")]
         rep["angles_for"] = {k: (lens or intr).get(k, intr[k]) for k in ("focal_px", "cx", "cy")}
+        rep["notes"].append("these pictures were not selected for straight driving: the result is only as good as the "
+                            "road in them is straight (curved tunnels and winding roads gave 2-3 deg of error on rides "
+                            "while looking fine); prefer a recording, where the straight stretches are picked")
         rep["recommended"] = recommend(rep)
         print_report(rep)
         if a.out:

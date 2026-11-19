@@ -410,6 +410,19 @@ class MountTest(unittest.TestCase):
         self.assertLess(abs(pic["pitch"] - true[0]), 0.1 * DEG)
         self.assertLess(abs(pic["yaw"] - true[1]), 0.1 * DEG)
         self.assertLess(abs(pic["yaw"] - rep["yaw"]), 0.15 * DEG)
+        # the same pictures without a recording (a folder of road pictures)
+        out = os.path.join(self.d, "pics.json")
+        with open(os.devnull, "w") as null:
+            old, sys.stdout = sys.stdout, null
+            try:
+                rc = mount.main(["--pictures", os.path.join(s, "frames"), "--focal", "975", "--out", out])
+            finally:
+                sys.stdout = old
+        self.assertEqual(rc, 0)
+        r = geom.load_json(out)
+        self.assertEqual(r["recommended"]["source"], dict(pitch="pictures", yaw="pictures"))
+        self.assertLess(abs(r["recommended"]["yaw"] - true[1]), 0.1 * DEG)
+        self.assertTrue(any("not selected" in n for n in r["notes"]))
 
 
 def args(**kw):

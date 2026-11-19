@@ -15,9 +15,10 @@ python3 -m venv ~/datasets/l33/venv && ~/datasets/l33/venv/bin/pip install numpy
 PY=~/datasets/l33/venv/bin/python          # used below; cd to the roadsense checkout
 ```
 
-Order matters: the mounting angles are angles *for a given lens calibration*. If the lens values change later,
-`apply.py` re-expresses the angles (the road keeps vanishing at the same pixel), and one more straight drive
-confirms them.
+Order matters: the mounting angles are angles *for a given lens calibration*. The mounting may still be done
+first, with the lens values as they are (leave out `--lens`): it is the yaw that puts a far vehicle a lane to the
+side. When the lens values change later, `apply.py` re-expresses the angles (the road keeps vanishing at the same
+pixel), and one more straight drive confirms them.
 
 ## 1. Lens: pictures of the board
 
@@ -76,13 +77,16 @@ $PY tools/calib/mount.py ~/roadsense-rec/<session> --frames --lens ~/calib/lens.
 ```
 
 It reports pitch and yaw twice: from the road model's own motion and from the vanishing point of the lines in the
-recorded pictures, each with its spread over time and an error estimate, and what it recommends. It says
+recorded pictures, each with its spread over time and an error estimate, and then `recommended`: per angle the
+estimate with the smaller error when the two agree, nothing when they contradict each other. It says
 `NOT ENOUGH` when there was too little straight driving (it tells how many seconds it found and needs), when the
 blocks disagree, or when recordings disagree with each other (**the camera was moved between them**: give only
 recordings made after the last change). Roll and height cannot be seen from driving.
 
-After a calibration that was far off (more than 1 deg), drive and run it once more: the road model shows about
-7-10 % less than the full error, so the second pass should report a residual near zero.
+After a calibration that was far off (more than 1 deg), drive and run it once more: the road model shows 3-12 %
+less than the full yaw error (measured on rides), so the second pass should report a residual near zero. The
+pictures' estimate does not have that shortfall, which is why the recommendation takes the yaw from the pictures
+when they are clear.
 
 ## 3. Tape
 
