@@ -221,7 +221,7 @@ class RadarSource(Source):
             vg = x[E.V] / (1.0 + x[E.SV])
             return x[E.W] * mxa - vg * x[idy], i_l, np.array([mxa, -scale_reg(vg, 5.0), -x[idy]])
         sx = max(math.sqrt(max(Cc[0, 0], 0.0)), 0.08)
-        sy = max(math.sqrt(max(Cc[1, 1], 0.0)), 0.12)
+        sy = max(math.sqrt(max(Cc[1, 1], 0.0)), 0.25)       # (0.12 was optimistic for a corner mount: found with the second radar)
         w_now = float(x[E.W])
         ground = ux + w_now * my
         t = ts - tau
