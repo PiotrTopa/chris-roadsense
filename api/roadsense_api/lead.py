@@ -1,7 +1,7 @@
 """Lead vehicle: the api-side face of the topic `lead`.
 
 Since lane L38 the lead is tracked inside the data integrator's object layer (docs/INTEGRATOR.md section 6;
-`integrator/roadsense_integrator/core/objects.py`, `sources/camera_lead.py`): one multi-target track list in
+`chris-integrator/chris_integrator/core/objects.py`, `sources/camera_lead.py`): one multi-target track list in
 the car frame, the road model's lead hypothesis as one of its sensors (with the measured noise and life-cycle
 rules of lanes L14, L27, L29, L32), radars and further cameras as others, and the lead picked from the tracks
 by the path. The integrator emits the `lead` message; the api adds the rate marker and serves it.
@@ -11,8 +11,8 @@ messages (`on_ego`, `on_vehicle`, `on_objects`, `on_road`) and returns the same 
 and `PROFILES` are the camera-lead source's (lead.json keys keep working).
 """
 from .integrator import Integrator
-from roadsense_integrator.core.lead import LEAD_CFG
-from roadsense_integrator.sources.camera_lead import DEFAULT_CFG as _CAM_CFG, PROFILES  # noqa: F401
+from chris_integrator.core.lead import LEAD_CFG
+from chris_integrator.sources.camera_lead import DEFAULT_CFG as _CAM_CFG, PROFILES  # noqa: F401
 
 NS = 1e9
 DEFAULT_CFG = dict(_CAM_CFG, **LEAD_CFG)

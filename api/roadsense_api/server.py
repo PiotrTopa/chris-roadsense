@@ -203,6 +203,12 @@ async def h_ego_state(req):
     return _json(msg or {"error": "no input yet"}, 200 if msg else 503)
 
 
+async def h_tracks(req):
+    """The integrator's object layer for the last frame: every track in the car frame with its sources."""
+    msg = req.app["state"].latest.get("tracks")
+    return _json(msg or {"error": "no input yet"}, 200 if msg else 503)
+
+
 async def h_lanes(req):
     st = req.app["state"]
     msg = st.latest.get("lanes")
@@ -485,6 +491,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
             ("GET", "fused", h_fused),
             ("GET", "lead", h_lead),
             ("GET", "ego_state", h_ego_state),
+            ("GET", "tracks", h_tracks),
             ("GET", "lanes", h_lanes),
             ("GET", "view", h_view),
             ("GET", "roadgeom", h_roadgeom),

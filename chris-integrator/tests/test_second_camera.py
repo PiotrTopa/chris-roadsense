@@ -6,10 +6,10 @@ import numpy as np
 
 from .simrun import Run
 from .tracks_eval import per_vehicle
-from roadsense_integrator import Integrator
-from roadsense_integrator.sim import default_sensors
-from roadsense_integrator.sim.camera2 import CameraObjectsSim
-from roadsense_integrator.sim.radar import RadarSim
+from chris_integrator import Integrator
+from chris_integrator.sim import default_sensors
+from chris_integrator.sim.camera2 import CameraObjectsSim
+from chris_integrator.sim.radar import RadarSim
 
 
 class SecondCamera(unittest.TestCase):

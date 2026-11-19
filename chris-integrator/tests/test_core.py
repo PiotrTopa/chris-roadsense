@@ -5,8 +5,8 @@ import unittest
 import numpy as np
 
 from . import simrun  # noqa: F401  (path)
-from roadsense_integrator.core.ekf import Filter, Row
-from roadsense_integrator.core.objects import assign
+from chris_integrator.core.ekf import Filter, Row
+from chris_integrator.core.objects import assign
 
 
 class _CV:

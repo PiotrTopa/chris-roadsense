@@ -6,9 +6,9 @@ import unittest
 import numpy as np
 
 from .simrun import Run
-from roadsense_integrator import Integrator
-from roadsense_integrator.sim import default_sensors
-from roadsense_integrator.sim.radar import RadarSim
+from chris_integrator import Integrator
+from chris_integrator.sim import default_sensors
+from chris_integrator.sim.radar import RadarSim
 
 RADAR = {"sources": [{"kind": "radar", "id": "*"}]}
 

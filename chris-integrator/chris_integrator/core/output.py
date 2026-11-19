@@ -197,4 +197,4 @@ def ego_state(I, ts_mono_ns, ts_real_ns=None):
             "sources": {n: _health(I, g, T) for n, g in I.groups.items()},
             "checks": [p.report() for p in I.pairs.values()] + [s.report() for s in I.selfs.values()]
             + [m.report() for m in I.nis.values() if m.value is not None],
-            "rejected": rej, "late": dict(I.counts["late"]), "dropped": dict(I.counts["dropped"])}
+            "reanchors": getattr(I, "reanchors", 0), "rejected": rej, "late": dict(I.counts["late"]), "dropped": dict(I.counts["dropped"])}

@@ -43,6 +43,9 @@ DEFAULT_CFG = dict(
     # row classes that are set aside while their innovations are far beyond the stated uncertainty (their rows
     # are still evaluated, so the class comes back by itself): the classes with no raw partner to be judged by
     quarantine=("pos", "heading", "alt", "map_cross", "map_heading", "mount"),
+    reanchor_s=8.0,              # absolute positions set aside this long = the position is lost: anchor again
+    gnss_absolute=False,         # may the receiver's positions teach the speed scale and the yaw scales
+                                 # (a good receiver: yes; one that scatters 10-15 m with a claimed 3 m: no)
     objects={},                  # overrides of objects.DEFAULT_CFG
     lead={},                     # the camera-lead source's constants (sources/camera_lead.py) and the lead message's
     sources=None,                # extra sources of this car: [{"kind": "radar", "id": ..., "mount": {...}}, ...]
@@ -149,6 +152,8 @@ class Integrator:
         self.signals = {}                  # name -> (t, value)
         self.last_frame_t = None
         self._anchor_first = None
+        self._pos_high_t = None
+        self._lost = False
 
     def _cache(self):
         l = self.ekf.latest()
@@ -227,6 +232,8 @@ class Integrator:
         if fused:
             self.ekf.prune(self.now)
             self._cache()
+            if self._lost:
+                self._reanchor()
 
     def _new_epoch(self):
         """The device clock restarted: drop what is tied to the old time axis. Calibration states and their
@@ -336,6 +343,10 @@ class Integrator:
             m = self.nis[key] = NisMonitor(row.group, row.q, self.cfg["nis"])
         if m.offer(t, d2) and row.q in self.cfg["quarantine"]:
             self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
+            if row.q == "pos":
+                self._pos_high_t = t if m.high else None
+        if row.q == "pos" and m.high and self._pos_high_t is not None and t - self._pos_high_t > self.cfg["reanchor_s"]:
+            self._lost = True              # acted on after this filter pass (on_message)
 
     def _monitor(self, g, q, t, v, s):
         ser = g.series.get(q)
@@ -397,8 +408,22 @@ class Integrator:
         ke = tau * v * math.cos(ps) if itau is not None else 0.0      # so that the prediction is pe at insertion
         kn = tau * v * math.sin(ps) if itau is not None else 0.0
         t = t_stamp - tau
-        return [Meas("pos", t, e, sigma, lin(idx, ce, ke), src + ".pos", robust=True, cb=cb),
-                Meas("pos", t, n, sigma, lin(idn, cn, kn), src + ".pos", robust=True)]
+        loc = not c["gnss_absolute"]
+        return [Meas("pos", t, e, sigma, lin(idx, ce, ke), src + ".pos", robust=True, cb=cb, local=loc),
+                Meas("pos", t, n, sigma, lin(idn, cn, kn), src + ".pos", robust=True, local=loc)]
+
+    def _reanchor(self):
+        """The absolute positions have disagreed with the estimate for too long to be the receiver's fault alone:
+        the position is declared lost and anchored again on the next usable fix (a new local frame id)."""
+        self._lost = False
+        self._pos_high_t = None
+        self.anchored = False
+        self._anchor_first = None
+        self.reanchors = getattr(self, "reanchors", 0) + 1
+        for k, m in self.nis.items():
+            if k[1] in ("pos", "heading", "map_cross", "map_heading"):
+                m.reset_data()
+        self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
 
     def _anchor(self, e, n, psi, sigma, tau):
         l = self.ekf.latest()

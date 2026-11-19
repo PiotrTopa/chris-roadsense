@@ -7,9 +7,9 @@ import numpy as np
 
 from .simrun import Run
 from .tracks_eval import per_vehicle
-from roadsense_integrator import Integrator
-from roadsense_integrator.sim import default_sensors
-from roadsense_integrator.sim.radar import RadarSim
+from chris_integrator import Integrator
+from chris_integrator.sim import default_sensors
+from chris_integrator.sim.radar import RadarSim
 
 FL = (2.0, 0.8, math.radians(40.0))                  # a corner radar at the front left, looking 40 degrees left
 CFG2 = {"sources": [{"kind": "radar", "id": "radar_front", "mount": {"x_m": 2.2, "y_m": 0.0, "yaw_deg": 0.0}},

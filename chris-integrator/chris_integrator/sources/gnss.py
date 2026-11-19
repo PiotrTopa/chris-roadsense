@@ -87,7 +87,8 @@ class GnssSource(Source):
             # the innovation is wrapped: compare against the heading unwrapped to the state's branch
             zc = E.course_to_psi(float(course))
             zc = float(x[E.PSI]) + ((zc - float(x[E.PSI]) + math.pi) % (2.0 * math.pi) - math.pi)
-            out.append(Meas("heading", ts - tau, zc, self.course_sigma, h_c, "gnss.course", robust=True))
+            out.append(Meas("heading", ts - tau, zc, self.course_sigma, h_c, "gnss.course", robust=True,
+                            local=not c["gnss_absolute"]))
         alt = msg.get("alt_m")
         if fin(alt):
             i_z = np.array([E.Z], dtype=np.intp)

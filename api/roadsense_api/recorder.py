@@ -38,7 +38,7 @@ import time
 log = logging.getLogger("roadsense_api.recorder")
 
 DEFAULT_TOPICS = ("road", "lights", "signs", "env", "speed_limit", "rules", "fused", "map", "ego", "calib", "camera",
-                  "vehicle", "objects", "view", "gnss", "ego_state")
+                  "vehicle", "objects", "view", "gnss", "ego_state", "tracks")
 DEFAULTS = dict(dir=None, max_mb=4000, road_hz=20.0, ego_hz=25.0, objects_hz=10.0, view_hz=2.0, frame_every_s=1.0,
                 ego_state_hz=2.0, topics=list(DEFAULT_TOPICS))
 CLOCK_STEP_S = 120.0            # the wall clock moved this much against the monotonic one: re-date the session
@@ -138,7 +138,7 @@ class Recorder:
             return
         now = self.clock()
         cap = {"road": self.cfg["road_hz"], "ego": self.cfg["ego_hz"], "objects": self.cfg["objects_hz"],
-               "view": self.cfg["view_hz"], "camera": 1.0, "ego_state": self.cfg["ego_state_hz"]}.get(mtype)
+               "view": self.cfg["view_hz"], "camera": 1.0, "ego_state": self.cfg["ego_state_hz"], "tracks": self.cfg["ego_state_hz"]}.get(mtype)
         if cap and now - self._last.get(mtype, -1e9) < 1.0 / cap - 0.005:
             return
         self._last[mtype] = now

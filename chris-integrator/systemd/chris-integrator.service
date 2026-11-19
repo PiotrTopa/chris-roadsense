@@ -1,0 +1,19 @@
+[Unit]
+Description=chris-integrator (sensor fusion and object layer of the chris perception stack)
+After=network.target
+
+[Service]
+Type=simple
+Environment=CHRIS_RUNDIR=/run/chris
+Environment=CHRIS_DATADIR=/var/lib/chris
+Environment=CHRIS_CONFIG_DIR=/etc/chris
+Environment=CHRIS_ROADSENSE_RUNDIR=/run/roadsense
+EnvironmentFile=-/etc/chris/integrator.env
+RuntimeDirectory=chris
+StateDirectory=chris
+ExecStart=/usr/bin/python3 -m chris_integrator --roadsense ${CHRIS_ROADSENSE_RUNDIR}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

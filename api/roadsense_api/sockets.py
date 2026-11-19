@@ -56,6 +56,13 @@ def start_clients(state, rundir, daemons):
         # the car as the host describes it (`vehicle`) and the scans of its range sensors (`objects`)
         tasks.append(asyncio.create_task(daemon_client(state, "mapd", os.path.join(rundir, "vehicle.sock"), track=False,
                                                        backoff_max=2.0), name="sock-vehicle"))
+    # chris-integrator as a daemon (CHRIS_INTEGRATOR_SOCK=<its run dir>/integrator.sock): the api's trackers then
+    # wait for its `ego_state` / `tracks` / `lead` of each road frame instead of running the integrator in-process
+    ipath = os.environ.get("CHRIS_INTEGRATOR_SOCK")
+    if ipath:
+        state.integrator_mode = "daemon"
+        tasks.append(asyncio.create_task(daemon_client(state, "integratord", ipath, track=False, backoff_max=2.0),
+                                         name="sock-integrator"))
     # optional: a separate lane source for the display (`display_lanes` messages, view.py); absent on most hosts
     tasks.append(asyncio.create_task(daemon_client(state, "laned", os.path.join(rundir, "laned.sock"), track=False),
                                      name="sock-laned"))

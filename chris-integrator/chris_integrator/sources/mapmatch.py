@@ -52,12 +52,12 @@ class MapMatchSource(Source):
         i_c = np.array([E.PE, E.PN, ioff], dtype=np.intp)
         co = np.array([nx, ny, -1.0])
         out = alive + [Meas("map_cross", ts, nx * em + ny * nm, self.cross_sigma_m,
-                            lambda x: (nx * x[E.PE] + ny * x[E.PN] - x[ioff], i_c, co), "map.cross", robust=True)]
+                            lambda x: (nx * x[E.PE] + ny * x[E.PN] - x[ioff], i_c, co), "map.cross", robust=True, local=True)]
         if abs(float(x[E.W])) < self.max_yaw_rate and abs(d) < math.radians(30.0):
             i_h = np.array([E.PSI], dtype=np.intp)
             one = np.array([1.0])
             out.append(Meas("map_heading", ts, float(x[E.PSI]) + d, self.heading_sigma,
-                            lambda x: (x[E.PSI], i_h, one), "map.heading", robust=True))
+                            lambda x: (x[E.PSI], i_h, one), "map.heading", robust=True, local=not ctx.cfg["gnss_absolute"]))
         mem["used"] = mem.get("used", 0) + 1
         return out
 

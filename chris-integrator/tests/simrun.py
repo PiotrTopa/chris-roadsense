@@ -8,9 +8,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np  # noqa: E402
 
-from roadsense_integrator import Integrator  # noqa: E402
-from roadsense_integrator.core import ego as E  # noqa: E402
-from roadsense_integrator.sim import World, default_sensors  # noqa: E402
+from chris_integrator import Integrator  # noqa: E402
+from chris_integrator.core import ego as E  # noqa: E402
+from chris_integrator.sim import World, default_sensors  # noqa: E402
 
 
 def wrap(a):
@@ -23,7 +23,7 @@ class Run:
 
     def __init__(self, world=None, sensors=None, integ=None, keep_tracks=False, order=None, on_frame=None, **wkw):
         self.w = world or World(**wkw)
-        self.I = integ or Integrator()
+        self.I = integ or Integrator({"gnss_absolute": True})     # the simulated receiver is a decent one
         self.rows, self.leads, self.tracks, self.es = [], [], [], None
         w, I = self.w, self.I
         msgs = list(w.messages(sensors if sensors is not None else default_sensors()))

@@ -7,9 +7,9 @@ import unittest
 import numpy as np
 
 from .simrun import Run
-from roadsense_integrator import AuxState, Integrator, Meas, Source
-from roadsense_integrator.core import ego as E
-from roadsense_integrator.sim import GnssSim, MapSim, VehicleSim, VisionSim, World, default_sensors
+from chris_integrator import AuxState, Integrator, Meas, Source
+from chris_integrator.core import ego as E
+from chris_integrator.sim import GnssSim, MapSim, VehicleSim, VisionSim, World, default_sensors
 
 TRUE = dict(vehicle=dict(gyro_bias=0.004, gyro_scale=0.04, accel_bias=0.15),
             vision=dict(mount_yaw=-0.06, mount_pitch=0.05, speed_scale=0.03), gnss=dict(lag=2.2))
@@ -179,7 +179,7 @@ class Sources(unittest.TestCase):
                 co = np.array([1.0, 1.0])
                 return [Meas("alt", msg["ts_mono_ns"] / 1e9, msg["alt_m"], 0.5, lambda x: (x[E.Z] + x[ib], idx, co), "baro.alt")]
         w = World(seed=10)
-        I = Integrator()
+        I = Integrator({"gnss_absolute": True})
         msgs = list(w.messages(default_sensors()))
         n0 = I.model.n
         k = 0

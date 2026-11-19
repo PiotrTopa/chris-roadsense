@@ -18,7 +18,7 @@ import zlib
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "api"))
-sys.path.insert(0, os.path.join(_ROOT, "integrator"))
+sys.path.insert(0, os.path.join(_ROOT, "chris-integrator"))
 
 NS = 1e9
 PASS = ("lights", "signs", "env", "speed_limit", "rules", "map", "ego", "vehicle", "camera", "calib", "gnss", "objects")
@@ -157,7 +157,7 @@ def _with_map(session, map_path):
 class Pipeline:
     def __init__(self, view_cfg=None, egolane_cfg=None, fused_period_s=0.5, integrator_cfg=None, integrator=True):
         """integrator: an `Integrator` to use (extra sources registered), or True for the stack's default."""
-        from roadsense_integrator import Integrator
+        from chris_integrator import Integrator
         from roadsense_api.egolane import EgoLaneEstimator
         from roadsense_api.fusion import Fusion
         from roadsense_api.lanes import RoadGeometryTracker

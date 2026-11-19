@@ -1081,73 +1081,41 @@ Rules:
 * **Tunnel.** In a tunnel when the matched edge is one (then `exit_in_m` is the map distance to its end) or
   when envd's label is `tunnel` with confidence >= 0.5 (no distance).
 
-### The data integrator: api-derived topic `{"type":"ego_state", ...}`
-`api/roadsense_api/integrator/` (lane L37, 2026-11-19; design, alternatives and limits: `docs/INTEGRATOR.md`;
-measurements: `docs/lanes/L37-integrator.md`). **Every input enters the integrator; the trackers, the rules,
-the fused layer and the display read what it hands on, and none of them selects a raw source.** One message
-per `road` message, stamped with the frame time (and at the vehicle's rate while no road frame arrives for
-0.3 s); about 1.5 kB; `GET /v2/ego_state`, `/ws?topics=ego_state`.
+### The data integrator (chris-integrator): topics `ego_state`, `tracks`, and the source of `lead`
 
-```
-vehicle motion (`ego`), brake (`vehicle`) ─┐   sources: an input description + a measurement model each
-receiver fixes (`gnss`, relayed by mapd) ──┼─> time-ordered buffer ─> ego filters (speed/accel, yaw rate)
-road model pose (`road`) ──────────────────┤                       ─> monitors: source against source, a source
-range sensors (`objects`; a model per one) ┘                          against its own stated uncertainty ─> isolation
-        ─> `ego_state` ─> lead · lanes · ego lane · road geometry · speed limit / rules · lights · signs context · fused · view
-```
+Since lane L38 the integrator is a component of its own, `chris-integrator/` (design:
+`chris-integrator/docs/DESIGN.md`; README there for the contracts): every input enters it, and the trackers of
+the api read only its outputs. It runs in-process (the default: `Integrator.frame(road)` per road message) or as
+the daemon `chris-integrator` (the api then reads `<its run dir>/integrator.sock`; set
+`CHRIS_INTEGRATOR_SOCK`; a frame whose outputs do not arrive within 80 ms goes out with `lead.valid: false`,
+reason `integrator_timeout`, never from raw inputs). Configuration: `<config dir>/integrator.json`
+(`chris_integrator.DEFAULT_CFG` keys; `sources`: extra sensors, e.g. `[{"kind": "radar", "id": "*"}]`, the
+api's default); `lead.json` keys go to the camera-lead source.
 
-```
-"epoch": 0,                      // counts restarts of the device clock (boot; a replay joining sessions)
-"speed":    {"value": 12.31, "std": 0.02,     // m/s along the heading, negative in reverse; 1 sigma
-             "valid": true, "reason": null,   // false: value null, reason "no_measurement" | "no_healthy_source"
-             "mode": "fused|coast|none",      // coast: predicted past its newest measurement (more than 0.3 s); none after 1 s
-             "age_s": 0.04,                   // distance in time from the frame to the nearest measurement used
-             "sources": ["vehicle.speed", "vision.pose"]},   // the measurements in the estimate around the frame
-"accel":    {...},               // m/s2, same shape
-"yaw_rate": {...},               // rad/s, POSITIVE LEFT (ISO 8855), same shape
-"standstill": {"value": true, "for_s": 4.9, "source": "vehicle|vision|null"},   // vehicle: speed and wheels exactly zero
-"signals":  {"turn_signal": {"value": "left", "age_s": 0.1}, "brake": {"value": true, "age_s": 0.3}},   // passed through with their age
-"sources":  {"vehicle": {"state": "ok", "reason": null, "usable": true, "age_s": 0.04, "rate_hz": 9.5, "tag": "prius-can", "warmups": 3},
-             "wheels":  {...},   // mean wheel speed: checks the speed signal's decoding (same sensors: no independent vote)
-             "vision":  {"state": "fault", "usable": false, "isolation": "rank|vote|self|carried", "since_s": 412.0,
-                         "reason": "speed disagrees with vehicle (ratio 0.26, 93 % of 64 samples beyond 4 sigma); own speed uncertainty 7.3x its characterised level", ...},
-             "gnss":    {"state": "suspect", "fix": "3d", "hacc_m": 5.0, "repeat_share": 0.46, ...}},
-"checks":   [{"kind": "pair", "a": "vehicle", "b": "vision", "quantity": "speed", "verdict": "agree|disagree|unknown",
-              "n": 64, "share": 0.02, "ratio": 1.01, "evidence_s": 5.0},      // share: samples beyond 4 sigma over 5 s of evidence
-             {"kind": "self", "a": "vision", "quantity": "speed", "verdict": "ok|fault|unknown", "ratio": 0.8, ...},   // stated / characterised sigma, 5 s median
-             {"kind": "witness", "a": "vehicle", "b": "gnss", "quantity": "speed", "verdict": ..., "ratio": 0.9, ...}],   // ratio of medians over 30 s
-"rejected": {"vision.pose": 3},  // single measurements not applied (5 sigma from the prediction), since start
-"late": {}                       // measurements older than the 2 s buffer (monitors only)
-```
+`ego_state` (api 3, a superset of the 2.1 message; `GET /v2/ego_state`), one per road frame, stamped with the
+frame's time of validity:
 
-Source `state`: `absent` (never seen) · `stale` (silent longer than its stale time; a vehicle feed is also
-`stale` for 0.35 s after a silence of more than 1 s, because its first samples repeat old values) ·
-`unchecked` (alive; nothing to check it against, or no evidence yet: a car without a vehicle feed, a car that
-has not moved) · `ok` (checked against another ranked source and agreeing) · `suspect` (a check is between
-its thresholds, or a witness disagrees) · `fault` (not used: its measurements leave the estimate at once, and
-what is made from it goes out as unknown). A fault ends by evidence only (the check agrees again over 10 s of
-driving, the source's stated uncertainty is back to normal), never by time; standing still is no evidence. A
-fault is kept across restarts of the api (`<data dir>/integrator.json`; `isolation: "carried"`).
+| field | meaning |
+|---|---|
+| `speed`, `accel`, `yaw_rate`, `heading`, `grade` | each `{value, std, valid, reason, mode: fused / coast / none, age_s, sources}`. `speed` is in the scale of the car's speed signal (m/s, signed); `yaw_rate` rad/s positive left; `heading` degrees clockwise from north; `grade` rad |
+| `position` | `{valid, reason, mode, lat, lon, alt_m, hacc_m (1 sigma, semi-major), cov_en, fix_age_s, sources, local: {frame, e_m, n_m, heading_rad}, origin}`; `local` is dead-reckoned odometry also without any receiver (`reason: "no_absolute_source"`); `frame` changes when the local frame is anchored again |
+| `odometer_m` | path length of the published speed |
+| `standstill` | `{value, for_s, source}` |
+| `calibration` | per source every estimated calibration state `{value, std, unit, known}`: `odometry.speed_scale`; `vehicle` gyro bias / scale, wheel-difference yaw scale, accelerometer offsets; `vision` delay, speed scale, yaw scale, mount `dyaw` / `dpitch` against the calibration in use with `state` (`converging / ok / offset / moved / unknown`), `in_use`, `suggested`; `gnss` delay; radars' mount yaw and delay |
+| `sources` | per source group `state` (`absent / stale / unchecked / ok / suspect / fault`), `usable`, `reason`, `isolation` (`rank / vote / self / carried`), `since_s`, `age_s`, `rate_hz`, `nis` per row class, and what the source reports of itself |
+| `checks` | every monitor: raw pairs (`share` beyond 4 sigma, `ratio`), self checks, innovation consistency (`nis`) |
+| `signals` | pass-through values with `age_s` (`turn_signal`, `brake`) |
+| `epoch`, `reanchors`, `rejected`, `late`, `dropped` | clock epochs seen, position re-anchors, rows not applied / too old |
 
-What the estimate is: with a vehicle feed the speed is the vehicle's (the road model's weight is below 1 %),
-smoothed over the samples around the frame time, so it is right *at* the frame, not at the last sample
-before it; in a gap of the feed and on a car without one it is the road model's, with the model's own
-uncertainty. The road model's pose is taken 0.125 s before the frame's stamp (the 200 ms image pair).
+`tracks` (new; `GET /v2/tracks`), one per road frame: `frame: "car"` (x forward, y **left**, origin the
+reference camera), `tracks[]` each `{id, state: tentative / confirmed / coast, exist, x_m, y_m, vx_mps, vy_mps
+(over ground), ax_mps2, std[5], v_rel_mps, age_s, meas_age_s, sources[], seen{source: age_s}, hits, flags
+(designated, standing, ghost, stationary, on_path, merged), path_offset_m, attrs}`, `sensors{}` (per object
+source: scans, detections, assigned, started, late, dropped, `nis`, `age_s`, `kind`), `path` (`plan` or null),
+`valid`, `reason`.
 
-Derived topics carry the integrator's verdict on what they were made from:
-
-```
-"valid": true,                   // false: the product is UNKNOWN (not "nothing there"), every value absent
-"reason": null,                  // "vision: speed disagrees with vehicle (...)" | "ego speed unknown: no_healthy_source"
-"inputs": {"vision": "ok", "vehicle": "ok"}    // the sources' states; "unchecked" is not invalid
-```
-in `lead` and `lanes` at the top level, in `view` as `integrity`. Raw `road` stays the road model's raw output:
-a consumer that reads it takes its validity from `ego_state.sources.vision.usable`.
-
-Adding a sensor is a `SourceSpec` (id, group, rank, family, message types, stale time) and a measurement model
-(`integrator/sources.py`; message -> measurements with their time of validity and noise) registered with the
-integrator; consumers do not change. Config: `<config dir>/integrator.json` overrides `integrator.DEFAULT_CFG`
-per key. `/v2/health` carries `integrator` (per-source state, faults, the speed's sources).
+`lead` keeps its fields (next section) and gains `exist`, `sources[]`, `on_path`, `path_offset_m`,
+`lateral_std_m`; `source` names sensor kinds (`radar+vision+ego`), `radar.sensor` the sensor.
 
 ### api-derived topic: `{"type":"lead", ...}`
 `api/roadsense_api/lead.py` tracks the lead vehicle over time: one message per `road` message (so at the
