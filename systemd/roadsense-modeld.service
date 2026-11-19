@@ -1,5 +1,5 @@
 [Unit]
-Description=roadsense modeld (openpilot supercombo road model)
+Description=roadsense modeld (road model: openpilot v0.11.1 vision + policy; supercombo selectable)
 PartOf=roadsense.target
 After=roadsense-camerad.service
 Wants=roadsense-camerad.service
@@ -36,9 +36,21 @@ ExecStopPost=-/bin/sh -c 'cut -d" " -f1 /sys/class/devfreq/5000000.gpu/available
 # keeps the cores out of their deep idle state between GPU submits. Replay ride, 2026-10-27: road 13.0 ->
 # 14.05 runs/s (15 min), model p90 107 -> 55 ms, road latency p90 168 -> 126 ms, signs 5.0/s.
 # Without signd (or with an older one) the schedule file is simply unused.
+#
+# Road model (lane L27): the command line names none on purpose. modeld's default is the openpilot v0.11.1 line:
+# driving_vision on the GPU (driving_vision-ncnn.param/.bin) and driving_policy on the CPU for the plan
+# (driving_policy-fp32.onnx, ONNX Runtime, on the model thread; at most 5 runs a second, the plan held in between
+# and marked). supercombo v0.9.7 stays selectable: `"road_model": "supercombo"` in /etc/roadsense/modeld.json (or
+# --road-model supercombo here). Mixed installations fail safe:
+#   new modeld, this unit, vision files missing  -> modeld runs supercombo and says so (`road_model_fallback` in
+#       every road line, `road_model.fallback` in /v2/health); with no model file at all it exits with the reason
+#   older modeld (supercombo only), this unit    -> no flag here that it does not know: it runs supercombo as before
+#   new modeld, an older unit                    -> the same command line as this one: as the first two rows
+#   "road_model" set in modeld.json              -> strict: a missing file is an error (exit 1, systemd retries,
+#       /v2/health shows modeld without messages), never a silent other model
 ExecStart=/usr/local/bin/modeld --backend ncnn --cpus 4-7 --prep-cpus 0-3 --max-hz 20 --gpu-yield 80 --gpu-lead 2 --cpu-latency-us 0 --stats 10
 # CPU fallback (ONNX Runtime fp32, exact but ~5 Hz and 90 C on this phone):
-# ExecStart=/usr/local/bin/modeld --backend ort --model /var/lib/roadsense/models/supercombo-fp32.onnx --cpus 4-7 --prep-cpus 0-3 --max-hz 5 --stats 10
+# ExecStart=/usr/local/bin/modeld --backend ort --cpus 4-7 --prep-cpus 0-3 --max-hz 5 --stats 10
 Restart=always
 RestartSec=2
 Nice=-5

@@ -3,7 +3,7 @@
 //
 // The file is one flat JSON object rewritten atomically by the governor (roadsense api) at least every 2 s:
 //   {"v":1,"ts_mono_ns":...,"valid_s":10,"level":3,"limited":0,"headroom_k":4.2,
-//    "preview_hz":1,"record_frames":0,"env_hz":0.2,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"road_hz":-1}
+//    "preview_hz":1,"record_frames":0,"env_hz":0.2,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"policy_hz":-1,"road_hz":-1}
 // A cap of -1 (or a missing key, a missing file, a file older than valid_s) leaves the daemon's own
 // configured rate; 0 pauses the stage; any other value is an upper bound.
 #pragma once
