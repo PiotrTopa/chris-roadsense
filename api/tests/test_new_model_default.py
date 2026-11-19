@@ -4,7 +4,7 @@
   through a short absence and through a distance step of the same vehicle; supercombo's settings untouched;
 * ego lane: the higher commit threshold for the vision model's lines;
 * `road_model` in `lead`, `lanes`, `view`; a held plan (`plan.held`, `plan.age_ms`) drawn like a fresh one;
-* the lane-source seam: an external `display_lanes` message changes what `view` draws and nothing else.
+* the lane-source seam is tested in test_display_lanes.py (lane L29).
 
     python3 -m unittest api.tests.test_new_model_default -v     (from the repository root)
 """
@@ -167,29 +167,6 @@ class NewDefaultContractTest(unittest.TestCase):
             m["policy_hz"], m["policy_ms"] = 5, 1.2
             p.feed(m)
         self.assertIsNotNone(p.latest["view"].get("path"))
-
-    def test_display_lane_source_seam(self):
-        p = Pipeline()
-        self.feed(p, 40)
-        base = [dict(l) for l in p.latest["lanes"]["lines"]]
-        model_y = [ln["y"][0] for ln in p.latest["view"]["lines"] if ln["id"] == "lane:1"][0]
-        for s in range(40, 80):
-            ts = s * 50_000_000
-            p.view.on_display_lanes({"type": "display_lanes", "ts_mono_ns": ts, "source": "laned", "x": X,
-                                     "lines": [{"present": False}, {"present": True, "y": [-1.3] * 33},
-                                               {"present": True, "y": [2.3] * 33}, {"present": False}]})
-            p.feed(road(s, plan=True))
-        vw = p.latest["view"]
-        self.assertEqual(vw["lines_source"], "laned")
-        ext_y = [ln["y"][0] for ln in vw["lines"] if ln["id"] == "lane:1"][0]
-        self.assertAlmostEqual(model_y, -1.8, delta=0.1)
-        self.assertAlmostEqual(ext_y, -1.3, delta=0.1)                      # the display follows the external source
-        now = p.latest["lanes"]["lines"]
-        self.assertAlmostEqual(now[1]["y"][0], base[1]["y"][0], delta=0.05)  # the measurement topic does not
-        self.assertEqual(p.latest["view"]["road"]["vision"]["from"], "lanes")
-        for s in range(80, 100):                                            # the source stops: back to the model's
-            p.feed(road(s, plan=True))
-        self.assertEqual(p.latest["view"]["lines_source"], "model")
 
 
 if __name__ == "__main__":

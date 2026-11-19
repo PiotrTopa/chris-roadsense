@@ -86,6 +86,13 @@ DEFAULT_CFG = dict(
     ego_max_age_s=0.5,           # vehicle motion older than this is not used (the model's is)
     max_gap_s=1.0,               # frames further apart than this restart the channel
     display_lanes_max_age_s=0.5, # an external display lane source (`display_lanes`) older than this is not used
+    display_lanes_mode="agree",  # "agree": a line is the source's where source and road model agree on it (and
+                                 # the source's extra lines while it is so anchored), the model's elsewhere;
+                                 # "prefer": the source's lines where it has them, the model's elsewhere;
+                                 # "replace": only the source's lines are drawn while it is fresh
+    display_agree_m=0.5, display_agree_s=0.6,     # "agree": within this at 6 and 12 m, for this long
+    display_agree_extra=False,   # "agree": also draw lines only the source has, while one of its lines agrees
+    display_scale=True, display_scale_tau_s=8.0,   # bring the source's metres to the road model's (lane-width ratio)
     max_static=24,
 )
 
@@ -192,6 +199,10 @@ class ViewBuilder:
         self.plan = None                       # (x, y) of the last road plan (light positions: offset + path)
         self.ext_lanes = None                  # the last `display_lanes` message of an external lane source
         self.lines_source = "model"            # where the lines of the last `view` came from
+        self.lines_scale = None                # the factor applied to the external source's metres (None: no source)
+        self.agree_t = [None] * 4              # per slot: since when source and model agree on the line
+        if not hasattr(self, "ext_scale"):     # kept across a reset of the channel: it describes the camera
+            self.ext_scale, self.scale_ts = None, None
         self.seen = {}                         # id -> first-seen ts (age across fade-out / back in)
         self.road = RoadView(self.road_cfg)    # the road part (roadview.py)
 
@@ -216,14 +227,163 @@ class ViewBuilder:
             self.ext_lanes = msg
 
     def _display_lanes(self, lanes, ts):
-        """The lane lines `view` draws for the frame at ts: the external display source while it is fresh, else
-        the road model's tracked lines (`lanes`). Sets `lines_source`."""
+        """The lane lines `view` draws for the frame at ts: from the external display source while it is fresh,
+        else the road model's tracked lines (`lanes`). Sets `lines_source` and `lines_scale`.
+
+        `display_lanes_mode` (per line, see DEFAULT_CFG): "agree" (default), "prefer", "replace".
+        Road edges stay the road model's unless the source sends its own."""
+        c = self.cfg
         ext = self.ext_lanes
-        if ext is not None and abs(ts - ext["ts_mono_ns"]) <= self.cfg["display_lanes_max_age_s"] * NS:
-            self.lines_source = str(ext.get("source") or "external")
-            return ext
-        self.lines_source = "model"
-        return lanes
+        self.lines_scale = None
+        if ext is None or abs(ts - ext["ts_mono_ns"]) > c["display_lanes_max_age_s"] * NS:
+            self.lines_source = "model"
+            return lanes
+        have = isinstance(lanes, dict) and isinstance(lanes.get("x"), list)
+        k = self._ext_scale(ext, lanes if have else None, ts)
+        self.lines_scale = round(k, 3)
+        ex = [x * k for x in ext["x"]]
+        elines = []
+        for ln in (ext.get("lines") or [])[:4]:
+            if isinstance(ln, dict) and ln.get("present") and isinstance(ln.get("y"), list):
+                ln = dict(ln, y=[y * k for y in ln["y"]])
+            elines.append(ln)
+        elines += [{"present": False}] * (4 - len(elines))
+        name = str(ext.get("source") or "external")
+        out = {"x": ex, "lines": elines}
+        if "edges" in ext:
+            out["edges"] = ext["edges"]
+        elif have and lanes.get("edges"):
+            out["edges"], out["edges_x"] = lanes["edges"], lanes["x"]
+        mode = c["display_lanes_mode"]
+        if mode != "replace" and have:
+            mlines = list(lanes.get("lines") or [])[:4]
+            mlines += [None] * (4 - len(mlines))
+
+            def model_line(i):
+                ml = mlines[i]
+                if isinstance(ml, dict) and ml.get("present") and isinstance(ml.get("y"), list):
+                    # the model's line on the source's distances (cut where they end)
+                    ys = [_interp(lanes["x"], ml["y"], x) for x in ex]
+                    sd = [_interp(lanes["x"], ml.get("y_std") or [], x) for x in ex]
+                    if all(y is not None for y in ys):
+                        return dict(ml, y=ys, y_std=[v if v is not None else 0.0 for v in sd], model=True)
+                return None
+
+            def has(ln):
+                return isinstance(ln, dict) and bool(ln.get("present")) and isinstance(ln.get("y"), list)
+
+            mod = [model_line(i) for i in range(4)]
+            agree = [None] * 4                     # per slot: True / False where both have the line, None otherwise
+            for i in range(4):
+                if has(elines[i]) and mod[i] is not None:
+                    d = max(abs(_interp(ex, elines[i]["y"], x) - _interp(ex, mod[i]["y"], x)) for x in (6.0 * k, 12.0 * k))
+                    agree[i] = d <= c["display_agree_m"]
+            mixed, used = [], 0
+            if mode == "agree":
+                # A slot is the source's once the two have agreed on it for display_agree_s (the same marking: the
+                # source then gives the better geometry) and until they disagree or the source loses the line. A
+                # line only the source has may be drawn while the source is anchored (at least one of its lines
+                # agrees with the model's). Everything else is the model's line: where the two read the scene
+                # differently nobody can tell which is right, and the picture stays what it was without a source.
+                # (The extra lines are off by default, `display_agree_extra`: on the labelled rides the source's
+                # extra outer lines were a kerb or a tunnel wall more often than a lane: docs/lanes/L29.)
+                for i in range(4):
+                    if agree[i]:
+                        if self.agree_t[i] is None:
+                            self.agree_t[i] = ts
+                    else:
+                        self.agree_t[i] = None
+                ok = [self.agree_t[i] is not None and ts - self.agree_t[i] >= c["display_agree_s"] * NS for i in range(4)]
+                anchored = any(ok)
+                for i in range(4):
+                    if ok[i] or (c["display_agree_extra"] and anchored and has(elines[i]) and mod[i] is None):
+                        mixed.append(elines[i])
+                        used += 1
+                    else:
+                        mixed.append(mod[i] or {"present": False})
+            else:                                  # "prefer"
+                for i in range(4):
+                    if has(elines[i]):
+                        mixed.append(elines[i])
+                        used += 1
+                    else:
+                        mixed.append(mod[i] or {"present": False})
+            # one lane cannot be narrower than 2 m: a source line and a model line that pinch it do not belong
+            # together; the source's line of the pair is dropped in favour of the model's
+            l, r = mixed[1], mixed[2]
+            if has(l) and has(r) and (bool(l.get("model")) != bool(r.get("model"))) and ex[-1] >= 10.0:
+                if _interp(ex, r["y"], 10.0) - _interp(ex, l["y"], 10.0) < 2.0:
+                    j = 2 if l.get("model") else 1
+                    mixed[j] = mod[j] or {"present": False}
+                    used -= 1
+            # On the model's distances. A source line ends at its own reach (the paint it saw); beyond it the line
+            # goes on as the model's line, shifted by the difference at that point, so that a line the model draws
+            # to 100 m does not end at 40 m because the source took it over.
+            mx = lanes["x"]
+            final = []
+            for i, ln in enumerate(mixed):
+                if not has(ln):
+                    final.append({"present": False})
+                    continue
+                if ln.get("model"):
+                    final.append(mlines[i])
+                    continue
+                sd = ln.get("y_std") or []
+                reach = ex[-1]
+                for x, v in zip(ex, sd):
+                    if v is not None and v > c["line_reach_std_m"] and x > 10.0:
+                        break
+                    reach = x
+                ml = mlines[i] if isinstance(mlines[i], dict) and mlines[i].get("present") and \
+                    isinstance(mlines[i].get("y"), list) else None
+                msd = (ml.get("y_std") or []) if ml else []
+                y_r = _interp(ex, ln["y"], reach)
+                dlt = (y_r - (_interp(mx, ml["y"], reach) or y_r)) if ml else 0.0
+                ys, st = [], []
+                for k2, x in enumerate(mx):
+                    if x <= reach:
+                        ys.append(_interp(ex, ln["y"], x))
+                        v = _interp(ex, sd, x) if sd else None
+                        st.append(v if v is not None else 0.1)
+                    elif ml:
+                        ys.append(ml["y"][k2] + dlt)
+                        st.append(msd[k2] if k2 < len(msd) else 0.0)
+                    else:
+                        ys.append(y_r)
+                        st.append(9.0)
+                final.append(dict(ln, y=ys, y_std=st))
+            out["x"], out["lines"] = mx, final
+            out.pop("edges_x", None)
+            total = sum(1 for m in mixed if has(m))
+            name = "model" if used <= 0 else name if used >= total else name + "+model"
+        self.lines_source = name
+        return out
+
+    def _ext_scale(self, ext, lanes, ts):
+        """The factor that brings the external source's metres to the road model's. A road-plane analysis rests on
+        calib.json's camera height, the road model on its own idea of it; where both see the ego lane's two lines
+        the ratio of the two lane widths is that factor (low-passed over `display_scale_tau_s`, bounded). It is
+        applied to the display lines only, so that they sit right next to the model's objects and path."""
+        c = self.cfg
+        if not c["display_scale"]:
+            return 1.0
+        if lanes is not None:
+            try:
+                el, er, ml, mr = ext["lines"][1], ext["lines"][2], lanes["lines"][1], lanes["lines"][2]
+                if all(isinstance(q, dict) and q.get("present") for q in (el, er, ml, mr)):
+                    we = _interp(ext["x"], er["y"], 10.0) - _interp(ext["x"], el["y"], 10.0)
+                    wm = _interp(lanes["x"], mr["y"], 10.0) - _interp(lanes["x"], ml["y"], 10.0)
+                    if we > 2.0 and wm > 2.0 and 0.6 < wm / we < 1.6:
+                        dt = 0.0 if self.scale_ts is None else max(0.0, (ts - self.scale_ts) / NS)
+                        self.scale_ts = ts
+                        if self.ext_scale is None:
+                            self.ext_scale = wm / we
+                        else:
+                            g = 1.0 - math.exp(-min(dt, 1.0) / c["display_scale_tau_s"])
+                            self.ext_scale += g * (wm / we - self.ext_scale)
+            except (IndexError, KeyError, TypeError):
+                pass
+        return self.ext_scale if self.ext_scale is not None else 1.0
 
     def _motion(self, ts):
         v, r = self.model_motion
@@ -373,7 +533,8 @@ class ViewBuilder:
         return {"type": "view", "seq": road.get("seq"), "ts_mono_ns": ts, "ts_real_ns": road.get("ts_real_ns"),
                 "x": list(c["xs"]),
                 "ego": {"speed_mps": round(v, 2), "yaw_rate_rps": round(-r, 4), "source": src},   # positive left
-                "objects": objects, "lines": lines, "lines_source": self.lines_source, "path": path,
+                "objects": objects, "lines": lines, "lines_source": self.lines_source, "lines_scale": self.lines_scale,
+                "path": path,
                 "road_model": road.get("road_model"),
                 "road": self.road.on_frame(ts, v, geom, egolane)}
 
@@ -439,8 +600,9 @@ class ViewBuilder:
             st = self.lines.get(lid)
             ok = isinstance(ln, dict) and ln.get("present") and isinstance(ln.get("y"), list)
             if ok:
-                ys = [_interp(lanes["x"], ln["y"], x) for x in xs]
-                stds = [_interp(lanes["x"], ln.get("y_std") or [], x) for x in xs]
+                gx = lanes["x"] if kind == "lane_line" else lanes.get("edges_x") or lanes["x"]
+                ys = [_interp(gx, ln["y"], x) for x in xs]
+                stds = [_interp(gx, ln.get("y_std") or [], x) for x in xs]
                 ok = ys[0] is not None and ys[1] is not None
             if ok:
                 reach = xs[-1]
@@ -538,6 +700,6 @@ class ViewBuilder:
                          "junction": jn.get("kind"), "junction_m": jn.get("dist_m"),
                          "lanes": ln.get("forward"), "ego_index": ln.get("ego_index"),
                          "branches": len(rd.get("branches") or ()), "ring": bool(rd.get("ring"))},
-                "objects": len(msg["objects"]), "lines": len(msg["lines"]),
+                "objects": len(msg["objects"]), "lines": len(msg["lines"]), "lines_source": msg.get("lines_source"),
                 "lead": next((o["x"] for o in msg["objects"] if o["role"] == "lead"), None),
                 "ego_light": next((o["attrs"].get("state") for o in msg["objects"] if o["role"] == "ego"), None)}

@@ -18,7 +18,7 @@ than `valid_s`, so a dead governor means the daemons run as configured and the p
 guard):
 
     {"v":1,"ts_mono_ns":...,"valid_s":10,"level":3,"limited":0,"headroom_k":4.2,
-     "preview_hz":1,"record_frames":0,"env_hz":0.2,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"policy_hz":-1,
+     "preview_hz":1,"record_frames":0,"env_hz":0.2,"laned_hz":0,"view_hz":-1,"signs_hz":-1,"lights_hz":-1,"policy_hz":-1,
      "road_hz":-1}
 
 A cap of -1 leaves the daemon's own configured rate; 0 pauses the stage; any other value is an upper bound
@@ -33,7 +33,7 @@ import time
 
 log = logging.getLogger("roadsense_api.governor")
 
-CAP_KEYS = ("preview_hz", "record_frames", "env_hz", "view_hz", "signs_hz", "lights_hz", "policy_hz", "road_hz")
+CAP_KEYS = ("preview_hz", "record_frames", "env_hz", "laned_hz", "view_hz", "signs_hz", "lights_hz", "policy_hz", "road_hz")
 
 # Shed order, rising importance. Each step adds caps to those of the steps before it (a later step may
 # tighten an earlier cap). `what` is the name reported in health and in the event list.
@@ -41,7 +41,9 @@ DEFAULT_STEPS = (
     # the first two save next to nothing on most platforms: `quick` lets the next step follow after quick_dwell_s
     {"what": "preview", "caps": {"preview_hz": 1}, "quick": True},   # the camera picture for people: 1 a second
     {"what": "recorder_frames", "caps": {"record_frames": 0, "preview_hz": 0}, "quick": True},   # recorder: messages, no pictures
-    {"what": "scenery", "caps": {"env_hz": 0.2}},                    # place / weather / light: one look in 5 s
+    # place / weather / light: one look in 5 s; and the display lane source (laned, optional) is paused: `view`
+    # then draws the road model's lines again (display only; it goes before the display channel itself)
+    {"what": "scenery", "caps": {"env_hz": 0.2, "laned_hz": 0}},
     {"what": "view", "caps": {"view_hz": 5}},                        # display channel
     {"what": "signs", "caps": {"signs_hz": 2.5}},                    # sign detector at half rate
     {"what": "lights", "caps": {"lights_hz": 2.5}},                  # light detector at half rate

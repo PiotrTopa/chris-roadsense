@@ -1,0 +1,27 @@
+[Unit]
+Description=roadsense laned (lane lines for the display, classical image analysis; optional)
+PartOf=roadsense.target
+After=roadsense-camerad.service
+Wants=roadsense-camerad.service
+
+[Service]
+Type=simple
+Slice=roadsense.slice
+Environment=ROADSENSE_RUNDIR=/run/roadsense
+Environment=ROADSENSE_CONFIG_DIR=/etc/roadsense
+RuntimeDirectory=roadsense
+RuntimeDirectoryPreserve=yes
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -e /dev/shm/roadsense-frames ] && exit 0; sleep 1; done; exit 0'
+# Display only, and optional: roadsense.target does not want this unit. It runs only after
+#   systemctl enable roadsense-laned.service        (then it starts and stops with roadsense.target)
+# Without it `view.lines` are the road model's lane lines (`view.lines_source` "model").
+# Five frames a second on the little cores, one thread, no model and no GPU: a millisecond or two per frame on
+# the laptop (docs/lanes/L29-display-lanes.md has the estimate for the phone). The load governor pauses it with
+# the `scenery` step (`laned_hz` 0 in <rundir>/governor); the display then draws the model's lines again.
+ExecStart=/usr/local/bin/laned --hz 5 --cpus 0-3 --stats 60
+Restart=always
+RestartSec=2
+Nice=5
+
+[Install]
+WantedBy=roadsense.target
