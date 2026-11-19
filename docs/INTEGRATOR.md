@@ -26,8 +26,9 @@ the replays; the report says what is not built.
 
 ## 0. Requirements this design answers
 
-1. **One box**: its own package (`integrator/roadsense_integrator`, imports nothing from the api or mapd), an
-   input contract and an output contract, a daemon for the stack and a library for replay and tests (section 9).
+1. **One box, on top**: its own component (`integrator/`, imports nothing from roadsense), an input contract
+   and an output contract, a daemon and a library; since the owner's ruling during the lane it is the top
+   component of the car's perception stack and roadsense is one of its sources (section 9).
 2. **One coherent ego estimate, full state**: position, heading, speed, acceleration, yaw rate, grade, sensor
    biases and scale factors, per-sensor time delays, camera mounting angles (sections 2-4).
 3. **Object layer inside the box**: one multi-target track list, per-sensor measurement models and
@@ -283,41 +284,87 @@ frame's `ts_mono_ns` = time of validity:
 Rules: `valid: false` always carries a `reason`; a value that is not a fresh fusion is marked (`mode: coast`,
 `meas_age_s`); nothing is held. Display smoothing stays in `view` (downstream).
 
-## 9. Process layout, the hop, consumers
+## 9. Architecture: the integrator is the top component (owner's ruling, 2026-11-19, during the lane)
 
-**Deployment on the phone: its own daemon**, `roadsense-integratord` (`python3 -m roadsense_integrator`),
-unit `roadsense-integrator.service`. It reads `modeld.sock` (`road`, `calib`), `ego.sock` (`ego`, `gnss`),
-`vehicle.sock` (`vehicle`, radar and camera scans relayed by mapd), `mapd.sock` (`map`), and serves
-`integrator.sock` (JSON lines, the stack's convention). The api reads `integrator.sock` and pairs each `road`
-message with the `ego_state` / `tracks` / `lead` of the same `ts_mono_ns` before its trackers run; when the
-integrator does not answer within the deadline the products of that frame go out `valid: false`, reason
-`integrator_timeout` (never a silent fallback to raw inputs). mapd reads the integrator's position for its
-matcher.
+"roadsense being just what analyses the video; its output is one of the sources to the integrator; the
+integrator is what talks with the MFD and presents the API of consolidated data. With a new camera a new
+model will just add more inputs to the integrator, and the integrator is where the decisions are taken."
 
-**The cost of the hop, and its solution.** L37 kept the integrator in the api because a second process parses
-the 5.8 kB `road` message a second time. The integrator needs about 1 kB of it (stamps, `pose`, `leads`,
-`plan`): the daemon's reader does not parse the line, it cuts the fields it needs out of the bytes
-(`fastjson.pick`: key search at depth 1 and a parse of those values only; a full parse as the fallback) and
-parses nothing else. Outputs are compact (`ego_state` about 2 kB, `tracks` about 0.3 kB per track). Measured
-cost and added latency: report.
+```
+ roadsense instance (per camera)        car backend (CAN, head unit)      radars, further roadsense instances
+   camerad -> modeld, signd, lightd,      motion, controls, body, gnss       objects / road / signs / lights
+   envd, laned; thin debug api                    |                                   |
+        road, calib, signs, lights, env           | feed.sock (vehicle input API)     |
+                     \                            v                                   v
+                      +------------------>  INTEGRATOR  <------------------------------+
+                         ego estimator · object layer · map side (matcher) · trackers and decisions
+                         (lanes, ego lane, road geometry, rules / speed limit, ego light, sign context,
+                         fused, view) · recorder · consolidated API (/v1, /v2, /ws) -> MFD
+```
 
-**Library.** `Integrator` is the same object without sockets: `tools/replay_lib.py` and the tests feed it
-messages; `api` can run it in-process (`integrator: "inproc"`, the default where no daemon runs: other cars,
-replays, tests) with identical outputs.
+**The rule for the line.** A module stays in roadsense when it needs one camera's pixels or one camera's
+model output and nothing else: one frame of reference, no ego motion from elsewhere, no other source, no
+map, no memory across sources. A module belongs to the integrator when it combines sources, needs the ego
+motion or the position, carries state across the gaps of a source, takes a decision a consumer acts on, or
+is the consumer's interface.
 
-**Consumers.** Every api tracker reads `ego_state` (L37's helper functions keep their signatures); the `lead`
-topic is the integrator's lead; `view`, `fused`, `signctx`, the MFD read the same messages as before
-(additive fields; `api` 3 for `ego_state`). Without a vehicle feed or GNSS the estimator runs on what
-exists: camera-only cars get vision-only ego motion marked `unchecked`, relative position only, tracks from
-the camera, and every output says which sources it stands on.
+| today | goes to | why |
+|---|---|---|
+| `camerad*`, `modeld`, `signd` / lights provider (roadsense-signs), `envd`, `laned` | roadsense | pixels of one camera |
+| modeld's online calibrator | roadsense keeps the warp; the **mount estimate** is the integrator's (section 2), fed back as a `calib` suggestion | it needs the car's speed |
+| `api/overlay.py` (`/preview`), the status page of raw topics, frame ring readers | roadsense (thin debug api) | draws one camera's raw output on its own picture |
+| `api/governor.py` | roadsense | it sheds this phone's perception load by its heat; its status is an input (`governor`) the consolidated API shows |
+| `api/lead.py` | integrator: object layer (done in this lane) | fusion across sensors, ego motion |
+| `api/lanes.py` (lane-line tracker) | integrator | ego speed and yaw rate, the map's lane count prior, later a second camera's lines |
+| `api/egolane.py`, `api/roadgeom.py`, `api/roadview.py`, `api/view.py` | integrator | map + camera + ego motion; `view` is the consumer's picture |
+| `api/speedlimit.py`, `api/rules.py`, `api/rules/` | integrator | signs (camera) + map + odometer: a decision |
+| `api/lights.py` (ego light selection) | integrator | plan + lanes + map signals; the per-light detection stays in the provider |
+| `api/signctx.py` | integrator | explains a sign by the lead and the lights: cross-source |
+| `api/fusion.py` (`fused`) | integrator | by definition |
+| `api/recorder.py` | integrator | it records the consolidated inputs and outputs; the video DVR stays with the camera |
+| `api/state.py`, `api/server.py`, `api/sockets.py` (HTTP / WebSocket / topics) | integrator: the consolidated API | the consumer's interface |
+| `mapd/posfilter.py`, `mapd/vehicle.py` calibration | absorbed by the ego estimator (position, heading, scales, GNSS delay are its states) | position is estimated once |
+| `mapd/engine.py` input handling (`position.sock`, vehicle input API 1.1), `VehicleStore` | integrator: the feed input (the car backend feeds the integrator directly) | not video analysis |
+| `mapd/matcher.py`, `rsmap.py`, `context.py`, `limits/` (the map) | integrator: map side; the matcher reads the integrator's position, its match is a measurement (below) | needs the position |
 
-**mapd.** The position is estimated once, in the integrator. mapd keeps the map matcher (it owns the map) and
-loses its position filter as the authority: with `position_source: "integrator"` it matches the integrator's
-position and publishes `map` as before; `map.match` returns to the integrator as a constraint measurement.
-The loop is not incestuous because what returns is the *map's geometry* (cross-track to a road, the road's
-bearing), not the position that was sent; lock-in on a wrong road is bounded by the robust weighting, by
-using only unambiguous matches, and by the NIS monitor against the receiver. Until mapd is switched, the
-integrator takes `map.match` from mapd's own filter (as built: report).
+What remains of roadsense's api: the sockets it already publishes (`road`, `calib`, `signs`, `lights`, `env`,
+`camera`, `display_lanes`), the frame ring, and a small HTTP face for stand-alone use and debugging
+(`/preview`, raw topic dump, health of its own daemons, the governor). It serves no tracked or fused topic.
+
+**A second camera** is a second roadsense instance with its own run directory; its `road` / `signs` /
+`lights` are further sources (`sources/` descriptions with a mount), nothing else changes.
+
+**Inputs reach the integrator directly.** The car backend connects to the integrator's `feed.sock` and speaks
+the vehicle input API as it does to mapd today (`gnss`, `motion`, `controls`, `body`, `vehicle`, `objects`,
+`reset`; docs/VEHICLE_API.md). The sources accept both the feeder's `motion` / `gnss` and mapd's relayed
+`ego` / `gnss`, so the switch is a socket path on the car.
+
+**Process and the cost of crossing it.** One daemon (`python3 -m roadsense_integrator`): it reads each
+roadsense instance's sockets and the feed, runs estimator, object layer, trackers and the API. With the
+integrator on top there is no second parse of the `road` message any more (L37's objection to a separate
+process): the integrator is the only consumer that parses it, roadsense's own api does not. Library form
+for replay and tests: the same `Integrator` object without sockets.
+
+**The position is estimated once.** The matcher is a module of the integrator that reads the ego state's
+position and returns `match` as a constraint measurement. What returns is the *map's geometry* (cross-track
+to a road, the road's bearing), not the position that was sent, so the loop is not incestuous; lock-in on a
+wrong road is bounded by the robust weighting, by a lane-offset state, by using only unambiguous matches and
+by setting the map rows aside while their innovations are far off (section 5).
+
+**Consumers through the transition.** The consolidated API keeps today's message shapes, paths and topic
+names (additive fields; `ego_state` api 3, new topic `tracks`). The MFD repoints an endpoint and the car
+backend a feed socket; the report lists both.
+
+**Its own repository.** The directory imports nothing from roadsense and speaks to it over sockets only, so
+the split is a move of `integrator/` plus packaging (`pyproject`, a unit file, its tests and tools). Licence:
+roadsense is MIT; the integrator can be MIT as well (it contains no code of roadsense-signs, which is AGPL
+and stays a separate provider process whose *messages* it reads).
+
+**Built in this lane, and the order of the rest.** See the report: the estimator, object layer, sources,
+simulator and the daemon are in `integrator/`; the api's trackers already read only the integrator's outputs.
+The physical move of the tracker modules, the consolidated HTTP / WebSocket server and the map side from
+`api/` and `mapd/` into `integrator/` is a move of files that already depend only on messages; where it was
+not completed in this lane the report says so file by file.
 
 ## 10. Simulator and test plan
 
