@@ -1,271 +1,396 @@
 # The data integrator
 
-Lane L37, 2026-11-19. Design of the component every input passes through before any logic reads it. Builds on
-the audit `docs/lanes/L35-ego-fusion-audit.md` (data flow, source characterisation); measured results of what
-was built are in `docs/lanes/L37-integrator.md`. Code: `api/roadsense_api/integrator/` (`core.py` registry,
-isolation, output; `filters.py` the Kalman channels; `monitors.py` the checks; `sources.py` this stack's
-sources; `contract.py` what consumers call). Written before the code and corrected afterwards where the
-replays said otherwise; those places are marked "(replay)".
+Lane L38, 2026-11-19. Design of the component every input passes through before any logic reads it: one box
+in the architecture, with a full ego state, an object layer, and sources that plug in without touching the
+core. It replaces the design of lane L37 (ego motion only, inside the api); what is kept from L37 is listed in
+section 12. Facts about the inputs: `docs/lanes/L35-ego-fusion-audit.md` and section 1. Measured results of
+what was built: `docs/lanes/L38-integrator.md`. Sections marked "(as built)" were corrected after the code and
+the replays; the report says what is not built.
 
 ```
-vehicle motion (`ego`)  ─┐                       ┌─ ego state at a requested time (frame time):
-vehicle signals          │   source registry      │    speed, acceleration, yaw rate, standstill, each with
-GNSS (`gnss`, new relay) ├─> measurement models ─>│    value, std, valid / reason, mode (fused | coast), sources
-road model (`road`)      │   time-ordered buffer  ├─ per-source health: ok | unchecked | suspect | fault | stale | absent
-range sensors (`objects`)┘   estimator + checks   ├─ pairwise consistency table, faults with reason and isolation
-future: camera 2, radars                          └─ gated products: may the camera's lead / lanes / plan be used
-                                                         │
-        lead · lanes · ego lane · road geometry · speed limit / rules · lights · sign context · fused · view
-        (read the integrator's state; none of them picks a raw source any more)
+ inputs (any process, any rate, any latency)          THE INTEGRATOR  (package roadsense_integrator,          consumers (downstream only)
+                                                       daemon roadsense-integratord, or a library)
+ vehicle motion `ego`, `vehicle` ─┐                ┌────────────────────────────────────────────┐
+ receiver fixes `gnss`            │  input         │ timebase: clock epochs, per-source delay   │  `ego_state`  position, heading, speed,
+ road model `road` (pose, leads,  ├─ contract ───> │ ego estimator: one EKF, full state +       ├─>  accel, yaw rate, grade, calibration,
+   plan), `calib`                 │  (JSON lines,  │   per-source calibration states, time-     │    per-source health, checks
+ map matcher `map`                │   one socket   │   ordered buffer, fixed-lag smoothing      │  `tracks`     one multi-target list in the
+ radars `radar` (N of them)       │   per producer)│ monitors + fault isolation (raw pairs, NIS)│    car frame, existence, sources
+ further cameras `camera_objects` ┘                │ object layer: association, track life      ├─> `lead`       the track on the path
+                                                   │   cycle, existence, lead by the path       │   all with time of validity, std,
+                                                   └────────────────────────────────────────────┘   valid / reason, held / coasted marks
+                                                                                                       │
+        api: lanes · ego lane · road geometry · speed limit / rules · lights · sign context · fused · view · recorder · MFD
+        mapd: map matcher (reads the integrator's position; its match comes back as an input)
 ```
 
-## 1. What the data says (the facts the design rests on)
+## 0. Requirements this design answers
 
-Measured on the car's recordings of 2026-11-19 (audit section 4, re-measured with `tools/integrator_replay.py
-characterise` and `detect`; the outputs are in the L37 report):
+1. **One box**: its own package (`integrator/roadsense_integrator`, imports nothing from the api or mapd), an
+   input contract and an output contract, a daemon for the stack and a library for replay and tests (section 9).
+2. **One coherent ego estimate, full state**: position, heading, speed, acceleration, yaw rate, grade, sensor
+   biases and scale factors, per-sensor time delays, camera mounting angles (sections 2-4).
+3. **Object layer inside the box**: one multi-target track list, per-sensor measurement models and
+   association, life cycle, existence probability, cross-sensor consistency, the lead picked by the path
+   (section 6).
+4. **Top-tier machinery**, chosen against the literature (section 11).
+5. **Extensibility proven**: front radar, second radar, second camera added as source files only, driven by a
+   simulator with truth and by injection into real recordings (sections 7, 10).
+6. **Metadata on everything that leaves** (section 8). 7. **Consumers stay connected** (section 9).
 
-* **Vehicle speed (CAN 0x0B4) is close to exact at 10 Hz.** Leaving one sample out and interpolating its
-  neighbours reproduces it with a robust sigma of 0.012-0.020 m/s. The four wheel speeds sit at 0.979-0.981 of
-  it with a residual sigma of 0.010-0.018 m/s. The vision model's speed has sigma 0.25 + 0.035 v m/s with heavy
-  tails. An optimal filter therefore gives the camera a weight below 1 % whenever the vehicle speaks: with a
-  vehicle feed, fusion of the speed is almost a pass-through, and its value lies elsewhere: bridging the feed's
-  gaps (8-119 s on these drives, recorded rate 6.6-8.2 /s), exact values at frame times, cars without a feed, and
-  above all **checking**.
-* **Yaw rate:** the gyro (zeroed at standstill by mapd) is the reference; the rear wheel-speed difference
-  follows it with gain 0.947 and sigma 0.010-0.019 rad/s; the vision model's yaw rate is good near straight
-  (sigma 0.005-0.007 rad/s, bias 0.0015) and poor in turns (gain 0.92-0.96, rms error 0.03-0.07 rad/s where
-  |yaw rate| > 0.08; in the incident gain 0.64-0.85, rms 0.04-0.11).
-* **Longitudinal accelerometer:** equals d(speed)/dt with a slowly moving offset (0-0.2 m/s2: grade,
-  calibration) and sigma 0.20-0.25 m/s2; holding it bridges a 0.5-2 s gap of the speed with 30-45 % less error
-  than holding the speed.
-* **Latency:** the vision pose describes the 200 ms image pair: 0.10-0.15 s before the frame's stamp (flat
-  minimum; 0.125 s used). The `road` message arrives 85-130 ms after the frame time, vehicle samples within
-  milliseconds: when a frame is processed, vehicle samples *after* its time of validity already exist.
-* **Head-unit GNSS:** arrival-stamped, seconds late with a varying lag (2-7 s), 36-61 % repeated messages. A
-  per-message test of its speed against the envelope of the vehicle speed over the previous 8 s fails on
-  5-52 % of the messages of healthy drives. It cannot be fused into the ego motion and cannot outvote
-  anything. (replay) Even as a witness over 30 s it is poor: on the two healthy drives the ratio of medians
-  GNSS / vehicle had a median of 0.57 and 0.45 and the witness said "disagree" in 52 % and 59 % of the frames;
-  on the two bad drives it agreed with the vehicle (0.88, 0.96) and disagreed with the camera. It is recorded,
-  reported in `checks`, marks itself `suspect`, and has no vote.
-* **(replay) The vehicle feed is not always right either.** It falls silent for about 7 s 19 and 25 times on
-  the two healthy drives (5 and 0 on the bad ones), and after 7 of those 49 silences the first 2-3 samples
-  (up to 0.28 s) repeat what the feeder held before: 0 m/s with `standstill` true at a true 5.3 m/s, 11.3 m/s
-  at a true 6 m/s (up to 7.4 m/s off; the other resumes were at standstill, where it does not show). The old
-  trackers took those samples; the integrator does not believe a vehicle feed for 0.35 s after a silence of
-  more than 1 s.
-* **The camera incident** (8 degrees off): against the vehicle, the share of frames whose speed is more than 4
-  sigma off, over 5 s of driving, is 0.00 typical / 0.20 and 0.12 at most on the two healthy drives and
-  0.93 / 0.86 typical on the bad ones (threshold 0.5). The model also knows it by itself: its own `vx_std` over
-  the characterised sigma, 5 s median, never exceeds 2.6 on three healthy drives (one of them another camera)
-  and is 7-13 typically on the bad ones (session 161325, no vehicle feed, same knocked camera: never below
-  11.8). Two independent detectors with wide margins; the second works on cars without any vehicle feed.
+"Not needed on today's data" is not a reason used anywhere below. Where the car has no sensor, the part is
+built and proven on the simulator and on synthetic sensors injected into the real recordings.
 
-## 2. Structure
+## 1. What the data says
 
-Three layers in one component, all pure functions of the messages (no I/O, no wall clock):
+From the audit and L37 (recordings of 2026-11-19), plus two things settled in this lane before the design
+(`tools/integrator_eval.py gnss`, `calib`; numbers in the report):
 
-1. **Sources.** A source is described by a `SourceSpec` (id, group, rank, expected rate, stale time, latency
-   model, role per quantity) and a **measurement model**: a function from the source's message to a list of
-   `Measurement(quantity, t_valid_ns, value, var, flags)`. Quantities today: `speed`, `accel`, `yaw_rate`,
-   `standstill` (a flag), plus discrete pass-through signals (`turn_signal`, `brake`) and, for the object
-   layer, object detections. Roles: `fuse` (enters the estimate), `monitor` (checked against the others,
-   never fused: wheel speeds, wheel-difference yaw rate, GNSS speed), `self` (the source's own stated
-   uncertainty, checked against its characterised noise).
-2. **Ego estimator.** Two small linear Kalman filters on a common time axis:
-   * longitudinal: x = [v, a, b], v signed speed along the heading, a its derivative, b the accelerometer's
-     offset; v' = a, a' = jerk noise, b' = slow random walk. Measurements: vehicle speed, vision speed
-     (at frame time - 0.125 s), accelerometer (a + b), standstill (v = 0, a = 0 exactly);
-   * yaw: x = [r, r'] (ISO 8855: positive left). Measurements: gyro, vision yaw rate (noise growing with
-     |r|), standstill (r = 0).
-   Measurements are kept in a time-ordered buffer (horizon 2 s). A late one (vision: 85-130 ms late and valid
-   another 125 ms earlier) is inserted at its time of validity and the filter is re-run from there (two or
-   three updates). A request for the state at time T (the frame time of a `road` message) returns the
-   **fixed-lag smoothed** state at T: forward filter through everything in the buffer, one RTS backward pass
-   to T. No delay is added: it uses what has arrived by the time the frame is processed, which for the vehicle
-   means samples on both sides of T.
-   Outliers: a measurement of a heavy-tailed source (the camera) whose innovation exceeds 5 sigma is not
-   applied (counted, reported as `rejected`); that is single-sample protection, not the fault detector.
-   (replay) Only while a trusted measurement of the same state was applied within the last 0.5 s: a camera
-   that is the only source is followed, never gated (a gate locked a lone camera out for a second and cost
-   9 m/s in the held-out replay). A trusted source (vehicle) is never gated. The reported std of an estimate
-   made from the camera alone is not below the camera's own sigma: its error is correlated in time and
-   filtering does not average it down (measured: error / reported std was 1.44 before this floor, 1.0 after).
-3. **Consistency and isolation.** Independent of the filter and never against the fused state (a source must
-   not vote for itself):
-   * **pair monitors:** for two groups that measure the same quantity, the residual of their raw measurements
-     at a common time of validity (the denser source interpolated), normalised by both declared sigmas. Kept
-     over a window of *evidence time* (5 s; a sample is evidence when the quantity is large enough to show a
-     scale error: either speed >= 3 m/s). Verdict `disagree` when >= 15 samples and the share beyond 4 sigma is
-     >= 0.5; back to `agree` when over 10 s of evidence the share is <= 0.25 (7.5 s of agreement) and the 5 s
-     window is quiet too; `unknown` without evidence. Standing still is no evidence in either direction: the
-     verdict holds. The residual is normalised by the sources' *characterised* sigma, not by what a source
-     states about itself in the message: (replay) the knocked camera inflated its own `vx_std` and would have
-     passed its check that way.
-   * **self monitors:** the 5 s median of (stated sigma / characterised sigma) above 4 = `self_fault`, back
-     below 3 over 10 s.
-   * **witness monitors** (GNSS): the ratio of medians over 30 s of evidence; `disagree` outside [0.6, 1.6].
-     Reported, never acted on (section 1).
-   * **isolation:** a disagreeing pair (A, B) faults the lower-ranked group, unless more third groups agree
-     with the lower and disagree with the higher one than the other way round (then the higher one is
-     faulted: "by vote"). The fault record says which rule decided (`rank`, `vote`, `self`, `carried`). Ranks:
-     vehicle 3, wheels 2, radar 2 (future), vision 1, GNSS 0. A third group votes only if it is not a witness
-     and does not share its physical sensors with one of the two (`family`): the wheel speeds check the
-     decoding of the speed signal, but both come from the same wheel sensors, so they are no second opinion
-     against the camera.
-   * **effect:** a faulted group's measurements leave the estimate at once (the filter is re-run without
-     them over the buffer), and every product declared as depending on that group goes out as unknown with
-     the reason. Recovery is by evidence only (the pair agrees again, the self monitor is quiet), never by
-     time. The api keeps the set of faulted groups in `<data dir>/integrator.json` and starts the next run
-     with them (`isolation: "carried"`): a camera knocked off its mount is still knocked off after the car
-     was parked, and the first metres of the next drive would otherwise be believed (measured on 153636: a
-     lead "present" in 233 of the first 802 frames from a fresh start, in none with the fault carried).
+* **Vehicle speed (CAN 0x0B4)**: 10 Hz, robust sigma 0.012-0.020 m/s against its own neighbours; wheel speeds
+  at 0.979-0.981 of it. The feed falls silent for about 7 s 19-25 times a drive and its first samples after a
+  silence are stale (up to 0.28 s, up to 7 m/s wrong).
+* **Gyro** zeroed at standstill; the rear wheel difference and the camera's yaw rate both read 0.91-0.96 of it
+  in turns: three sources, one scale question, which an estimator with scale states can hold.
+* **Accelerometers**: longitudinal = dv/dt + slow offset (grade, calibration), sigma 0.2-0.25 m/s2.
+* **Road model pose**: speed sigma 0.25 + 0.035 v, heavy tails, error correlated over seconds, valid 0.10-0.15 s
+  before the frame stamp (the 200 ms image pair). Arrives 85-130 ms after the frame.
+* **The direction of the pose is a precise mount-angle measurement.** On the healthy drives (calibration pitch
+  0, yaw 0 in use) `pose.vy / pose.vx` = -0.062 and `pose.vz / pose.vx` = -0.056 with a robust spread of
+  0.003-0.005 per frame at speed on straights; the lane lines' direction says the same (-0.065). The camera
+  sat 3.5 degrees in yaw and 3.2 degrees in pitch off the calibration in use, and the model worked. On the two
+  incident drives the calibration in use was pitch 0.0561, yaw -0.0621 (those very offsets), the direction
+  reads 0.00 / +0.01, and the model's speed is 0.2-0.4 of the true one. So in the incident the *direction* cue
+  says "aligned" while the *scale* is lost: the fault is visible in the speed against the vehicle, not in the
+  direction. (What exactly broke on the car is not established by the recordings; the report states it.)
+* **GNSS (head unit), the bias question settled.** Positions: no repeats while moving (the 37-50 % repeated
+  positions are standstill), distance over chords >= 100 m is 1.02-1.05 times the CAN odometer on the three
+  usable drives, displacement speed between fixes is 0.97-1.03 of the CAN speed at a lag of 1.75-2.5 s with
+  sigma 0.9-1.6 m/s. The **speed field** is a different, more delayed and smoothed output: its best lag per
+  60 s window ranges 1.5-8.75 s within one drive and it reads 0.82-0.97 of the CAN speed in the median with
+  windows near 0; it reports 1.2-2.2 m/s (median) while the car stands. L35 (4-10 % low at the best lag per
+  drive) and L37 (half, at a fixed 3 s lag) both looked at this field. Conclusion: the receiver is not biased
+  in scale; its positions are usable with their real noise and a lag of about 2 s, its speed field is not a
+  measurement of the current speed and is kept as a reported witness only. 113201 is a poor-reception drive
+  (4 chords, ratio 0.7-0.8): the filter must survive it by weighting, not by trusting.
 
-Health per source: `absent` (never seen) / `stale` (silent longer than its stale time) / `unchecked` (alive,
-nothing to check it against, or no evidence yet) / `ok` (checked and agreeing) / `suspect` (a monitor is
-between its thresholds, or a witness disagrees) / `fault`.
+## 2. The ego estimator: state
 
-### Filter family: why this one
+One extended Kalman filter on one time axis. The kinematic state is planar with altitude (a car without a
+6-axis IMU does not observe roll, and observes pitch only as road grade through the accelerometer):
 
-* Linear Kalman filter, two decoupled channels, RTS smoothing over a short buffer. The state is observed
-  directly and linearly by every source; nothing here is non-linear enough for an EKF/UKF, and nothing is
-  multi-modal enough for a particle filter. The heavy tails of the vision speed are handled where they
-  matter (robust window statistics for the verdict, innovation gating for the single sample) instead of a
-  heavy-tailed filter, because the vision weight is below 1 % with a vehicle feed.
-* **Rejected: one big state with position, heading, speed, biases (mapd's EKF extended).** Position needs the
-  map and the GNSS, lives in mapd, and its only absolute sensor is the weak head-unit GNSS; coupling the ego
-  motion to it would import that weakness into the trackers.
-* **Rejected: a bank of solo filters per source with innovation tests against the fused state.** With a
-  dominant source the fused state is that source; a test against it is a test against the vehicle anyway, and
-  a sick dominant source would hide. Raw-vs-raw pair monitors give the same answer without contamination and
-  extend to any number of groups.
-* **Rejected: chi-square (NIS) window test as the fault detector.** The audit showed its thin margin (healthy
-  windows reach 0.5 of the frames beyond 3 sigma against a 0.6 threshold); the share beyond 4 sigma has
-  healthy max 0.32 against incident p5 0.67.
-* **Rejected: applying late measurements through first-order back-propagation (the L35 prototype).** Insert
-  and re-run is exact, costs two or three 3x3 updates, and gives the smoothed state for free.
-* **Rejected: fusing GNSS speed.** See section 1. It is recorded, characterised, used as a witness.
-* **Rejected: a separate process now.** One more JSON hop per message (parse + dump of every `road` message a
-  second time) for no gain while all consumers live in the api process. The package has no dependency on the
-  api (messages in, dicts out); moving it behind a socket later is a wrapper.
-
-## 3. Objects (lead, radar targets) and the existing estimators
-
-| estimator | decision | why |
+| core state | meaning | process |
 |---|---|---|
-| lead Kalman (`lead.py`) | **object layer, fed and gated by the integrator.** It keeps its filter and life cycle; it no longer selects the ego speed, reads the brake or decides whether the camera is believable: the ego state (speed, std, standstill), the pass-through signals and the admission of each sensor's detections come from the integrator. | Its model and tuning carry four lanes of measured work (L14, L27, L29, L32); nothing in the incident was wrong with the filter, everything with its inputs. |
-| radar association (inside `lead.py`) | stays where it is in this lane, admission through the integrator's source health; **target design:** an object layer with one track list in the car frame, per-sensor measurement models (camera: x, y, relative speed; radar: range, azimuth, range rate), association per sensor, and the lead chosen from the tracks by the path. | No radar exists on the car: a multi-target layer cannot be measured yet. The seam (source spec + measurement model + admission) is in place; section 8 says what a radar adds. |
-| lanes tracker (`lanes.py`) | fed (speed, yaw rate) and gated (vision validity) by the integrator | geometry in the camera's frame; only the camera measures it |
-| ego-lane HMM, road geometry, speed-limit / rules odometer, view | read the integrator's state (the odometer no longer integrates the model's speed) | |
-| mapd position EKF | **left in mapd; a source.** mapd keeps position, heading and map matching and relays the raw `gnss` to the integrator. | Position needs the map (cross-track updates while dead reckoning) and lives upstream of the api. Its speed input is the same vehicle speed. Open: with `vision_odometry` on, mapd should honour the vision verdict (it has no vehicle feed in that case, so only the self monitor applies). |
-| modeld online calibrator | left in modeld; its state is reported next to the vision verdict | It needs an outside speed to judge "fast"; that needs an input path api -> modeld (not built). The integrator's verdict is what tells a consumer "the camera is not believable"; the calibrator cannot. |
+| `pe`, `pn` | position, local east / north (m) about an origin set by the first absolute fix | integrates speed along heading |
+| `psi` | heading, rad counter-clockwise from east; innovations wrapped (the filter is an error-state EKF on SE(2): the heading error is the small quantity) | integrates yaw rate |
+| `v` | speed along the heading, signed (m/s) | integrates `a` |
+| `a` | longitudinal acceleration (m/s2) | random walk, jerk PSD |
+| `w` | yaw rate, positive left (rad/s) | integrates `al` |
+| `al` | yaw acceleration (rad/s2) | random walk |
+| `z` | altitude (m) | integrates `v sin(th)` |
+| `th` | road grade (rad) | random walk |
+
+Everything else in the state belongs to a source and is **declared by the source** (`AuxState`: name, initial
+value and sigma, process: random walk with a PSD or first-order Gauss-Markov with a time constant). The core
+only appends them to the state vector and propagates them. This stack's sources declare:
+
+| source | calibration states (each estimated, each published with its std) |
+|---|---|
+| vehicle | speed scale `s_v` (CAN speed = (1 + s_v) v); gyro bias `b_g` and scale `s_g`; wheel-difference yaw scale `s_wy`; accelerometer offsets `b_ax` (longitudinal, with grade), `b_ay` (lateral: bank and bias) |
+| vision | time delay `tau` (the image pair, prior 0.125 s); speed scale `s`; a Gauss-Markov error `m` of the speed (the error correlated over seconds: a coloured-noise state instead of pretending the error is white); mount yaw and pitch against the calibration in use (`dyaw`, `dpitch`) |
+| gnss | time delay `tau` (prior 2 s, sigma 1.5 s) |
+| map match | none |
+| radar (each) | mount yaw misalignment `dyaw`; time delay `tau` |
+
+Observability, stated rather than assumed: `s_v` is observable only against an absolute source (GNSS
+positions over distance, a radar's stationary targets); with neither it keeps its prior and says so through
+its std. `b_ax` and `th` are separable only with an altitude source: without one their sum is observable and
+the published grade carries the bias prior as uncertainty. The absolute yaw scale is split between `s_g`,
+`s_wy` and the camera by their priors until a heading reference (GNSS track over turns, map bearing) decides.
+Time delays are observable only under excitation (acceleration for a speed delay, speed for a position
+delay); their process noise is tiny and the std says how far they are known.
+
+**Time delays as states.** A measurement stamped `t` by a source with delay `tau` is `h(x(t - tau))`. It is
+inserted into the buffer at `t - tau_hat` (the current estimate) and its Jacobian carries
+`dh/dtau = -H f(x)` (the state's rate), so the filter corrects `tau` whenever the state moves.
+
+**Camera mounting.** `pose.vy`, `pose.vz` are measurements of `v` times the direction of travel in the device
+frame, `dyaw` and `dpitch` (plus the yaw-rate lever arm of the camera ahead of the rear axle). They are used
+only at speed, with the *integrator's* speed (not the camera's), and only while the camera is not faulted:
+the calibrator's blind spot (it judged "fast enough" by the camera's own motion sense) is closed by
+construction. Published as `calibration.vision`: angles, std, `state` (`converging`, `ok`, `moved` when the
+windowed innovations say the mount jumped, `unknown` while the camera is faulted).
+
+**Standstill** (vehicle: speed and every wheel exactly 0) is a set of exact pseudo-measurements (`v`, `a`,
+`w`, `al` = 0): the gyro then measures its bias, the accelerometer its offset plus grade.
+
+## 3. The ego estimator: measurements
+
+Every measurement is a scalar row: value, sigma, time of validity, and a function `h(x) -> (prediction,
+sparse Jacobian)` supplied by the source's model. Rows carry a noise class:
+
+* `exact`: applied as is (vehicle speed, standstill).
+* `robust`: heavy-tailed source. The update is a Student-t / Huber re-weighting: the row's variance is
+  inflated by `max(1, (|nu| / (k sqrt(S)))^2)`-type factor, so a wild sample moves the state by a bounded
+  amount instead of being either believed or thrown away; beyond a hard gate (chi-square 0.9999) it is not
+  applied and counted. A robust row is only gated while an exact row anchors the same quantity (L37's lesson:
+  a lone camera must be followed, not locked out by its own filter).
+* `monitor`: not fused (a witness); it feeds the monitors only.
+
+| source | rows (noise) |
+|---|---|
+| vehicle | speed `(1+s_v) v` (0.03 + 0.002 v, exact); gyro `(1+s_g) w + b_g` (0.004 + 0.03 abs(w)); rear wheel difference `(1+s_wy) w` (0.02 + 0.05 abs(w), robust); accelerometer long `a + g sin(th) + b_ax` (0.25); lateral `v w + b_ay` (0.5); standstill rows; mean wheel speed (monitor); warm-up after a feed silence (L37) |
+| vision | speed `(1+s) v + m` at `t - tau` (max of characterised and stated sigma for the white part, robust); yaw rate `w` (0.007 + 0.25 abs(w), robust); `vy`, `vz` (mount rows, robust, at speed) |
+| gnss | position east, north at `t - tau` (hacc x adaptive scale, robust); course while moving straight (robust, 15 degrees); altitude (robust); speed field (monitor) |
+| map match | cross-track distance to the matched road = 0 (sigma: lane geometry, at least 2.5 m, robust); heading = road bearing while moving (8 degrees, robust); only when matched, not ambiguous, confidence >= 0.5 |
+| radar | ego speed and yaw rate from the range rates of stationary detections (robust fit per scan; section 6) |
+
+**Adaptive noise.** A source whose stated accuracy is not to be believed (the head unit's `hacc`) gets a scale
+on its variance from its own windowed normalised innovations (innovation-based adaptive estimation), bounded
+(1-8) and published.
+
+**Correlated sources.** Two measurements derived from the same physical sensor (mean wheel speed and the CAN
+speed) are never both fused: one is fused, the other monitors (family rule, L37). Errors correlated in time
+are modelled by Gauss-Markov states (camera speed). Where the object layer fuses two tracks of unknown
+cross-correlation (track-to-track across sensors that share the camera's ego motion) it uses covariance
+intersection (section 6).
 
 ## 4. Time
 
-* One clock: the phone's CLOCK_MONOTONIC (`ts_mono_ns`) on every input. Each source spec carries the offset
-  from its stamp to the time of validity (vision pose: -0.125 s; vehicle: 0; GNSS: unknown 0-8 s, which is why
-  it is a witness over long windows only).
-* Arrival order is not time order: buffer, insert, re-run (section 2). A measurement older than the horizon
-  (2 s) is counted as `late` and used by the monitors only.
-* **Epochs.** The clock restarts at boot and a replay may join sessions: when any source's stamp goes back by
-  more than 2 s the integrator starts a new epoch: buffers, filters and monitor windows are dropped, verdicts
-  are kept as `carried` (a fault survives; `ok` falls back to `unchecked`), `epoch` in the output counts up.
-  A smaller step back is an out-of-order message of that source and is dropped (counted). A jump forward
-  needs no rule: everything older goes stale and leaves the 2 s buffer.
-* The state is published for a time of validity (the frame time), never predicted to "now"; a consumer that
-  needs "now" has the std and the derivative.
-* Prediction beyond the newest measurement of a quantity is marked `mode: "coast"` with `age_s`; after
-  `max_coast_s` (1 s for speed and yaw rate) the quantity is `valid: false, reason: "no_measurement"`.
+* **Clocks.** Every input is stamped on the phone's CLOCK_MONOTONIC, which restarts at boot. A source whose
+  stamp steps back by more than 2 s starts a new **epoch**: the buffer, the monitors' windows and the tracks
+  are dropped, the calibration states (biases, scales, delays, mount) and their covariance are kept, faults
+  are carried, the position keeps its value with its uncertainty inflated by the unknown time parked.
+  Wall-clock time is never used for ordering.
+* **Buffer and out-of-sequence measurements.** Measurements are kept in a time-ordered buffer (horizon 10 s:
+  the receiver's fixes are seconds old). A late one is inserted at its time of validity and the filter is
+  re-run from there with every later measurement re-applied: the exact solution of the out-of-sequence
+  problem (the same result as if it had arrived in order), which the approximate one-step algorithms
+  (Bar-Shalom's A1/B1) only approach. Cost: one re-run of at most the lag times the input rate, per late
+  measurement; measured in the report. Older than the horizon: dropped and counted.
+* **Output time.** The state for a frame is the **fixed-lag smoothed** state at the frame's time of validity
+  given everything that has arrived (a Rauch-Tung-Striebel pass over the entries newer than the frame, at
+  most 0.6 s): by the time a road message arrives, vehicle samples on both sides of its frame time exist.
+  Nothing is delayed for it and nothing is predicted to "now": measurement topics refer to the frame.
+* **Linearisation.** The process model is mildly non-linear (heading into position); the re-run re-linearises
+  at the current estimate on every pass (an iterated fixed-lag filter in effect).
 
-## 5. Output contract
+## 5. Fault detection and isolation
 
-Topic `ego_state`, one per `road` message, stamped with the frame time (and at the vehicle's rate while the
-camera is silent for more than 0.3 s):
+Three layers, because each catches what the others cannot:
 
-```
-{"type":"ego_state","seq":N,"ts_mono_ns":T,"ts_real_ns":...,"epoch":0,
- "speed":    {"value":12.31,"std":0.02,"valid":true,"reason":null,"mode":"fused","age_s":0.04,
-              "sources":["vehicle.speed","vision.pose"]},
- "accel":    {... same shape, m/s2},
- "yaw_rate": {... same shape, rad/s, positive LEFT},
- "standstill": {"value":false,"for_s":0.0,"source":"vehicle"},
- "signals":  {"turn_signal":{"value":null,"age_s":null},"brake":{"value":false,"age_s":0.2}},
- "sources":  {"vehicle":{"state":"ok","reason":null,"age_s":0.04,"rate_hz":9.8,"tag":"prius-can"},
-              "vision": {"state":"fault","reason":"speed disagrees with vehicle (ratio 0.09, 96 % of 62 frames beyond 4 sigma); own speed std 7.1x its normal",
-                         "since_s":412.0,"isolation":"rank","age_s":0.0,"rate_hz":12.8,"usable":false},
-              "gnss":   {"state":"unchecked", ...}},
- "checks":   [{"a":"vehicle","b":"vision","quantity":"speed","verdict":"disagree","n":62,"share":0.96,
-               "ratio":0.09,"evidence_s":5.0}, {"a":"vision","kind":"self", ...}, ...],
- "rejected": {"vision.pose":3}, "late": {}}
-```
+1. **Raw pair monitors** (L37, kept): two sources' raw measurements of one quantity at a common time,
+   normalised by their *characterised* sigmas, over 5 s of evidence. Never against the fused state (the
+   dominant source would test itself). A disagreeing pair faults the lower-ranked source unless independent
+   sources side with it against the higher one: with three or more independent sources of a quantity (vehicle,
+   camera, a radar's ego speed) the isolation is a **vote**, and a wrong *vehicle* speed is isolated too.
+   Groups that share sensors form a family and cast one vote.
+2. **Self monitors** (L37, kept): a source's stated uncertainty against its characterised one.
+3. **Innovation consistency (NIS)** of every fused row class per source: the windowed mean of
+   `nu^2 / S` against its chi-square bounds. It adapts noise where the source allows it (GNSS), marks a
+   source `suspect`, and for sources with no raw pair (position, heading, mount angles) it is the fault
+   detector: a persistent excess faults the source if a higher-ranked one anchors the quantity.
 
-Derived measurement topics (`lead`, `lanes`, and the display channel `view`) gain
+A faulted source leaves the estimate at once (the buffer is re-run without it), its calibration states freeze,
+its detections leave the object layer, and everything made from it goes out `valid: false` with the reason.
+Recovery needs evidence of agreement (hysteresis as in L37). Faults survive epochs and restarts (carried).
 
-```
-"valid": true | false, "reason": null | "vision: <the fault's reason>" | "ego speed unknown: ...",
-"inputs": {"vision":"ok","vehicle":"ok"}          # the health of what the product was made from
-```
+## 6. The object layer
 
-and when `valid` is false they carry no value: `lead.present` false with `mode: "none"`, every lane line
-`present` false, `view` without lead and lines and with `integrity.valid` false. "Unchecked" is not invalid:
-a car without a vehicle feed behaves as before and says `inputs.vision: "unchecked"`. Raw `road` stays a
-source's raw output on /ws; a consumer that reads it takes its validity from `ego_state.sources.vision`.
+**Track state** in the car frame (x forward, y left, origin the reference camera; z ignored):
+`[x, y, vx, vy, ax]`, the target's position relative to the car and its velocity and longitudinal acceleration
+*over the ground*, expressed in the car's axes. Process: the car's own motion from the ego estimator at that
+time is the input,
 
-## 6. Where it runs, cost
+    x' = vx - v_ego + w y      y' = vy - w x      vx' = ax + w vy      vy' = -w vx      ax' = -ax / tau + noise
 
-Inside the api process, called from the fan-out (`state.py`) before the trackers; the same class is driven by
-`tools/replay_lib.py`. Inputs: the sockets the api already has, plus raw `gnss` relayed by mapd on `ego.sock`.
-Budget: a handful of 2x2 / 3x3 updates per message and one smoothing pass per frame; measured cost in the
-L37 report. It is not shed by the load governor: it is the cheapest part of the measurement chain and what
-makes the rest trustworthy.
+so "we both stand" and "the gap closes" are different hypotheses (the lead filter's insight, kept), a turn
+of the car does not look like lateral motion of the target, and the ego speed's uncertainty enters the
+position's. A track in the standing regime (car and target stand) switches its process noise and is watched
+by a CUSUM on its speed (the lead filter's measured behaviour: the `departed` cue).
 
-Stand-alone use: every tracker that is not handed an ego state builds a private integrator and feeds it the
-same messages (`integrator.LocalEgo`), so a tracker in a test or a tool runs the same code path as in the api.
+**Sensors are models, not code paths.** An object source supplies per message a scan: time of validity
+(minus its estimated delay), detections, and a sensor model with
+`h(track) -> z, H`, `R(det)`, `initiate(det) -> track`, `p_detect(track)` (field of view, range, occlusion),
+clutter density, the association gate, and its life-cycle policy. The core does association and bookkeeping
+only. Built in this lane:
 
-## 7. Replay and tests
+| object source | measurement | notes |
+|---|---|---|
+| camera lead (`road.leads`) | x, y, relative speed along x | reports at most the model's own lead hypotheses; noise and evidence rules are the lead filter's measured ones (L14, L27, L29, L32) |
+| radar (front; any mount) | range, azimuth, range rate (non-linear `h`, EKF) | many detections per scan, clutter, multipath ghosts; stationary detections also give the ego speed |
+| second camera (any mount) | bearing-dominant x, y in its own frame | detections converted through its mount |
 
-* `tools/integrator_replay.py`: sessions through the integrator alone (`detect`, `accuracy`, `cost`), through
-  the whole pipeline (`products` per frame into a file, of this checkout or of another one as the baseline;
-  `summary`, `compare`), and through the car computer's scene builder (`mfd`), with `--pos` joining the car's
-  trip-log GNSS by wall time for the sessions recorded before `gnss` was.
-* The recorder now writes `road_model` (and the other scalar keys the trackers read), raw `gnss`, `ego_state`,
-  and `ego` at 20 /s; `replay_lib.read_session(..., road_model=...)` restores the model name for sessions
-  recorded before.
-* Unit tests (`api/tests/test_integrator.py`): filter against synthetic truth, out-of-order equals in-order,
-  smoothing, epochs, fault detection / isolation by rank and by vote / recovery, self monitor, staleness, a
-  radar-like source added by a spec and a model only; consumer tests for the invalid outputs.
+**Association.** Per scan: gates (chi-square on the innovation with the source's own extra rules), then a
+global nearest neighbour assignment (optimal assignment on the gated cost matrix; the scans here have at most
+tens of detections). A detection assigned to no track may start a tentative track (if its sensor may
+initiate). JPDA and MHT were considered and rejected for this sensor set (section 11).
 
-## 8. How a radar and a second camera plug in
+**Existence.** Each track carries an existence probability updated by Bayes per scan from the sensor's
+detection probability at the track's place and its clutter density (integrated probabilistic data
+association's existence recursion, with hard assignment): a hit multiplies the odds by
+`P_D L / lambda_c`, a miss inside the sensor's coverage by `1 - P_D`, a miss outside changes nothing.
+`tentative -> confirmed -> coast -> deleted` are thresholds on it together with the source's policy (the
+camera's measured acquire / weak-evidence / coast rules are that source's policy).
 
-A front radar (object list with range, azimuth, range rate; relayed as `objects`):
-1. `SourceSpec(id="radar_front", group="radar_front", rank=2, ...)` and a measurement model that yields
-   (a) an **ego speed** measurement from its stationary targets (the mode of -range_rate / cos(azimuth)), which
-   joins the speed pair monitors as a third ranked group: with it a wrong vehicle speed is isolated by vote,
-   and the camera is checked on cars without a CAN feed; (b) its **objects** for the object layer.
-2. Nothing changes in the consumers: they read `ego_state` and the lead; the lead's `inputs` gains `radar_front`.
-A second radar is another spec with its mount; a rear one contributes ego speed with the sign turned.
+**Cross-sensor consistency.** Tracks started by different sensors that are statistically the same object
+(position and velocity within a gate for 0.3 s) are merged by covariance intersection and keep the older id.
+Per sensor pair the layer keeps the residual statistics of jointly seen tracks: camera range against radar
+range (the camera's range scale, applied to the camera's measurements while a radar taught it: L14's
+`vision_scale`), radar azimuth bias (the radar's mount yaw state). Ghost rules: a radar track at about twice
+the range and twice the range rate of a nearer one on the same bearing is marked `ghost` (double bounce); a
+track seen only by one radar, never moving, is `stationary` and not a lead candidate on its own.
 
-A second camera (another modeld instance publishing `road` with a `camera` id): another spec in group
-`vision:<id>` with the same pose model. Its speed and yaw rate join the monitors (two cameras that agree
-outvote a vehicle feed; one that disagrees is isolated by vote without any vehicle data), and its detections
-enter the object layer through its mount transform. Products name the camera they depend on.
+**The lead** is the nearest confirmed, non-ghost track on the path. The path is the road model's plan while
+the camera is usable, else the arc of the ego state (`v`, `w`). A track designated by the camera's lead
+output is on the path by the model's own judgement; a radar-only track is on the path when its lateral offset
+from the path is inside the corridor and it moves or has moved. The `lead` output keeps every field the api
+served (`present`, `mode`, `standing`, `departed`, events, raw `vision`, `radar`, `vision_scale`) plus
+validity and sources.
 
-What is general and what is not: the registry, buffer, filters, monitors and isolation know nothing about
-cars or cameras. The measurement models and their noise numbers are this car's and this model's (0x0B4 speed,
-the 200 ms pair, `vx_std` semantics); they live in `integrator/sources.py` and are meant to be measured again
-per source, not abstracted.
+**Out-of-sequence scans.** The layer runs on scan time. A scan older than the layer's time by less than
+0.3 s is applied with the track retrodicted to the scan's time by its own velocity (one-step retrodiction);
+older scans are dropped and counted.
 
-## 9. Limits known at design time
+## 7. Extensibility: what "adding a sensor" is
 
-* Thresholds rest on two healthy drives with a vehicle feed (about 14 min of moving evidence, no motorway, no
-  rain, no night) and one incident. The margins are wide (section 1); their tails are not known.
-* A camera that is wrong while the car stands (before the first metres of a drive) cannot be told from a
-  healthy one by motion: state `unchecked` until evidence arrives (the self monitor sometimes fires while
-  parked: it did on 153636, 17.5 s into the session). A fault is remembered across restarts (`carried`) so
-  that a drive that starts with yesterday's knocked camera starts as `fault`.
-* The self monitor rests on what this road model's `vx_std` did in one incident; another failure of the
-  camera may leave it calm. The pair monitor does not depend on it, but needs a vehicle feed.
-* Yaw rate: a disagreement between gyro and camera makes the camera `suspect`, not `fault` (the camera's yaw
-  rate is weak in turns on healthy drives too); it never fired on the recordings, also not in the incident.
-* A vehicle speed that is wrong with no second ranked source: the camera is blamed (rank), the product goes
-  unknown. That errs to the safe side but names the wrong culprit; the reason text says "isolated by rank".
+A file in `roadsense_integrator/sources/` (or outside the package) that defines:
+
+1. an **input description**: message types, group, rank, family, staleness;
+2. a **measurement model**: message -> ego measurement rows and / or an object scan with its sensor model;
+3. **mount and calibration**: a `Mount` (position, yaw in the car frame) and the `AuxState`s it wants estimated;
+
+and one `register()` call (or a line in `integrator.json`). No change to `core/` or to any consumer: tracks
+carry `sources`, the health table grows a row. Proven in the commit history of this lane: the front radar,
+the second radar and the second camera were each added by commits that touch `sources/`, `sim/`, tests and
+tools only.
+
+## 8. Output contract (`contract.py`; ARCHITECTURE.md has the field tables)
+
+Three messages per road frame (and per vehicle sample while no camera frames arrive), all stamped with the
+frame's `ts_mono_ns` = time of validity:
+
+* **`ego_state`** (api 3; a superset of L37's): `speed`, `accel`, `yaw_rate`, `position` (lat, lon, local
+  east / north, covariance, `hacc_m`), `heading`, `grade`, `odometer_m`, `standstill`; each quantity
+  `{value, std, valid, reason, mode: fused | coast | none, age_s, sources}`. `calibration`: per source every
+  estimated bias / scale / delay / mount angle with std and state. `sources`: per group `state` (`absent |
+  stale | unchecked | ok | suspect | fault`), `usable`, reason, isolation rule, age, rate, NIS. `checks`: every
+  monitor's verdict. `signals`: pass-through values with age. Counters (late, dropped, rejected).
+* **`tracks`**: `frame: "car"`, every track with id, `state` (`tentative | confirmed | coast`), `exist`,
+  position / velocity / acceleration with std, `age_s`, `meas_age_s` per source, `sources`, `flags`
+  (`standing`, `ghost`, `stationary`, `on_path`), and per-sensor health of the object sources.
+* **`lead`**: section 6.
+
+Rules: `valid: false` always carries a `reason`; a value that is not a fresh fusion is marked (`mode: coast`,
+`meas_age_s`); nothing is held. Display smoothing stays in `view` (downstream).
+
+## 9. Process layout, the hop, consumers
+
+**Deployment on the phone: its own daemon**, `roadsense-integratord` (`python3 -m roadsense_integrator`),
+unit `roadsense-integrator.service`. It reads `modeld.sock` (`road`, `calib`), `ego.sock` (`ego`, `gnss`),
+`vehicle.sock` (`vehicle`, radar and camera scans relayed by mapd), `mapd.sock` (`map`), and serves
+`integrator.sock` (JSON lines, the stack's convention). The api reads `integrator.sock` and pairs each `road`
+message with the `ego_state` / `tracks` / `lead` of the same `ts_mono_ns` before its trackers run; when the
+integrator does not answer within the deadline the products of that frame go out `valid: false`, reason
+`integrator_timeout` (never a silent fallback to raw inputs). mapd reads the integrator's position for its
+matcher.
+
+**The cost of the hop, and its solution.** L37 kept the integrator in the api because a second process parses
+the 5.8 kB `road` message a second time. The integrator needs about 1 kB of it (stamps, `pose`, `leads`,
+`plan`): the daemon's reader does not parse the line, it cuts the fields it needs out of the bytes
+(`fastjson.pick`: key search at depth 1 and a parse of those values only; a full parse as the fallback) and
+parses nothing else. Outputs are compact (`ego_state` about 2 kB, `tracks` about 0.3 kB per track). Measured
+cost and added latency: report.
+
+**Library.** `Integrator` is the same object without sockets: `tools/replay_lib.py` and the tests feed it
+messages; `api` can run it in-process (`integrator: "inproc"`, the default where no daemon runs: other cars,
+replays, tests) with identical outputs.
+
+**Consumers.** Every api tracker reads `ego_state` (L37's helper functions keep their signatures); the `lead`
+topic is the integrator's lead; `view`, `fused`, `signctx`, the MFD read the same messages as before
+(additive fields; `api` 3 for `ego_state`). Without a vehicle feed or GNSS the estimator runs on what
+exists: camera-only cars get vision-only ego motion marked `unchecked`, relative position only, tracks from
+the camera, and every output says which sources it stands on.
+
+**mapd.** The position is estimated once, in the integrator. mapd keeps the map matcher (it owns the map) and
+loses its position filter as the authority: with `position_source: "integrator"` it matches the integrator's
+position and publishes `map` as before; `map.match` returns to the integrator as a constraint measurement.
+The loop is not incestuous because what returns is the *map's geometry* (cross-track to a road, the road's
+bearing), not the position that was sent; lock-in on a wrong road is bounded by the robust weighting, by
+using only unambiguous matches, and by the NIS monitor against the receiver. Until mapd is switched, the
+integrator takes `map.match` from mapd's own filter (as built: report).
+
+## 10. Simulator and test plan
+
+`roadsense_integrator/sim/`: a world with known truth (ego trajectory with speed, curvature, grade profiles;
+vehicles with lane offsets and speed profiles, cut-ins, a standing queue; roadside stationary objects) and
+sensor models that emit the stack's real message types with noise, bias, scale, latency, jitter, drop-outs
+and faults (vehicle feed silences with stale resumes, a knocked camera, a wrong vehicle speed scale, GNSS
+lag / outage / jumps, radar clutter and double-bounce ghosts, a radar blackout). `sim/inject.py` adds
+synthetic radars and a second camera to a *real* recording, derived consistently from it (the car's own
+motion from the CAN speed and gyro, targets from the non-causally smoothed lead of the recording).
+
+Shown (commands in the report): ego accuracy and NEES / coverage against simulated truth and against
+held-out real sources (position against fixes not yet used; speed with the vehicle held out); delays, scales
+and mount angles converging to simulated truth and to plausible values on the car; the incident detected and
+its products unknown; isolation by vote with three sources (simulation, and injected radar on real drives:
+camera fault and vehicle-speed fault); lead and lanes on the good drives against L37 frame by frame; tracks
+against simulated truth (continuity, id switches, false tracks, ghosts, position error) and with injected
+radar on real drives; behaviour under delays and drop-outs; CPU and memory.
+
+## 11. Machinery chosen, and what it was compared with
+
+* **EKF with error-state heading, sequential scalar updates** against a **UKF**: the only non-linearities are
+  heading into position and the radar's polar measurement, both mild at these update rates; the UKF's sigma
+  points cost 2n+1 propagations of a ~25-state vector per step for no accuracy gain here, and scalar
+  sequential updates make per-row robust weighting, gating and NIS accounting natural. An invariant EKF
+  (SE(2)) would improve consistency under large heading uncertainty at start; the heading starts unknown here
+  and is handled by a wide prior and wrapped innovations; noted as a possible refinement.
+* **Buffered re-run + fixed-lag RTS** against a **factor graph / sliding-window smoother** (GTSAM / iSAM2,
+  what a survey-grade fusion would use) and against **one-step OOSM updates**: the re-run is exact for
+  out-of-sequence data and re-linearises; a factor graph gives the same estimate for a linear-Gaussian window
+  and better ones under strong non-linearity, at the price of a sparse solver dependency and tens of ms per
+  solve in Python; openpilot's `locationd` (error-state EKF, buffered rewind for late measurements) is the
+  production precedent for the choice made here.
+* **Robust (Student-t / Huber) updates and chi-square gates** against plain gating: a gate alone discards
+  information and locks out a lone source; a heavy-tailed likelihood is the principled model of the camera's
+  measured tails.
+* **Coloured-noise states (Gauss-Markov)** against inflating R or flooring the std (L37's patch).
+* **IMM** (interacting multiple models): for the ego state the manoeuvre is measured directly at 10 Hz
+  (speed, gyro), so a second ego model has nothing to add. For targets the standing / moving switch with a
+  CUSUM change detector (quickest detection) is used; a full IMM over constant-velocity / constant-acceleration
+  target models is the alternative, not adopted because the measured lead filter already beats its own
+  earlier variants on the recordings and its two regimes are that switch.
+* **GNN association with existence probabilities (IPDA-style)** against **JPDA** (soft assignment: better in
+  dense clutter with unresolved targets, blurs well-separated road targets) and **MHT** (delayed decisions:
+  best for crossing targets, an order more code and CPU). The sensor set here gives sparse, well-separated
+  targets with strong range-rate discrimination.
+* **Covariance intersection** for track-to-track fusion of unknown correlation, against naive fusion (double
+  counting) and against keeping separate track lists (the consumer would have to associate).
+* **Consistency**: NEES on simulation and NIS on real data are part of the test suite, not an afterthought;
+  **FDI** uses parity between raw sources (pairs, vote) plus innovation monitoring.
+
+## 12. From L37: kept, replaced
+
+Kept: the source registry idea (input description + measurement model), families and ranks, the raw pair and
+self monitors (`monitors.py`, unchanged in logic), isolation by rank or vote, the insert-and-re-run buffer
+and fixed-lag smoothing (generalised from two linear channels to one EKF), the vehicle feed's warm-up rule,
+the vision standstill detector, the `ego_state` quantity format and the consumers' helper functions, the
+recorder and replay fixes, carried faults.
+
+Replaced: two decoupled linear channels -> one EKF with position, heading, grade and calibration states;
+GNSS as a non-fused witness -> positions fused with estimated delay and adaptive noise (the speed field stays
+a witness, for the measured reason in section 1); the std floor -> a coloured-noise state; no object layer ->
+section 6, with the lead tracker moved into it; a package inside the api -> a component with a daemon;
+position only in mapd -> position in the integrator, the map as a measurement.
+
+## 13. Limits known at design time
+
+* No 6-axis IMU: roll, bank and pitch dynamics are not states; bank hides in `b_ay`, grade and accelerometer
+  bias are separable only with altitude.
+* Sideslip is not modelled (no-slip kinematics): fine for town driving, wrong on ice.
+* The camera reports its lead hypotheses only (the recorder keeps `leads[0]`): multi-target evidence from the
+  camera on real recordings is limited to that; the multi-target machinery is exercised by the simulator and
+  the injected radars.
+* Thresholds of the monitors rest on the drives of one day (L37 section 6); the simulator covers what the car
+  cannot show, and no threshold is tuned to the drives without the report saying so.
+* Python + numpy: the cost on the phone is an estimate from laptop measurements until measured there.
