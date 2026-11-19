@@ -153,7 +153,8 @@ $PY /home/piotr/datasets/l33/scripts/dist_eval.py
    compromise), `cx`, `cy`, and `k1`, `k2` (`p1`, `p2`, `k3` = 0) as new flat keys that today's daemons ignore.
    The true focal is right where it matters most, around the vanishing point (far vehicles, the mount angles).
 2. The distortion does **not** explain a lead drawn a lane to the side far away: near the vanishing point it moves
-   points by 0.05-0.2 model pixels. That symptom is the yaw (section 3: 3.3-3.9 deg, which is 3.5-4.1 m at 60 m).
+   points by 0.05-0.2 model pixels. The yaw error has the size of that symptom (section 3: 3.3-3.9 deg, which is
+   3.5-4.1 m at 60 m); why it shows between the lead and the lane lines is lane L32's subject.
 3. It does matter away from the centre: up to 15 pixels at the corners of the narrow input and up to 43 on the
    wide input, i.e. near lane lines and everything the wide input sees at the sides. So the warp should handle it.
    **Specification for a later lane** (not implemented: `modeld/warp.cc` belonged to lane L32 today):
@@ -173,8 +174,13 @@ $PY /home/piotr/datasets/l33/scripts/dist_eval.py
 
 ## 3. Mount from driving
 
-**Method 1, the road model's motion** (openpilot `selfdrive/locationd/calibrationd.py`, `handle_cam_odom`; source
-not fetched in this lane, the method is as lane L32 also implements it in `modeld/calibrator.h`). The model's
+**Method 1, the road model's motion** (openpilot `selfdrive/locationd/calibrationd.py`, `handle_cam_odom`, read at
+tag v0.9.7: samples above 15 mph with a yaw rate below 2 deg/s and a sideways uncertainty below 0.25 deg; observed
+pitch `-atan2(z, x)`, yaw `atan2(y, x)` of the translation, composed onto the calibration in use; blocks of 100, 5
+needed; the mean of the blocks; a reset when the blocks span more than 2 deg in yaw or 4 deg in pitch). Differences
+here, for an offline tool that must state an error: medians instead of means, an acceleration gate, whole stretches
+instead of single samples, 0.5 deg for the model's uncertainty (0.25 passes little at the phone's rate, as lane L32
+found), and much tighter limits on the spread. The model's
 `pose` is the camera's velocity in the frame the calibration in use defines. Driving straight, its direction is the
 road direction, so `R_true = R_used . R(0, -atan2(vz, |vx, vy|), atan2(vy, vx))`. The result is absolute: it does
 not matter what calibration was in use. Samples are used when the speed is at least 6.7 m/s, the yaw rate at most
@@ -318,8 +324,8 @@ $PY tools/calib/mount.py ~/roadsense-rec/2026111[2678]-*          # all together
 
 * **Yaw: the camera looks 3.3-3.9 deg to the right of the car's direction of travel** (yaw negative), with the
   calibration file saying 0. The two methods agree on it within the expected shortfall of method 1. At 60 m that is
-  3.5-4.1 m sideways: one lane, to the right. This is the same finding as lane L32's (-3.4 deg), measured here a
-  second, model-free way.
+  3.5-4.1 m sideways: the width of one lane, the size of the owner's symptom. This is the same finding as lane
+  L32's (-3.4 deg), measured here a second, model-free way.
 * **Pitch: the camera did not keep its pitch between drives.** +1.3 deg on 12 Nov, -1.1 deg on the morning of
   17 Nov, +1.3 to +1.5 deg that afternoon and evening; both methods say so to 0.1 deg, and the bonnet sits at a
   different height in the pictures (and at yet another on 18 Nov, where there is no driving to measure). The yaw of
@@ -397,7 +403,7 @@ against it.
   0.06 deg, the road model's motion within 0.24 deg and inside the error it states.
 * The recorder's sessions are enough (messages at 13.5 a second plus one picture a second). On the car's recordings
   two independent methods agree: the camera looks **3.3-3.9 deg to the right** of the direction of travel while
-  `calib.json` says 0. That alone puts a vehicle at 60 m 3.5-4.1 m to the right: one lane.
+  `calib.json` says 0. At 60 m that angle is 3.5-4.1 m: one lane's width, the size of the owner's symptom.
 * The lens distortion is quantified and is not that cause: 0.05-0.2 pixel near the vanishing point, a few per cent
   on speed and lane width. The change that removes it is specified and costs nothing per frame.
 * The board page draws exactly OpenCV's board (pixel for pixel on a screen, 30.00 mm squares on paper).
