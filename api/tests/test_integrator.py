@@ -471,3 +471,52 @@ class RecorderFidelity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ApiState(unittest.TestCase):
+    """state.py: the integrator in the fan-out, the fault kept across restarts."""
+
+    def feed(self, st, t0, t1, bad):
+        rng = random.Random(4)
+        t = t0
+        while t < t1:
+            e = ego(t, 12.0)
+            st.on_message("mapd", e, json.dumps(e))
+            r = road(t + 0.05, (0.15 if bad else 1.0) * 12.0 + rng.gauss(0, 0.3), lead=(5.0, 0.3) if bad else (30.0, 12.0))
+            st.on_message("modeld", r, json.dumps(r))
+            t += 0.1
+
+    def test_topics_and_carried_fault(self):
+        from roadsense_api.state import State
+        with tempfile.TemporaryDirectory() as d:
+            old = os.environ.get("ROADSENSE_CONFIG_DIR")
+            os.environ["ROADSENSE_CONFIG_DIR"] = d
+            self.addCleanup(lambda: os.environ.pop("ROADSENSE_CONFIG_DIR", None) if old is None
+                            else os.environ.__setitem__("ROADSENSE_CONFIG_DIR", old))
+            st = State(d, datadir=d)
+            seen = []
+            st.subscribers.add(lambda topic, line: seen.append(topic))
+            self.feed(st, 0.0, 6.0, bad=False)
+            i = len(seen) - 1 - seen[::-1].index("road")
+            self.assertEqual(seen[i:i + 5], ["road", "ego_state", "lead", "lanes", "view"])       # per frame, in this order
+            self.assertTrue(st.latest["lead"]["present"] and st.latest["lead"]["valid"])
+            self.assertEqual(st.health()["integrator"]["faults"], [])
+            self.feed(st, 6.0, 12.0, bad=True)
+            self.assertEqual(st.health()["integrator"]["faults"], ["vision"])
+            self.assertEqual((st.latest["lead"]["present"], st.latest["lead"]["valid"]), (False, False))
+            self.assertFalse(st.latest["view"]["integrity"]["valid"])
+            saved = json.load(open(os.path.join(d, "integrator.json")))
+            self.assertIn("vision", saved["faults"])
+            # the next run (the car was parked): the camera starts faulted, and a standing phantom lead is not tracked
+            st2 = State(d, datadir=d)
+            e = ego(100.0, 0.0)
+            st2.on_message("mapd", e, json.dumps(e))
+            r = road(100.05, 0.0, lead=(5.0, 0.0))
+            st2.on_message("modeld", r, json.dumps(r))
+            v = st2.latest["ego_state"]["sources"]["vision"]
+            self.assertEqual((v["state"], v["isolation"]), ("fault", "carried"))
+            self.assertEqual((st2.latest["lead"]["present"], st2.latest["lead"]["valid"]), (False, False))
+            # it drives and the camera agrees again: cleared, also on disk
+            self.feed(st2, 101.0, 112.0, bad=False)
+            self.assertEqual(st2.latest["ego_state"]["sources"]["vision"]["state"], "ok")
+            self.assertEqual(json.load(open(os.path.join(d, "integrator.json")))["faults"], {})
