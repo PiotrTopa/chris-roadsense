@@ -132,6 +132,15 @@ def assign(cost):
     n, m = cost.shape
     if n == 0 or m == 0:
         return []
+    fin = np.isfinite(cost)
+    if not fin.any():
+        return []
+    # the common case on a road: no two tracks compete for a detection. Then each row's best column is the
+    # optimum and the cubic algorithm is not needed
+    rows = np.nonzero(fin.any(axis=1))[0]
+    best = np.where(fin[rows], cost[rows], np.inf).argmin(axis=1)
+    if len(set(best.tolist())) == len(best) and (fin[:, best].sum(axis=0) == 1).all():
+        return [(int(i), int(j)) for i, j in zip(rows, best)]
     big = 1e6
     c = np.where(np.isfinite(cost), cost, big)
     k = max(n, m)
@@ -287,33 +296,43 @@ class ObjectLayer:
         nt, nd = len(tracks), len(dets)
         cost = np.full((nt, nd), np.inf)
         pred = []
+        if nd:
+            Z = np.array([d.z for d in dets])
+            Rm = np.array([d.R if d.R.ndim == 1 else np.diag(d.R) for d in dets])
+            Rmean = Rm.mean(axis=0)
         for i, tr in enumerate(tracks):
             xs = tr.x if late == 0.0 else self._retro(tr, late, ego)
-            if model.coverage(xs) <= 0.0:
+            if nd == 0 or model.coverage(xs) <= 0.0:
                 pred.append(None)
                 continue
             zp, H = model.h(xs, ego)
             PHt = tr.P @ H.T
-            pred.append((zp, H, PHt))
-            for j, d in enumerate(dets):
-                R = d.R if d.R.ndim == 2 else np.diag(d.R)
-                S = H @ PHt + R
-                nu = model.residual(d.z, zp)
-                try:
-                    d2 = float(nu @ np.linalg.solve(S, nu))
-                except np.linalg.LinAlgError:
-                    continue
-                if d2 <= c["gate_chi2"] and model.gate(tr, d, nu, S, d2):
-                    cost[i, j] = d2 + math.log(max(np.linalg.det(S), 1e-12))
+            S0 = H @ PHt
+            pred.append((zp, H, PHt, S0))
+            # one innovation covariance per track (the scan's mean noise) for the gate; the update uses each
+            # detection's own
+            S = S0 + np.diag(Rmean)
+            try:
+                Si = np.linalg.inv(S)
+            except np.linalg.LinAlgError:
+                continue
+            ld = math.log(max(np.linalg.det(S), 1e-12))
+            NU = np.array([model.residual(z, zp) for z in Z]) if model.residual.__func__ is not SensorModel.residual \
+                else Z - zp
+            D2 = np.einsum("ij,jk,ik->i", NU, Si, NU)
+            for j in np.nonzero(D2 <= c["gate_chi2"])[0]:
+                if model.gate(tr, dets[j], NU[j], S, float(D2[j])):
+                    cost[i, j] = D2[j] + ld
         hit = set()
         for i, j in assign(cost):
             tr, d = tracks[i], dets[j]
-            zp, H, PHt = pred[i]
+            zp, H, PHt, S0 = pred[i]
             R = d.R if d.R.ndim == 2 else np.diag(d.R)
-            S = H @ PHt + R
+            S = S0 + R
             nu = model.residual(d.z, zp)
-            K = np.linalg.solve(S, PHt.T).T
-            d2 = float(nu @ np.linalg.solve(S, nu))
+            Si = np.linalg.inv(S)
+            K = PHt @ Si
+            d2 = float(nu @ Si @ nu)
             tr.x = tr.x + K @ nu
             P = tr.P - K @ S @ K.T
             tr.P = 0.5 * (P + P.T)
@@ -487,14 +506,17 @@ class ObjectLayer:
                 continue
             off, by = self.path_offset(tr.x[X], tr.x[Y], w, v_e)
             tr.mem["path_offset"] = off
-            desig = tr.designated is not None and (tr.mem.get("policy") or {}).get("alive")
-            on = desig or abs(off) <= c["corridor_m"] + c["corridor_rel"] * tr.x[X]
+            pol = tr.mem.get("policy") or {}
+            desig = tr.designated is not None and pol.get("alive")
+            # a camera's designation puts the track on the path by the model's own judgement, while the camera
+            # has current evidence of it; a track only other sensors still see is judged by the path
+            on = (desig and pol.get("fresh", True)) or abs(off) <= c["corridor_m"] + c["corridor_rel"] * tr.x[X]
             if on:
                 tr.flags.add("on_path")
             if tr.state == "tentative" or "ghost" in tr.flags or not on:
                 continue
-            if not desig:
-                if not c["lead_radar_only"] or tr.hits < c["lead_min_hits"] or tr.exist < c["lead_min_exist"]:
+            if not (desig and pol.get("fresh", True)):
+                if not desig and (not c["lead_radar_only"] or tr.hits < c["lead_min_hits"] or tr.exist < c["lead_min_exist"]):
                     continue
                 if "stationary" in tr.flags and not tr.moved:
                     continue               # a range sensor's stationary return alone is not a vehicle ahead

@@ -182,7 +182,10 @@ class CameraLeadModel(SensorModel):
         if g is not None and kind == "acquired" and (ts - g["ts"]) <= c["reacquire_s"] * NS:
             pred = g["x"] + (g["v"] - v_ego) * (ts - g["ts"]) / NS
             same = abs(z["x"] - pred) <= max(c["reacquire_tol_m"], c["reacquire_tol_rel"] * max(pred, 0.0))
-        relocate = (not same and kind in ("changed", "cut_in") and old is not None and c["relocate_v_tol"] is not None
+        # (a track another sensor holds is never moved to the camera's distance: the camera lets it go and takes
+        # what is there, which is the same track when the jump was the camera's own range error)
+        relocate = (not same and self.other is None
+                    and kind in ("changed", "cut_in") and old is not None and c["relocate_v_tol"] is not None
                     and z["v_rel"] is not None and abs(vl - old[0]) <= c["relocate_v_tol"]
                     and abs(z["y"] - old[1]) <= c["relocate_y_tol"])
         T = ts / NS
@@ -223,13 +226,13 @@ class CameraLeadModel(SensorModel):
         self.version += 1
         self.event = {"kind": kind, "ts_mono_ns": ts, "track_id": tr.id}
 
-    def _adopt(self, layer, z, T):
+    def _adopt(self, layer, z, T, exclude=None):
         """A track another sensor already holds where the camera's lead is: the camera designates that one."""
         c = self.cfg
         gx = max(c["adopt_gate_m"], c["adopt_gate_rel"] * z["x"])
         best = None
         for tr in layer.tracks:
-            if tr.designated is not None or tr.state == "tentative" or "ghost" in tr.flags:
+            if tr is exclude or tr.designated is not None or tr.state == "tentative" or "ghost" in tr.flags:
                 continue
             dx, dy = abs(tr.x[X] - z["x"]), abs(tr.x[Y] + z["y"])
             if dx > gx or dy > c["adopt_gate_lat_m"]:
@@ -321,6 +324,20 @@ class CameraLeadModel(SensorModel):
         v_ego, stands, src = ego_of(layer.es, c["ego_stop_confirm_s"])[:3]
         cur = self.cur
         self.other = self._has_other(cur, T) if cur is not None else None
+        if cur is not None and self.other is None:
+            # the camera's own track and another sensor's track of the same vehicle (they started apart by the
+            # camera's range error): the camera designates the other one, which keeps this track's id
+            o = self._adopt(layer, {"x": float(cur.x[X]), "y": -float(cur.x[Y])}, T, exclude=cur)
+            if o is not None:
+                layer.tracks.remove(cur)
+                o.id = cur.id
+                o.designated, o.state, o.standing = self.src, "confirmed", cur.standing
+                o.sources.add(self.src)
+                o.last_seen[self.src] = cur.last_seen.get(self.src, T)
+                o.mem["policy"] = cur.mem.get("policy")
+                o.t0 = min(o.t0, cur.t0)
+                cur = self.cur = o
+                self.other = self._has_other(cur, T)
         # the camera's distance on the scale a range sensor taught (docs/lanes/L14-lead.md)
         vs = self.vis_scale
         scale = vs[0] if vs is not None and ts - vs[2] <= c["scale_keep_s"] * NS and vs[1] >= c["scale_min_n"] else None
@@ -360,7 +377,8 @@ class CameraLeadModel(SensorModel):
             self._step(layer, zm if usable else None, v_ego, stands, ts, dt, weak)
         cur = self.cur
         if cur is not None:
-            cur.mem["policy"] = {"alive": True, "state": "confirmed" if self.mode == "track" else "coast"}
+            cur.mem["policy"] = {"alive": True, "state": "confirmed" if self.mode == "track" else "coast",
+                                 "fresh": self.evidence != "none" or self.other is None}
             cur.standing = self.stand is not None
 
     def _accumulate(self, z, ts):

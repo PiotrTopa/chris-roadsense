@@ -512,8 +512,9 @@ class Integrator:
         return float(self.x_now[E.V]), math.sqrt(max(float(self.P_now[E.V, E.V]), 0.0))
 
     def ego_at(self, t):
-        """(v, w, sigma_v, known) at time t for the object layer's prediction (smoothed)."""
-        sm = self.ekf.at(t)
+        """(v, w, sigma_v, known) at time t for the object layer's prediction between frames (the filtered
+        state: scans come many times a frame, and the frame's own output is the smoothed one)."""
+        sm = self.ekf.filtered(t)
         if sm is None or sm[1][E.V, E.V] > 100.0:
             return 0.0, 0.0, 0.0, False
         x, P = sm
