@@ -1,6 +1,8 @@
 """The plug-in transformers of the chris stack (the plug-in contract: `chris_integrator.mixer.plugin`).
 
     estimator        vehicle, GNSS, road-model pose, map match, radars, cameras' objects -> `ego_state`, `tracks`, `lead`
+    mapper           `ego_state` -> `map` (map match as a measurement for the estimator + map context); the box
+                     itself is the separate component chris-mapper (in-process or out of process)
     lanes            `road` + `ego_state` (+ `map` prior) -> `lanes`
     egolane          `lanes` + `map` -> ego lane estimate (wiring: `egolane`)
     roadgeom         `lanes` + `map` -> fused road geometry (wiring: `roadgeom`, shown as `view.road`)

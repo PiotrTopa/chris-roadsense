@@ -8,7 +8,7 @@ Everything here is configuration of the mixer; nothing here is needed to use the
 
 Configuration: one JSON file per plug-in in the configuration directory, named after the plug-in
 (`integrator.json` for the estimator, `lead.json`, `lanes.json`, `egolane.json`, `roadgeom.json`, `view.json`,
-`lights.json`, `rules.json`, `fused.json`, `rates.json`), and `mixer.json` for the wiring:
+`lights.json`, `rules.json`, `fused.json`, `mapper.json`, `rates.json`), and `mixer.json` for the wiring:
 
     {"disable": ["fused"],                                        plug-ins of the default stack to leave out
      "plugins": [{"class": "mypkg.mymod:MyPlugin", "cfg": {...}},   further plug-ins (in process)
@@ -127,11 +127,13 @@ class Stack:
                 store.save(s.name, st)
 
 
-def build(cfg=None, config_dir=None, datadir=None, clock=None, mapper=None, external_map=False, rules="pl",
+def build(cfg=None, config_dir=None, datadir=None, clock=None, mapper="auto", external_map=False, rules="pl",
           plugins=None):
     """The default stack.
 
     cfg          {plug-in name: config dict}; overrides what the configuration directory says
+    mapper       "auto": the map box in process if chris-mapper and a pack are there; a Plugin: that one;
+                 None / False: no map box
     external_map an input channel for `map` messages of an external matcher (a legacy mapd, a recording)
     plugins      further Plugin objects, added after the default ones
     """
@@ -160,6 +162,12 @@ def build(cfg=None, config_dir=None, datadir=None, clock=None, mapper=None, exte
     boxes = [RideWatch(), Estimator(est_cfg)]
     if external_map:
         st.add_channel("map_in", EXTERNAL_MAP, info="an external map matcher")
+    elif mapper not in (None, False):
+        if mapper == "auto":
+            from .plugins.mapper import make_mapper
+            mapper = make_mapper(conf("mapper"))
+        if mapper is not None:
+            boxes.append(mapper)
     boxes += [Lanes(conf("lanes") or None), EgoLane(conf("egolane") or None), RoadGeom(conf("roadgeom") or None),
               EgoLight(conf("lights")), SignContext(), View(view_cfg or None),
               Rules(dict(conf("rules"), rules=rules)), Fused(dict(conf("fused"), rules=rules))]

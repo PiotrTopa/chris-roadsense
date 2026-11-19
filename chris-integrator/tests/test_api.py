@@ -260,12 +260,14 @@ class ApiTest(unittest.TestCase):
         m = self.get("/v2/mixer")
         names = [p["name"] for p in sorted((p for p in m["plugins"] if p["enabled"]), key=lambda p: p["order"])]
         self.assertEqual(names[:2], ["ride_watch", "estimator"])
+        self.assertLess(names.index("estimator"), names.index("mapper"))      # the map box reads the ego estimate
         self.assertLess(names.index("lanes"), names.index("view"))
         self.assertTrue(all(p["errors"] == 0 for p in m["plugins"]), [p["last_error"] for p in m["plugins"]])
         self.assertEqual(m["streams"]["lead"]["producer"], "estimator")
         self.assertIn("view", m["streams"]["lead"]["consumers"])
         self.assertEqual(self.get("/v2/tracks")["type"], "tracks")
         self.assertEqual(self.get("/v2/ego_state")["type"], "ego_state")
+        self.assertEqual(self.get("/v2/map")["reason"], "no_pack")          # the map box runs and says why it has nothing
         g = self.get("/v2/health")["governor"]                             # the roadsense governor's state, an input
         self.assertTrue(g["enabled"])
         self.assertIn("view_hz", g["caps"])

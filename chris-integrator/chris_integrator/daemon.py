@@ -8,7 +8,7 @@
                             also under the name position.sock
       POST /v2/vehicle      the same over HTTP
       --legacy-mapd         also a roadsense mapd's relays (ego.sock, vehicle.sock) while a car still feeds it
-    plug-ins                the stack (`chris_integrator.stack`): estimator, trackers, decisions, view
+    plug-ins                the stack (`chris_integrator.stack`): estimator, map box, trackers, decisions, view
     output channels
       HTTP + WebSocket      the consolidated API (/v2/..., /ws), --http-port (0: off)
       <run dir>/integrator.sock   JSON lines of the public streams (a first line {"subscribe": [...]} narrows;
@@ -45,12 +45,12 @@ def load_config(path):
 
 class Daemon:
     def __init__(self, rundir, sources, cfg=None, datadir=None, config_dir=None, http=None, roadsense_http=None,
-                 out_streams=OUT, record="config"):
+                 mapper="auto", out_streams=OUT, record="config"):
         """sources: list of (run directory of a roadsense instance, [socket names]); the first is the default
         instance, a further one's streams are suffixed with its directory's name (`road@rear`).
         cfg: the estimator's configuration (integrator.json). http: (host, port) or None."""
         self.rundir, self.sources, self.datadir, self.http, self.roadsense_http = rundir, sources, datadir, http, roadsense_http
-        self.stack = build(cfg={"estimator": cfg or {}}, config_dir=config_dir, datadir=datadir)
+        self.stack = build(cfg={"estimator": cfg or {}}, config_dir=config_dir, datadir=datadir, mapper=mapper)
         self.mixer = self.stack.mixer
         self.integ = self.mixer.plugin("estimator").integ
         self.feed = Feed()
@@ -199,6 +199,7 @@ def main(argv=None):
     ap.add_argument("--legacy-mapd", action="store_true",
                     help="also read a roadsense mapd's relays (ego.sock, vehicle.sock) while a car still feeds its position.sock")
     ap.add_argument("--no-mapd", action="store_true", help="(default now; kept for older unit files)")
+    ap.add_argument("--no-mapper", action="store_true", help="run without the map box")
     ap.add_argument("--host", default=env("CHRIS_API_HOST", "0.0.0.0"))
     ap.add_argument("--http-port", type=int, default=int(env("CHRIS_API_PORT", "8080")), help="consolidated API port (0: none)")
     a = ap.parse_args(argv)
@@ -207,7 +208,7 @@ def main(argv=None):
     socks = list(ROADSENSE_SOCKETS) + (list(LEGACY_SOCKETS) if a.legacy_mapd else [])
     sources = [(d, socks if i == 0 else list(ROADSENSE_SOCKETS)) for i, d in enumerate(a.roadsense or ["/run/roadsense"])]
     d = Daemon(a.rundir, sources, cfg, a.datadir, a.config_dir, (a.host, a.http_port) if a.http_port else None,
-               a.roadsense_http)
+               a.roadsense_http, mapper=None if a.no_mapper else "auto")
     asyncio.run(d.run())
 
 
