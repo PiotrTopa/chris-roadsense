@@ -11,6 +11,7 @@ from . import governor as governor_mod
 from . import lights as lights_mod
 from . import signctx
 from .fusion import Fusion
+from .integrator import DEFAULT_CFG as INTEGRATOR_CFG, Integrator, usable
 from .lanes import RoadGeometryTracker
 from .lead import LeadTracker
 from .roadgeom import RoadGeometryFusion
@@ -21,7 +22,8 @@ from .speedlimit import load_rules
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd", "mapd")
 TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead", "lanes",
-          "vehicle", "objects", "view")
+          "vehicle", "objects", "view", "ego_state", "gnss")
+INTEGRATOR_INPUTS = ("ego", "vehicle", "gnss", "objects")      # besides `road`: what the integrator is fed
 FUSED_PERIOD_S = 0.45
 SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
@@ -120,6 +122,12 @@ def load_roadgeom_config():
     return _load_config("roadgeom.json", DEFAULT_CFG)
 
 
+def load_integrator_config():
+    """The data integrator (integrator/, docs/INTEGRATOR.md): DEFAULT_CFG overridden per key by
+    <config dir>/integrator.json (a dict value overrides the keys it names)."""
+    return _load_config("integrator.json", INTEGRATOR_CFG)
+
+
 def load_lights_config():
     """Optional `<config dir>/lights.json`: {"lane_assign": false} switches the lane assignment of the ego
     light (lights.py) off, back to the lateral window alone."""
@@ -155,6 +163,11 @@ class State:
         self.ride_changes = 0
         self.fusion = Fusion(load_rules(rules).get("defaults_kmh"))   # derived topic `fused` (fusion.py)
         self._fused_emit = 0.0
+        # every input passes through the integrator first; the trackers below read its `ego_state` (integrator/)
+        self.integrator = Integrator(load_integrator_config())
+        self.fault_file = os.path.join(datadir, "integrator.json") if datadir and os.path.isdir(datadir) else None
+        self._faults_saved = None
+        self._carry_faults()
         self.lead = LeadTracker(load_lead_config())        # derived topic `lead` (lead.py)
         self.lanes = RoadGeometryTracker(load_lanes_config())   # derived topic `lanes` (lanes.py)
         self.roadgeom = RoadGeometryFusion(load_roadgeom_config())   # the road geometry inside `view.road` (roadgeom.py)
@@ -173,6 +186,47 @@ class State:
         lat = (time.time_ns() - ts) / 1e6 if isinstance(ts, int) and ts > 0 else None
         return self.governor.topic_status(topic, self.fps(topic) or None, lat)
 
+    # ---- the integrator ----------------------------------------------------
+    def _carry_faults(self):
+        """A source that was faulted when the last run ended starts this run faulted (a camera knocked off its
+        mount stays knocked off while the car is parked); evidence of agreement clears it as any other fault."""
+        if not self.fault_file:
+            return
+        try:
+            with open(self.fault_file) as f:
+                saved = json.load(f)
+        except (OSError, ValueError):
+            return
+        for group, rec in (saved.get("faults") or {}).items():
+            if isinstance(rec, dict):
+                self.integrator.carry_fault(group, "carried over from the previous run: %s" % rec.get("reason"))
+        self._faults_saved = sorted(self.integrator.faults())
+
+    def _save_faults(self):
+        if not self.fault_file:
+            return
+        faults = self.integrator.faults()
+        key = sorted(faults)
+        if key == self._faults_saved:
+            return
+        self._faults_saved = key
+        try:
+            with open(self.fault_file + ".tmp", "w") as f:
+                json.dump({"ts_real_ns": time.time_ns(),
+                           "faults": {g: {"reason": r.get("reason"), "rule": r.get("rule")} for g, r in faults.items()}}, f)
+            os.replace(self.fault_file + ".tmp", self.fault_file)
+        except OSError:
+            pass
+
+    def _vision_usable(self):
+        return usable(self.latest.get("ego_state"), "vision")
+
+    def _ego_state(self, es, now):
+        if es is None:
+            return
+        self._emit("ego_state", es, now)
+        self._save_faults()
+
     # ---- ingestion -------------------------------------------------------
     def on_message(self, daemon, msg, line):
         now = time.monotonic()
@@ -180,9 +234,20 @@ class State:
         self.last_msg[daemon] = now
         if not isinstance(mtype, str):
             return
+        if mtype in INTEGRATOR_INPUTS:
+            try:
+                self.integrator.on_message(msg)
+                if mtype == "ego" and self.integrator.camera_silent() and isinstance(msg.get("ts_mono_ns"), int):
+                    # no road frames: the ego state still goes out, at the vehicle's rate
+                    self._ego_state(self.integrator.state(msg["ts_mono_ns"], msg.get("ts_real_ns")), now)
+            except Exception:
+                import logging
+                logging.getLogger("roadsense_api.state").exception("integrator failed")
         if mtype == "lights":      # add ego-lane relevance from the road plan (lights.py), forward the result
             try:
-                self.ego_light.annotate(msg, self.latest.get("road"), self.latest.get("calib"), self.intrinsics())
+                # the plan positions a light against the path: not while the camera is not believable
+                self.ego_light.annotate(msg, self.latest.get("road") if self._vision_usable() else None,
+                                        self.latest.get("calib"), self.intrinsics())
                 msg["rate"] = self._rate("lights", msg)
                 line = json.dumps(msg, separators=(",", ":"))
             except Exception:
@@ -190,7 +255,8 @@ class State:
                 logging.getLogger("roadsense_api.state").exception("lights annotation failed")
         if mtype == "signs":       # context checks on round red tracks (signctx.py), forward the result
             try:
-                self.signctx.annotate(msg, self.latest.get("road"), self.latest.get("lights"), self.latest.get("calib"),
+                # the lead that may explain a red round "sign" is the tracked, validated one (lead.py)
+                self.signctx.annotate(msg, self.latest.get("lead"), self.latest.get("lights"), self.latest.get("calib"),
                                       self.intrinsics())
                 msg["rate"] = self._rate("signs", msg)
                 line = json.dumps(msg, separators=(",", ":"))
@@ -202,14 +268,6 @@ class State:
         if mtype == "road":
             ts = msg.get("ts_real_ns")
             self._road_lat_ms = (time.time_ns() - ts) / 1e6 if isinstance(ts, int) and ts > 0 else None
-        if mtype == "ego":         # the vehicle's own motion, relayed by mapd: input of the lead tracker
-            self.view.on_ego(msg)
-            self.lead.on_ego(msg)
-            self.lanes.on_ego(msg)
-            self.roadgeom.on_ego(msg)
-            self.egolane.on_ego(msg)
-        if mtype == "vehicle":     # what the host says about the car: the brake for the lead message
-            self.lead.on_vehicle(msg)
         if mtype == "objects":     # a scan of a range sensor: the lead tracker's radar input (lead.json radar_fusion)
             self.objects[msg.get("sensor")] = msg
             self.lead.on_objects(msg)
@@ -237,9 +295,16 @@ class State:
                 logging.getLogger("roadsense_api.state").exception("view (%s) failed", mtype)
         for cb in list(self.subscribers):
             cb(mtype, line)
+        es = None
         if mtype == "road":
+            try:                              # the integrator's state for this frame: what every tracker below reads
+                es = self.integrator.on_road(msg)
+                self._ego_state(es, now)
+            except Exception:
+                import logging
+                logging.getLogger("roadsense_api.state").exception("integrator failed")
             try:
-                out = self.lead.on_road(msg)
+                out = self.lead.on_road(msg, es)
                 if out is not None:
                     out["rate"] = self._rate("lead", msg)
                     self._emit("lead", out, now)
@@ -248,13 +313,13 @@ class State:
                 logging.getLogger("roadsense_api.state").exception("lead tracker failed")
             lanes_out = geom = None
             try:
-                out = lanes_out = self.lanes.on_road(msg)
+                out = lanes_out = self.lanes.on_road(msg, es)
                 if out is not None:
                     self.ego_light.on_lanes(out)      # the lane lines the ego light is assigned by
                     out["rate"] = self._rate("lanes", msg)
                     self._emit("lanes", out, now)
-                    self.latest["egolane"] = self.egolane.on_lanes(out, msg)
-                    geom = self.roadgeom.on_lanes(out, msg)    # no topic of its own since 2.0: part of `view.road`
+                    self.latest["egolane"] = self.egolane.on_lanes(out, msg, ego=es)
+                    geom = self.roadgeom.on_lanes(out, msg, es)   # no topic of its own since 2.0: part of `view.road`
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("road-geometry tracker failed")
@@ -264,14 +329,15 @@ class State:
                 if (cap < 0 or self._view_ts is None or not isinstance(ts, int) or ts < self._view_ts
                         or (cap > 0 and ts - self._view_ts >= (1.0 / cap - 0.01) * 1e9)):
                     self._view_ts = ts
-                    out = self.view.on_frame(msg, self.latest.get("lead"), lanes_out, geom, self.latest.get("egolane"))
+                    out = self.view.on_frame(msg, self.latest.get("lead"), lanes_out, geom, self.latest.get("egolane"),
+                                             ego=es)
                 if out is not None:
                     self._emit("view", out, now)
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("view failed")
         if mtype in ("road", "signs", "env", "lights"):
-            self._on_speed(msg, now)
+            self._on_speed(msg, now, es)
         if now - self._fused_emit >= FUSED_PERIOD_S and mtype in ("map", "road", "env", "signs"):
             self._fused_emit = now
             try:
@@ -301,6 +367,7 @@ class State:
         self.suppressed_tracks.clear()
         self.signctx = signctx.SignContext()
         self.fusion = Fusion(load_rules(self._rules).get("defaults_kmh"))
+        self.integrator = Integrator(load_integrator_config())   # another drive: nothing of the old one is evidence
         self.lead.reset()
         self.lanes.reset()
         self.roadgeom.reset()
@@ -308,7 +375,7 @@ class State:
         self.egolane.reset()
         self.ego_light.reset()
 
-    def _on_speed(self, msg, now):
+    def _on_speed(self, msg, now, es=None):
         if not self._speed_geom:
             ring = self.ring()
             if ring:
@@ -317,7 +384,9 @@ class State:
                 self._speed_geom = True
         sv = self.speed.version
         try:
-            rules_changed = self.rules_engine.on_message(msg)   # feeds the speed-limit engine too
+            if msg.get("type") == "road" and es is None:        # the integrator failed on this frame: no odometer step
+                return
+            rules_changed = self.rules_engine.on_message(msg, es)   # feeds the speed-limit engine too
         except Exception:                 # a malformed provider message must not stop the fan-out
             import logging
             logging.getLogger("roadsense_api.state").exception("rules/speed_limit update failed")
@@ -431,6 +500,19 @@ class State:
                              "min_blocks": o.get("min_blocks"), "restored": o.get("restored")}
         return out
 
+    def integrator_summary(self):
+        """/health: the integrator's verdict per source, the faults, and what the ego state is made from."""
+        es = self.latest.get("ego_state")
+        if not es:
+            return None
+        src = es.get("sources") or {}
+        return {"sources": {g: {k: s.get(k) for k in ("state", "reason", "isolation", "since_s", "age_s", "rate_hz")
+                                if k in s} for g, s in src.items()},
+                "faults": sorted(g for g, s in src.items() if s.get("state") == "fault"),
+                "speed": {k: (es.get("speed") or {}).get(k) for k in ("value", "std", "valid", "reason", "mode", "sources")},
+                "yaw_rate": {k: (es.get("yaw_rate") or {}).get(k) for k in ("value", "std", "valid", "mode", "sources")},
+                "standstill": es.get("standstill"), "epoch": es.get("epoch"), "checks": es.get("checks")}
+
     def vehicle_summary(self):
         """Short dict for /v1/health: is a host feeding vehicle data, and what."""
         v = self.latest.get("vehicle")
@@ -511,6 +593,7 @@ class State:
             "lanes": self.lanes.summary(self.latest["lanes"]) if "lanes" in self.latest else None,
             "view": self.view.summary(self.latest.get("view")),
             "vehicle": self.vehicle_summary(),
+            "integrator": self.integrator_summary(),
             "camera_fps": (self.latest.get("camera") or {}).get("fps"),
             "cpu_temp_c": cpu_temp_c(),
             "governor": self._governor_health(),

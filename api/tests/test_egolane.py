@@ -128,9 +128,11 @@ class EgoLane(unittest.TestCase):
 
     def test_turn_signal_strengthens_a_change(self):
         a, b = EgoLaneEstimator(), EgoLaneEstimator()
-        b.on_ego({"turn_signal": "left"})
         for est in (a, b):
             _, ts = drive(est, 3, 2, 3.0)
+            if est is b:        # the signal reaches the estimator through the integrator, with its age (2 s)
+                for k in range(60):
+                    est.on_ego({"type": "ego", "ts_mono_ns": ts + k * NS // 10, "speed_mps": 10.0, "turn_signal": "left"})
             self.change(est, ts, "left")
         self.assertGreater(b.out["probs"][1], a.out["probs"][1])
 

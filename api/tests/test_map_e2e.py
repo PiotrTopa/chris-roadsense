@@ -259,7 +259,13 @@ class MapE2E(unittest.TestCase):
             if ld["source"] == "vision+ego":
                 got = ld
         self.assertIsNotNone(got, "the lead tracker never saw the vehicle motion")
-        self.assertEqual((got["ego"]["source"], got["ego"]["tag"], got["ego"]["speed_mps"]), ("vehicle", "e2e-can", 19.0))
+        self.assertEqual((got["ego"]["source"], got["ego"]["tag"]), ("vehicle", "e2e-can"))
+        # the integrator's estimate: the vehicle's speed (the fake road model's own speed has a weight below 1 %)
+        self.assertAlmostEqual(got["ego"]["speed_mps"], 19.0, delta=0.03)
+        self.assertTrue(got["valid"])
+        es = self.get("/v1/health")["integrator"]
+        self.assertIn(es["sources"]["vehicle"]["state"], ("ok", "unchecked", "suspect"))
+        self.assertEqual(es["speed"]["valid"], True)
         self.assertLess(got["ego"]["age_s"], 0.3)
         self.assertEqual(self.get("/v1/health")["daemons"]["mapd"]["connected"], True)
         feed.close()

@@ -19,7 +19,8 @@ import zlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
 
 NS = 1e9
-PASS = ("lights", "signs", "env", "speed_limit", "rules", "map", "ego", "vehicle", "camera", "calib")
+PASS = ("lights", "signs", "env", "speed_limit", "rules", "map", "ego", "vehicle", "camera", "calib", "gnss", "objects")
+INTEGRATOR_INPUTS = ("ego", "vehicle", "gnss", "objects")
 
 
 def read_lines(path):
@@ -53,16 +54,94 @@ def read_lines(path):
                 pass
 
 
-def read_session(session, map_path=None):
-    """Messages of a session in time order. With map_path (the `--out` of tools/map_replay.py) the session's
-    own `map` messages are replaced by those of the replay."""
-    if not map_path:
-        yield from read_lines(session)
+def load_pos(path):
+    """Feeder `gnss` messages from the car computer's trip logs (lines with `"dir":"POS"`, each prefixed by its
+    trip file name; extraction: docs/lanes/L35-ego-fusion-audit.md section 6), each with `_wall` (s): the trip
+    file's start (its name, local time Europe/Warsaw) plus the line's `ts` (ms since the trip start)."""
+    import re
+    import time as _time
+    os.environ.setdefault("TZ", "Europe/Warsaw")
+    _time.tzset()
+    out = []
+    with open(path) as f:
+        for ln in f:
+            i = ln.find("{")
+            m = re.search(r"trip_(\d{8})_(\d{6})", ln[:i]) if i >= 0 else None
+            if not m:
+                continue
+            try:
+                rec = json.loads(ln[i:])
+            except ValueError:
+                continue
+            d = rec.get("d") or {}
+            if d.get("type") != "gnss" or not isinstance(d.get("ts_mono_ns"), int):
+                continue
+            start = _time.mktime(_time.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S"))
+            d["_wall"] = start + (rec.get("ts") or 0) / 1000.0
+            out.append(d)
+    out.sort(key=lambda d: d["ts_mono_ns"])
+    return out
+
+
+def read_session(session, map_path=None, road_model=None, pos=None):
+    """Messages of a session in time order.
+
+    map_path    (the `--out` of tools/map_replay.py) the session's own `map` messages are replaced by those of the
+                replay.
+    road_model  for sessions recorded before lane L37 (the recorder dropped `road.road_model`): the model name to
+                put back into every `road` message that has none ("vision" for every recording of the car so far).
+                Without it the trackers run their supercombo profile on such a session.
+    pos         load_pos() output: the car's GNSS fixes of sessions recorded before `gnss` was; the fixes of this
+                session's boot (matched by wall time: the monotonic clock restarts at every boot) are merged in at
+                their arrival times.
+    """
+    src = _with_map(session, map_path) if map_path else read_lines(session)
+    if pos is not None:
+        src = _with_gnss(session, src, pos)
+    for m in src:
+        if road_model and m.get("type") == "road" and "road_model" not in m:
+            m["road_model"] = road_model
+        yield m
+
+
+def _with_gnss(session, src, pos):
+    if not pos:
+        yield from src
         return
+    roads = [(m["ts_mono_ns"], m["ts_real_ns"]) for m in read_lines(session)
+             if m.get("type") == "road" and isinstance(m.get("ts_real_ns"), int) and isinstance(m.get("ts_mono_ns"), int)]
+    if not roads:
+        yield from src
+        return
+    offs = sorted((r - t) / NS for t, r in roads[-200:])              # wall - mono of this boot, after any clock step
+    off = offs[len(offs) // 2]
+    t0, t1 = roads[0][0], roads[-1][0]
+    g = [dict(d) for d in pos if t0 - 5 * NS <= d["ts_mono_ns"] <= t1 + 5 * NS
+         and abs(d["_wall"] - (d["ts_mono_ns"] / NS + off)) < 5.0]
+    k = 0
+    last = None
+    for m in src:
+        ts = m.get("ts_mono_ns")
+        if m.get("type") == "gnss":                                   # the session has its own: nothing to merge
+            g = []
+        if isinstance(ts, int):
+            last = ts if last is None else max(last, ts)
+            # a feeder message reached mapd at about its stamp + 20 ms; it is merged in where the stream has passed it
+            while k < len(g) and g[k]["ts_mono_ns"] + 20_000_000 <= last:
+                d = g[k]
+                d.pop("_wall", None)
+                yield d
+                k += 1
+        yield m
+
+
+def _with_map(session, map_path):
     maps = [m for m in read_lines(map_path) if m.get("type") == "map" and isinstance(m.get("ts_mono_ns"), int)]
     maps.sort(key=lambda m: m["ts_mono_ns"])
     k = 0
     for m in read_lines(session):
+        if m.get("type") == "ego_state":      # recomputed by the pipeline
+            continue
         if m.get("type") == "map":
             continue
         ts = m.get("ts_mono_ns")
@@ -74,7 +153,10 @@ def read_session(session, map_path=None):
 
 
 class Pipeline:
-    def __init__(self, view_cfg=None, egolane_cfg=None, fused_period_s=0.5):
+    def __init__(self, view_cfg=None, egolane_cfg=None, fused_period_s=0.5, integrator_cfg=None, integrator=True):
+        """integrator False: the trackers run as on a car whose integrator sees the road model only and never
+        faults it (the before-L37 behaviour for a comparison: vision fault detection off)."""
+        from roadsense_api.integrator import Integrator
         from roadsense_api.egolane import EgoLaneEstimator
         from roadsense_api.fusion import Fusion
         from roadsense_api.lanes import RoadGeometryTracker
@@ -83,6 +165,8 @@ class Pipeline:
         from roadsense_api.view import ViewBuilder
         self.lead, self.lanes, self.geom = LeadTracker(), RoadGeometryTracker(), RoadGeometryFusion()
         self.egolane, self.view, self.fusion = EgoLaneEstimator(egolane_cfg), ViewBuilder(view_cfg), Fusion()
+        self.integrator = Integrator(integrator_cfg)
+        self.gate = integrator
         self.latest = {}
         self.intr = (975.0, 640.0, 360.0, 1280, 720)
         self.fused_period_ns = int(fused_period_s * NS)
@@ -93,11 +177,10 @@ class Pipeline:
         if t == "calib" and m.get("focal_px"):
             self.intr = (float(m["focal_px"]), float(m.get("cx") or 640), float(m.get("cy") or 360),
                          int(m.get("width") or 1280), int(m.get("height") or 720))
-        if t == "ego":
-            for x in (self.view, self.lead, self.lanes, self.geom, self.egolane):
-                x.on_ego(m)
-        elif t == "vehicle":
-            self.lead.on_vehicle(m)
+        if t == "ego_state":              # a recorded one: the pipeline computes its own
+            return []
+        if t in INTEGRATOR_INPUTS:
+            self.integrator.on_message(m)
         elif t == "map":
             for x in (self.lanes, self.geom, self.view, self.egolane):
                 x.on_map(m)
@@ -114,19 +197,25 @@ class Pipeline:
         if t != "road" or not isinstance(ts, int):
             return []
         self.latest["road"] = m
-        out = [m]
-        ld = self.lead.on_road(m)
+        es = self.integrator.on_road(m)
+        if not self.gate:                 # comparison mode: the same ego state, no source ever counts as faulted
+            for g in es["sources"].values():
+                if g["state"] == "fault":
+                    g["state"] = "unchecked"
+        self.latest["ego_state"] = es
+        out = [m, es]
+        ld = self.lead.on_road(m, es)
         if ld is not None:
             self.latest["lead"] = ld
             out.append(ld)
-        ln = self.lanes.on_road(m)
+        ln = self.lanes.on_road(m, es)
         geom = None
         if ln is not None:
             self.latest["lanes"] = ln
             out.append(ln)
-            self.latest["egolane"] = self.egolane.on_lanes(ln, m)
-            geom = self.geom.on_lanes(ln, m)
-        vw = self.view.on_frame(m, self.latest.get("lead"), ln, geom, self.latest.get("egolane"))
+            self.latest["egolane"] = self.egolane.on_lanes(ln, m, ego=es)
+            geom = self.geom.on_lanes(ln, m, es)
+        vw = self.view.on_frame(m, self.latest.get("lead"), ln, geom, self.latest.get("egolane"), ego=es)
         if vw is not None:
             self.latest["view"] = vw
             out.append(vw)

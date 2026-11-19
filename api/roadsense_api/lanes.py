@@ -43,6 +43,8 @@ import math
 
 import numpy as np
 
+from .integrator import LocalEgo, validity
+
 NS = 1e9
 N_LANE, N_EDGE = 4, 2
 N_LINES = N_LANE + N_EDGE
@@ -141,7 +143,7 @@ class RoadGeometryTracker:
         self.cfg = dict(DEFAULT_CFG)
         if cfg:
             self.cfg.update(cfg)
-        self._ego = None            # (ts_ns, speed_mps) from the vehicle
+        self._local = LocalEgo()    # the integrator of a tracker that is not handed an ego state (docs/INTEGRATOR.md)
         self._map = None            # the last `map` message
         self.reset()
 
@@ -163,20 +165,20 @@ class RoadGeometryTracker:
         self.seq = None
 
     def on_ego(self, msg):
-        """mapd's relay of the vehicle motion: the speed for the ego-motion compensation."""
-        ts, v = msg.get("ts_mono_ns"), msg.get("speed_mps")
-        if _fin(ts) and _fin(v):
-            self._ego = (ts, abs(float(v)))
+        """mapd's relay of the vehicle motion, for a tracker without an integrator of the api's."""
+        self._local.feed(msg)
 
     def on_map(self, msg):
         self._map = msg if isinstance(msg, dict) else None
 
     # ---- inputs ----------------------------------------------------------
-    def _speed(self, road, ts):
-        if self._ego is not None and abs(ts - self._ego[0]) / NS <= self.cfg["ego_max_age_s"]:
-            return self._ego[1], "vehicle"
-        v = road.get("v_ego")
-        return (max(0.0, float(v)) if _fin(v) else 0.0), "vision"
+    @staticmethod
+    def _motion(es):
+        """(speed, source, yaw rate positive right) of the frame from the integrator's `ego_state`."""
+        sp, yr = es.get("speed") or {}, es.get("yaw_rate") or {}
+        v = abs(sp["value"]) if sp.get("valid") else 0.0
+        src = "vehicle" if any(x.startswith("vehicle.") for x in sp.get("sources") or ()) else "vision"
+        return v, src, (-yr["value"] if yr.get("valid") else 0.0)
 
     def _measure(self, road):
         """-> (x[n], y[6,n], std[6,n], prob[6], ok[6]) from a road message, or None when it carries no lines."""
@@ -219,17 +221,30 @@ class RoadGeometryTracker:
         return x, y, s, prob, ok
 
     # ---- one frame -------------------------------------------------------
-    def on_road(self, road):
-        """Feed one `road` message; returns the `lanes` message (dict) or None when the message has no lines."""
+    def on_road(self, road, ego=None):
+        """Feed one `road` message with the integrator's `ego_state` for its frame; returns the `lanes` message
+        (dict) or None when the message has no lines. While the integrator holds the vision source faulted the
+        lines are unknown: no line is present and the message says `valid: false` with the reason."""
         c = self.cfg
         ts = road.get("ts_mono_ns")
         seq = road.get("seq")
         if not _fin(ts):
             return None
+        es = ego if ego is not None else self._local.at(road)
         z = self._measure(road)
         if z is None:
             return None
         x, zy, zs, prob, ok = z
+        self._validity = validity(es, ("vision",), ())
+        if not self._validity[0]:
+            self.reset()
+            self.x = x
+            self.y = np.zeros((N_LINES, len(x)))
+            self.p = np.ones((N_LINES, len(x)))
+            self.ts, self.seq = ts / NS, seq
+            self.since[:] = self.ts
+            v, vsrc, yaw = self._motion(es)
+            return self._message(road, np.zeros(N_LINES), np.zeros(N_LINES, bool), v, vsrc, yaw, None)
         t = ts / NS
         dt = None if self.ts is None else t - self.ts
         if (dt is None or dt <= 0 or dt > c["max_gap_s"] or self.x is None or len(self.x) != len(x)
@@ -241,10 +256,9 @@ class RoadGeometryTracker:
             self.since[:] = t
             dt = 0.0
         self.ts, self.seq = t, seq
-        v, vsrc = self._speed(road, ts)
+        v, vsrc, yaw = self._motion(es)
         pose = road.get("pose") or {}
-        yaw = float(pose["yaw_rate"]) if _fin(pose.get("yaw_rate")) else 0.0
-        vy = float(pose["vy"]) if _fin(pose.get("vy")) else 0.0
+        vy = float(pose["vy"]) if _fin(pose.get("vy")) else 0.0     # only the camera measures the lateral speed
         prior = map_prior(self._map, ts, c)
 
         if dt > 0:
@@ -370,6 +384,7 @@ class RoadGeometryTracker:
 
     def _message(self, road, prob, ok, v, vsrc, yaw, prior):
         c = self.cfg
+        valid, reason, inputs = getattr(self, "_validity", (True, None, {}))
         lines = [self._line(i, prob, ok) for i in range(N_LINES)]
         width = None
         if lines[1]["present"] and lines[2]["present"]:
@@ -388,6 +403,9 @@ class RoadGeometryTracker:
             "lane_width_m": width,
             "prior": prior,
             "source": "vision+map" if prior is not None else "vision",
+            # valid false: the lines are unknown (a source they are made from is faulted), not "no lines"
+            "valid": valid, "reason": reason, "inputs": inputs,
+            # the integrator's ego motion of the frame (yaw rate positive right, the device frame's convention)
             "ego": {"speed_mps": round(v, 2), "yaw_rate": round(yaw, 4), "source": vsrc},
         }
 

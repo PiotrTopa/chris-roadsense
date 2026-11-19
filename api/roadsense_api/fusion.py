@@ -21,6 +21,8 @@ confidence, when the map is otherwise available and fresh, it is the same road a
 `match_hold_s` and `match_hold_msgs` of that message. `map.match_hold` says so. Never across a change of the
 matched road, an unavailable or stale map (a real loss of position) or a changed map limit.
 """
+from .integrator import usable
+
 MAP_MAX_AGE_S = 3.0
 PLACES = ("highway", "city_street", "residential", "rural_road", "forest_road", "tunnel", "parking_lot",
           "underground_parking", "gas_station", "bridge")
@@ -425,8 +427,8 @@ class Fusion:
         ld = latest.get("lead")
         if not ld or ld.get("ts_mono_ns") is None or now_mono_ns - ld["ts_mono_ns"] > 1.0e9:
             return None
-        keys = ("present", "mode", "track_id", "dist_m", "dist_std_m", "lateral_m", "v_rel_mps", "v_lead_mps",
-                "a_lead_mps2", "time_gap_s", "ttc_s", "standing", "departed", "source", "vision")
+        keys = ("present", "valid", "reason", "mode", "track_id", "dist_m", "dist_std_m", "lateral_m", "v_rel_mps",
+                "v_lead_mps", "a_lead_mps2", "time_gap_s", "ttc_s", "standing", "departed", "source", "vision")
         return {k: ld.get(k) for k in keys}
 
     # ---- output ------------------------------------------------------------------------------
@@ -443,7 +445,9 @@ class Fusion:
                "speed_limit": self._speed_limit(m, vis, built_up),
                "built_up": built_up,
                "place": self._place(m, env),
-               "lanes": self._lanes(m, latest.get("road"), latest.get("lanes"), now_mono_ns, latest.get("egolane")),
+               # raw lane lines only stand in for the tracker when the integrator does not hold the camera faulted
+               "lanes": self._lanes(m, latest.get("road") if usable(latest.get("ego_state"), "vision") else None,
+                                    latest.get("lanes"), now_mono_ns, latest.get("egolane")),
                "tunnel": self._tunnel(m, env),
                "lead": self._lead(latest, now_mono_ns)}
         if m:

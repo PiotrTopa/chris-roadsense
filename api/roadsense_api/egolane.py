@@ -29,6 +29,8 @@ No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC 
 """
 import math
 
+from .integrator import LocalEgo, signal
+
 NS = 1e9
 
 DEFAULT_CFG = dict(
@@ -104,6 +106,7 @@ class EgoLaneEstimator:
         self.user_cfg = dict(cfg or {})
         self.road_model = None
         self.cfg = dict(DEFAULT_CFG, **self.user_cfg)
+        self._local = LocalEgo()
         self.reset()
 
     def reset(self):
@@ -122,8 +125,8 @@ class EgoLaneEstimator:
 
     # ---- inputs ------------------------------------------------------------------------------------
     def on_ego(self, msg):
-        ts = msg.get("turn_signal")
-        self.turn = ts if ts in ("left", "right") else None
+        """A mapd `ego` message, for an instance that is not handed the integrator's state (docs/INTEGRATOR.md)."""
+        self._local.feed(msg)
 
     def on_map(self, msg):
         self.map = msg
@@ -190,7 +193,7 @@ class EgoLaneEstimator:
             self.n_known = (n, self.t)
 
     # ---- the filter --------------------------------------------------------------------------------
-    def on_lanes(self, lanes, road=None, speed_mps=None):
+    def on_lanes(self, lanes, road=None, speed_mps=None, ego=None):
         """One tracked frame (`lanes` topic message); `road` is the raw model frame of it (lane changes are read
         on the tracked lines; of `road` only `road_model` is read: it selects the profile). Returns the estimate
         (also kept as `self.out`)."""
@@ -203,6 +206,9 @@ class EgoLaneEstimator:
         ts = lanes.get("ts_mono_ns")
         if not isinstance(ts, int):
             return self.out
+        es = ego if ego is not None else self._local.state(ts)     # the integrator's state: the turn signal
+        sig = signal(es, "turn_signal", 2.0) if es is not None else None
+        self.turn = sig if sig in ("left", "right") else None
         dt = 0.0 if self.t is None else max(0.0, (ts - self.t) / NS)
         self.t = ts
         ml = self._map_lanes(ts)

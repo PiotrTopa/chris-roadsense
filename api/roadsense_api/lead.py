@@ -4,10 +4,17 @@ modeld's `road.leads[0]` is the network's instantaneous guess, frame by frame. T
 track: one estimate per `road` message with distance, relative speed, the lead's own speed and acceleration,
 an uncertainty, and the raw vision value next to it (the fusion layer's convention).
 
-    road (leads[0], v_ego) ──┐
-    ego (vehicle motion) ────┼─> LeadTracker ─> {"type":"lead", ...}   one per road message
-    objects (radar, opt.) ───┤   (everything but `road` is optional: without `ego` the model's own speed
-    vehicle (brake, opt.) ───┘    estimate is used, without a radar the camera's distance)
+    road (leads[0]) ─────────────────┐
+    ego state (the integrator) ──────┼─> LeadTracker ─> {"type":"lead", ...}   one per road message
+    objects (radar, opt.) ───────────┘
+
+The tracker is the object layer behind the data integrator (docs/INTEGRATOR.md, lane L37): the ego speed with
+its source, standstill and the brake come from the integrator's `ego_state` for the frame, and so does the
+answer to "may the camera be believed": while the integrator holds the vision source faulted (its speed
+disagrees with the vehicle's, or its own stated uncertainty is far beyond its characterised one) the camera's
+lead is not tracked and the message says `valid: false` with the reason; nothing is tracked on a guess of the
+ego speed either. A tracker that is not handed an ego state builds a private integrator from the messages it is
+fed (`on_ego`, `on_vehicle`, `on_road`), so tools and tests run the same path.
 
 Model: state [d, v_lead, a_lead] (distance camera -> lead rear along x, the lead's speed and acceleration
 over the ground along the ego heading); the ego speed is a known input, so
@@ -72,8 +79,9 @@ Nothing is held: a track without evidence is predicted for a bounded time, marke
 
 No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC ns).
 """
-import collections
 import math
+
+from .integrator import LocalEgo, signal, validity
 
 NS = 1e9
 DEFAULT_CFG = dict(
@@ -220,9 +228,8 @@ class LeadTracker:
         self.user_cfg = dict(cfg or {})
         self.road_model = None                       # `road.road_model` of the last message (selects the profile)
         self.cfg = dict(DEFAULT_CFG, **self.user_cfg)
-        self.ego = collections.deque(maxlen=64)      # (ts_ns, signed speed m/s, standstill, tag, standing since ts)
+        self._local = LocalEgo()                     # the integrator of a tracker that is not handed an ego state
         self.scans = {}                              # range sensor id -> (ts_ns, objects) of its last scan
-        self.brake = None                            # (ts_ns, pressed) from the `vehicle` topic
         self.vis_scale = None                        # [radar / camera distance ratio, samples, ts_ns of the last one]
         self.track_id = 0
         self.version = 0                             # bumps on every track start / change / loss
@@ -241,7 +248,6 @@ class LeadTracker:
         self.stand = None             # standing regime: {"t0", "vup", "vdn"} (CUSUM statistics), else None
         self.last_meas = None         # frame time of the last measurement that went into the track
         self.both_stand_s = 0.0
-        self.vis_stop_s = 0.0
         self.departed = None          # {"ts", "dist_at_stop_m"}
         self.event = None             # last life-cycle event {"kind","ts_mono_ns",...}
         self.sx_bias = 0.0            # the model's own distance std, smoothed (absolute accuracy)
@@ -268,7 +274,7 @@ class LeadTracker:
 
     def reset(self):
         self._reset()
-        self.ego.clear()
+        self._local.reset()
         self.scans.clear()
         self.vis_scale = None
 
@@ -284,11 +290,12 @@ class LeadTracker:
         self.scans[msg.get("sensor")] = (ts, objs)
 
     def on_vehicle(self, msg):
-        """A `vehicle` message: the brake pedal, passed on in `ego.brake` (a consumer's "the lead moved off and
-        you still hold the brake")."""
-        b = ((msg or {}).get("controls") or {}).get("brake")
-        ts = (msg or {}).get("ts_mono_ns")
-        self.brake = (ts, b) if isinstance(b, bool) and isinstance(ts, int) else None
+        """A `vehicle` message (the brake pedal), for a tracker without an integrator of the api's."""
+        self._local.feed(msg)
+
+    def on_ego(self, msg):
+        """A mapd `ego` message (vehicle motion), for a tracker without an integrator of the api's."""
+        self._local.feed(msg)
 
     def _radar(self, ts, ref_x, ref_y, wide):
         """The object of a fresh scan that is the lead at (ref_x, ref_y), or None."""
@@ -361,42 +368,19 @@ class LeadTracker:
                     v_rel=r["v_rel"] if r["v_rel"] is not None else (z["v_rel"] if seen else None),
                     r_abs=(sig * sig, c["radar_rate_sigma"] ** 2), radar_only=not seen)
 
-    def on_ego(self, msg):
-        """A mapd `ego` message (the vehicle motion a position feeder sent). Ignored when malformed."""
-        ts, v = msg.get("ts_mono_ns"), msg.get("speed_mps")
-        if not isinstance(ts, int) or not _fin(v):
-            return
-        if self.ego and ts <= self.ego[-1][0]:
-            if ts < self.ego[-1][0] - 2 * NS:        # the clock went back: a restarted feeder
-                self.ego.clear()
-            else:
-                return
-        still = bool(msg.get("standstill")) and float(v) == 0.0
-        since = None if not still else (self.ego[-1][4] if self.ego and self.ego[-1][4] is not None else ts)
-        self.ego.append((ts, float(v), still, msg.get("tag"), since))
-
-    def _ego_at(self, ts, road):
-        """Ego speed at the frame time: (speed, stands, source, age_s, tag)."""
+    def _ego_at(self, es):
+        """The ego motion of the frame from the integrator's state: (speed, stands, source, age_s, tag), or None
+        when the speed is unknown. `source` is "vehicle" when a vehicle measurement is in the estimate."""
         c = self.cfg
-        prev = nxt = None
-        for s in reversed(self.ego):
-            if s[0] <= ts:
-                prev = s
-                break
-            nxt = s
-        near = min((abs(ts - s[0]) for s in (prev, nxt) if s is not None), default=None)
-        if near is not None and near <= c["ego_max_age_s"] * NS:
-            a, b = prev or nxt, nxt or prev
-            v = a[1] + (b[1] - a[1]) * (ts - a[0]) / (b[0] - a[0]) if b[0] > a[0] else a[1]
-            # stands: the standstill flag has been up for the confirmation time at the frame, and still is
-            since = a[4]
-            stands = since is not None and b[4] is not None and ts - since >= c["ego_stop_confirm_s"] * NS
-            return (0.0 if stands else v), stands, "vehicle", round(near / NS, 3), a[3]
-        v = road.get("v_ego")
-        if not _fin(v):
-            v = (road.get("pose") or {}).get("vx")
-        v = float(v) if _fin(v) else 0.0
-        return v, self.vis_stop_s >= c["vision_stop_confirm_s"], "vision", None, None
+        sp, st = es["speed"], es.get("standstill") or {}
+        if not sp.get("valid"):
+            return None
+        veh = any(x.startswith("vehicle.") for x in sp.get("sources") or ())
+        if veh:
+            stands = bool(st.get("value")) and st.get("source") == "vehicle" and st.get("for_s", 0.0) >= c["ego_stop_confirm_s"]
+            return (0.0 if stands else sp["value"]), stands, "vehicle", sp.get("age_s"), \
+                ((es.get("sources") or {}).get("vehicle") or {}).get("tag")
+        return sp["value"], bool(st.get("value")) and st.get("source") != "vehicle", "vision", None, None
 
     # ---- measurement ---------------------------------------------------------------------------
     def _measure(self, road):
@@ -480,12 +464,14 @@ class LeadTracker:
         self.event = {"kind": kind, "ts_mono_ns": ts, "track_id": self.track_id}
 
     # ---- one road message ----------------------------------------------------------------------
-    def on_road(self, road):
-        """Feed one `road` message; returns the `lead` message for it."""
+    def on_road(self, road, ego=None):
+        """Feed one `road` message with the integrator's `ego_state` for its frame; returns the `lead` message."""
         c = self.cfg
         ts = road.get("ts_mono_ns")
         if not isinstance(ts, int):
             return None
+        es = ego if ego is not None else self._local.at(road)
+        self._es = es
         self._profile(road)
         c = self.cfg
         dt = None if self.ts is None else (ts - self.ts) / NS
@@ -500,16 +486,21 @@ class LeadTracker:
             if z is None or z["p"] < c["drop_prob"]:
                 self.radar_only += dt or 0.0
             z = self._fuse_radar(ts, z)
-        vm = zvis["v_model"] if zvis else road.get("v_ego")
-        # vision-only standstill: the model's speed under the threshold for the confirmation time. Leaky, so a
-        # single-frame blip of the model's speed (a wiper pass) does not end it; a real start does within 0.3 s.
-        if not _fin(vm) or vm >= c["vision_go_speed"]:
-            self.vis_stop_s = 0.0
-        elif vm < c["vision_stop_speed"]:
-            self.vis_stop_s = min(self.vis_stop_s + (dt or 0.0), c["vision_stop_confirm_s"] + 0.3)
-        else:
-            self.vis_stop_s = max(0.0, self.vis_stop_s - 3.0 * (dt or 0.0))
-        v_ego, stands, src, ego_age, ego_tag = self._ego_at(ts, road)
+        valid, reason, inputs = validity(es, ("vision",), ("speed",))
+        self._validity = (valid, reason, inputs)
+        if not valid:
+            # the camera is not believable (or the ego speed is unknown): no track, and the message says why
+            had = self.kf is not None
+            if had:
+                self._lose(ts, "invalid")
+            ev = self.event
+            self._reset_keep_ego()
+            self.ts = ts
+            self.event = ev if had or (ev is not None and ev.get("kind") == "invalid") else None
+            e = self._ego_at(es)
+            return self._message(road, None, e[0] if e else None, bool(e and e[1]), e[2] if e else None,
+                                 e[3] if e else None, e[4] if e else None)
+        v_ego, stands, src, ego_age, ego_tag = self._ego_at(es)
         usable = z is not None and z["p"] >= c["drop_prob"]
         strong = z is not None and z["p"] >= c["acquire_prob"]
         if self.departed and (not stands or ts - self.departed["ts"] > c["departed_keep_s"] * NS):
@@ -532,9 +523,9 @@ class LeadTracker:
         return self._message(road, zvis, v_ego, stands, src, ego_age, ego_tag)
 
     def _reset_keep_ego(self):
-        ego, tid, ver = self.ego, self.track_id, self.version
+        tid, ver = self.track_id, self.version
         self._reset()
-        self.ego, self.track_id, self.version = ego, tid, ver
+        self.track_id, self.version = tid, ver
 
     def _accumulate(self, z, ts):
         """Acquisition by accumulated evidence: True when the probabilities of successive frames that agree with
@@ -708,6 +699,11 @@ class LeadTracker:
         out = {"type": "lead", "seq": road.get("seq"), "ts_mono_ns": ts, "ts_real_ns": road.get("ts_real_ns"),
                "present": self.kf is not None, "mode": self.mode, "track_id": self.track_id if self.kf else None,
                "source": "vision+ego" if src == "vehicle" else "vision", "road_model": self.road_model}
+        valid, reason, inputs = getattr(self, "_validity", (True, None, {}))
+        # valid false: the lead is unknown (not "no lead"): a source it is made from is faulted, or the ego speed
+        # is unknown; `inputs` is the integrator's health of those sources ("unchecked" = alive, nothing to check
+        # it against: a car without a vehicle feed)
+        out.update(valid=valid, reason=reason, inputs=inputs)
         rad = self.rad
         if rad is not None and self.kf is not None:
             seen = z is not None and z["p"] >= c["drop_prob"]
@@ -760,15 +756,16 @@ class LeadTracker:
             "moved_m": None if self.kf is None else round(self.kf.x[0] - dep["dist_at_stop_m"], 2)}
         ev = self.event
         out["event"] = None if ev is None else dict(ev, age_s=round((ts - ev["ts_mono_ns"]) / NS, 2))
-        br = self.brake
-        out["ego"] = {"speed_mps": round(v_ego, 3), "standstill": bool(stands), "source": src,
+        es = getattr(self, "_es", None) or {}
+        out["ego"] = {"speed_mps": None if v_ego is None else round(v_ego, 3), "standstill": bool(stands), "source": src,
+                      "std_mps": (es.get("speed") or {}).get("std"),
                       "age_s": ego_age, "tag": ego_tag,
-                      "brake": br[1] if br is not None and abs(ts - br[0]) <= c["brake_max_age_s"] * NS else None}
+                      "brake": signal(es, "brake", c["brake_max_age_s"])}
         out["vision"] = vis
         return out
 
     def summary(self, msg):
         """Short dict for /v1/health and `fused.lead`."""
-        keys = ("present", "mode", "track_id", "dist_m", "dist_std_m", "lateral_m", "v_rel_mps", "v_lead_mps",
-                "a_lead_mps2", "time_gap_s", "ttc_s", "standing", "departed", "source")
+        keys = ("present", "valid", "reason", "mode", "track_id", "dist_m", "dist_std_m", "lateral_m", "v_rel_mps",
+                "v_lead_mps", "a_lead_mps2", "time_gap_s", "ttc_s", "standing", "departed", "source")
         return {k: msg.get(k) for k in keys}

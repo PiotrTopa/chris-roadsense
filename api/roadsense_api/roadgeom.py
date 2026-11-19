@@ -41,6 +41,8 @@ import math
 
 import numpy as np
 
+from .integrator import LocalEgo, signal
+
 NS = 1e9
 
 DEFAULT_CFG = dict(
@@ -80,6 +82,7 @@ class RoadGeometryFusion:
         self.cfg = dict(DEFAULT_CFG)
         if cfg:
             self.cfg.update(cfg)
+        self._local = LocalEgo()
         self.reset()
 
     def reset(self):
@@ -88,7 +91,6 @@ class RoadGeometryFusion:
         self.hdg = 0.0                 # heading driven (rad, positive right)
         self.v = 0.0
         self.width = None
-        self.ego = None                # last ego message
         self.map = None                # prepared map geometry (dict) or None
         self.map_why = "no_map"
         self.fit = None                # (dy, dyaw) low-passed
@@ -101,8 +103,9 @@ class RoadGeometryFusion:
 
     # ---- inputs ----------------------------------------------------------------------------------
     def on_ego(self, msg):
+        """A mapd `ego` message, for an instance that is not handed the integrator's state (docs/INTEGRATOR.md)."""
         if isinstance(msg, dict) and _fin(msg.get("ts_mono_ns")):
-            self.ego = msg
+            self._local.feed(msg)
 
     def on_map(self, msg):
         """Keep the geometry of a usable map message, with the odometer and heading it belongs to."""
@@ -219,9 +222,10 @@ class RoadGeometryFusion:
         return max(min(r, c["reach_max_m"], float(x[-1])), min(c["reach_min_m"], float(x[-1])))
 
     # ---- one frame -------------------------------------------------------------------------------
-    def on_lanes(self, lanes, road=None):
+    def on_lanes(self, lanes, road=None, ego=None):
         """One `lanes` message (and the `road` message it was made from) -> the geometry for that frame
-        (roadview.py puts it into `view.road`)."""
+        (roadview.py puts it into `view.road`). `ego`: the integrator's `ego_state` of the frame (speed, yaw rate,
+        the turn signal); without one, the motion the `lanes` message carries (the integrator's too)."""
         c = self.cfg
         ts_ns = (lanes or {}).get("ts_mono_ns")
         if not _fin(ts_ns):
@@ -229,15 +233,18 @@ class RoadGeometryFusion:
         ts = ts_ns / NS
         ego_l = (lanes.get("ego") or {})
         v = ego_l.get("speed_mps") if _fin(ego_l.get("speed_mps")) else 0.0
-        yaw_r = ego_l.get("yaw_rate") if _fin(ego_l.get("yaw_rate")) else 0.0        # the model's: positive right
-        motion = "vision"
+        yaw_r = ego_l.get("yaw_rate") if _fin(ego_l.get("yaw_rate")) else 0.0        # positive right
+        motion = ego_l.get("source") or "vision"
         turn = None
-        e = self.ego
-        if e is not None and abs(ts - e["ts_mono_ns"] / NS) <= c["intent_max_age_s"]:
-            if _fin(e.get("yaw_rate_rps")):
-                yaw_r, motion = -e["yaw_rate_rps"], "vehicle"
-            if e.get("turn_signal") in ("left", "right"):
-                turn = e["turn_signal"]
+        es = ego if ego is not None else self._local.state(ts_ns)
+        if es is not None:
+            yr = es.get("yaw_rate") or {}
+            if yr.get("valid"):
+                yaw_r = -yr["value"]
+                motion = "vehicle" if any(x.startswith("vehicle.") for x in yr.get("sources") or ()) else "vision"
+            sig = signal(es, "turn_signal", c["intent_max_age_s"])
+            if sig in ("left", "right"):
+                turn = sig
         dt = 0.0 if self.ts is None else ts - self.ts
         if dt < 0.0 or dt > 1.0:
             keep_map, why = self.map, self.map_why

@@ -138,6 +138,21 @@ class Mapd:
         msg = dict(ego, ts_real_ns=time.time_ns() - (now_ns - ego["ts_mono_ns"]))
         self._send(self.ego_clients, (json.dumps(msg, separators=(",", ":")) + "\n").encode())
 
+    def relay_gnss(self, g, now_ns):
+        """Pass an accepted receiver fix on to ego.sock as it came (`gnss`), with the time mapd gave it: the
+        api's integrator checks the other sources against the receiver's speed, and the recorder keeps the raw
+        fixes. Every fix is relayed, also a repeated one (the share of repeats is a property of the receiver)."""
+        if not self.ego_clients:
+            return
+        meta = self.engine.last_gnss or {}
+        ts = meta.get("ts") if isinstance(meta.get("ts"), int) else now_ns
+        msg = {k: g.get(k) for k in ("fix", "lat", "lon", "hacc_m", "speed_mps", "speed_acc_mps", "course_deg",
+                                     "course_acc_deg", "alt_m", "sats", "hdop", "utc_ms", "age_ms", "source") if k in g}
+        self._gnss_seq = getattr(self, "_gnss_seq", 0) + 1
+        msg.update(type="gnss", seq=self._gnss_seq, ts_mono_ns=ts, arrival_mono_ns=now_ns,
+                   ts_real_ns=time.time_ns() - (now_ns - ts))
+        self._send(self.ego_clients, (json.dumps(msg, separators=(",", ":")) + "\n").encode())
+
     async def veh_client(self, reader, writer):
         self.veh_clients.add(writer)
         if self.last_vehicle:
@@ -216,6 +231,8 @@ class Mapd:
                     info["messages"] += 1
                     if self.a.ego_hz > 0:
                         self.relay_ego(now_ns)
+                        if msg.get("type") == "gnss":
+                            self.relay_gnss(msg, now_ns)
                     self.relay_vehicle(now_ns)
         except (OSError, ValueError, asyncio.LimitOverrunError) as e:
             log.warning("feeder: %s", e)

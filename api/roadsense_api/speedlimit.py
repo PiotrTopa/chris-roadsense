@@ -11,6 +11,8 @@ import math
 import os
 import re
 
+from .integrator import LocalEgo
+
 RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules")
 LIVE_TRACK_TIMEOUT_S = 2.0
 NS = 1e9
@@ -93,8 +95,10 @@ class SpeedLimit:
         ex = self.rules["expiry"]
         self.ex = ex
         self.tracks = {}
-        self.odo = 0.0                    # metres, integrated v_ego
-        self.v_ego = None
+        self.odo = 0.0                    # metres, the integrator's ego speed integrated (docs/INTEGRATOR.md)
+        self.v_ego = None                 # m/s; None while the ego speed is unknown (the odometer stands then)
+        self.ego_source = None            # "vehicle" | "vision": what the speed of the odometer is made from
+        self._local = LocalEgo()          # the integrator of an engine that is not handed an ego state
         self.now_ns = None
         self.now_real_ns = None
         self.seq = None
@@ -119,10 +123,15 @@ class SpeedLimit:
         self.track_hooks = []             # callables(track, live): other engines judge the classes this one ignores
 
     # ---- inputs ----------------------------------------------------------
-    def on_message(self, msg):
+    def on_message(self, msg, ego=None):
+        """`ego`: the integrator's `ego_state` for a `road` frame (the api passes it; an engine fed `road` alone,
+        or `ego` messages too, builds its own)."""
         t = msg.get("type")
+        if t == "ego":
+            self._local.feed(msg)
+            return False
         if t == "road":
-            self.on_road(msg)
+            self.on_road(msg, ego)
         elif t == "signs":
             self.on_signs(msg)
         elif t == "env":
@@ -138,19 +147,23 @@ class SpeedLimit:
             self.now_real_ns = msg.get("ts_real_ns", self.now_real_ns)
             self.seq = msg.get("seq", self.seq)
 
-    def on_road(self, msg):
+    def on_road(self, msg, ego=None):
+        """Odometer and heading of the frame, from the integrator's ego state (vehicle speed and yaw rate when the
+        host feeds them, the road model's otherwise; until lane L37 always the road model's). While the speed is
+        unknown the odometer does not advance: distances "since the sign" then run late, never ahead."""
         self._clock(msg)
         ts = msg.get("ts_mono_ns")
-        v = msg.get("v_ego")
-        if v is None:
-            v = (msg.get("pose") or {}).get("vx")
-        if ts is None or v is None:
+        if ts is None:
             return
-        v = max(0.0, float(v))
-        yaw_rate = float((msg.get("pose") or {}).get("yaw_rate") or 0.0)
-        if self._last_road_ns is not None and ts > self._last_road_ns:
+        es = ego if ego is not None else self._local.at(msg)
+        sp, yr = (es or {}).get("speed") or {}, (es or {}).get("yaw_rate") or {}
+        v = max(0.0, abs(sp["value"])) if sp.get("valid") else None
+        self.ego_source = None if v is None else \
+            "vehicle" if any(x.startswith("vehicle.") for x in sp.get("sources") or ()) else "vision"
+        yaw_rate = -yr["value"] if yr.get("valid") else 0.0          # positive right, as the heading always was
+        if self._last_road_ns is not None and ts > self._last_road_ns and v is not None:
             dt = min((ts - self._last_road_ns) / NS, self.cfg["max_dt_s"])
-            self.odo += 0.5 * (v + (self.v_ego or v)) * dt
+            self.odo += 0.5 * (v + (self.v_ego if self.v_ego is not None else v)) * dt
             self.yaw_deg += math.degrees(yaw_rate) * dt
             self.heading.append((self.odo, self.yaw_deg))
             while self.heading and self.odo - self.heading[0][0] > self.ex["turn_window_m"]:
@@ -513,6 +526,7 @@ class SpeedLimit:
             "advisory_kmh": self.advisory["value_kmh"] if self.advisory else None,
             "pending": self.pending(),
             "v_ego_kmh": None if self.v_ego is None else round(self.v_ego * 3.6, 1),
+            "ego_source": self.ego_source,
             "odometer_m": round(self.odo, 1),
             "rules": self.rules["country"],
         }

@@ -405,7 +405,7 @@ class Inputs(unittest.TestCase):
             self.assertEqual((o["type"], o["present"], o["dist_m"]), ("lead", False, None))
         # a lead without speed outputs still tracks on distance alone
         for i in range(20):
-            o = tr.on_road({"type": "road", "seq": 100 + i, "ts_mono_ns": (30 + i) * NS // 10,
+            o = tr.on_road({"type": "road", "seq": 100 + i, "ts_mono_ns": (30 + i) * NS // 10, "v_ego": 10.0,
                             "leads": [{"prob": 0.9, "x": [25.0 - 0.1 * i]}]})
         self.assertTrue(o["present"])
         self.assertAlmostEqual(o["dist_m"], 23.1, delta=0.5)

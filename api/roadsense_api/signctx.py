@@ -41,12 +41,17 @@ def _inside(p, b, grow=0.0):
 
 def lead_rect(road, calib, intrinsics, frame_wh):
     """Image rectangle (frame px) of the lead vehicle's rear, or None."""
-    leads = (road or {}).get("leads") or []
-    if not leads:
-        return None
-    lead = leads[0]
-    if (lead.get("prob") or 0.0) < LEAD_MIN_PROB or not lead.get("x"):
-        return None
+    if (road or {}).get("type") == "lead":          # the tracked lead (lead.py): present, valid, with a distance
+        if not road.get("present") or road.get("valid") is False or road.get("dist_m") is None:
+            return None
+        lead = {"x": [road["dist_m"]], "y": [road.get("lateral_m") or 0.0]}
+    else:
+        leads = (road or {}).get("leads") or []
+        if not leads:
+            return None
+        lead = leads[0]
+        if (lead.get("prob") or 0.0) < LEAD_MIN_PROB or not lead.get("x"):
+            return None
     f, cx, cy, w, h = intrinsics
     fw, fh = frame_wh
     pr = Projector((f * fw / w, cx * fw / w, cy * fw / w, fw, fh), calib, (fw, fh))
@@ -81,7 +86,9 @@ class SignContext:
         item["reason"] = hit[0]
 
     def annotate(self, msg, road=None, lights=None, calib=None, intrinsics=(690.0, 640.0, 360.0, 1280, 720)):
-        """Adds `context` / `suppressed` / `reason` to round red detections and ended tracks of a `signs` message."""
+        """Adds `context` / `suppressed` / `reason` to round red detections and ended tracks of a `signs` message.
+        `road`: a `road` message, or (the api, since lane L37) the tracked `lead` message: the lead vehicle that
+        explains a red round "sign" is then the validated track, not the model's raw guess."""
         ts = msg.get("ts_mono_ns") or 0
         lt = lights if lights and abs((lights.get("ts_mono_ns") or 0) - ts) <= LIGHT_DT_NS else None
         rd = road if road and abs((road.get("ts_mono_ns") or 0) - ts) <= ROAD_DT_NS else None

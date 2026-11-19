@@ -77,13 +77,15 @@ class RulesInEffect:
     def now_ns(self):
         return self.speed.now_ns
 
-    def on_message(self, msg):
+    def on_message(self, msg, ego=None):
         t = msg.get("type")
         if t == "lights":
             self.speed._clock(msg)
             self._on_lights(msg)
-        elif t in ("road", "signs", "env"):
-            self.speed.on_message(msg)
+        elif t in ("road", "signs", "env", "ego"):
+            self.speed.on_message(msg, ego)
+            if t == "ego":
+                return False
         else:
             return False
         self._sync_junctions()
@@ -469,6 +471,7 @@ class RulesInEffect:
             "road_class": sp.road_class["type"],
             "zone": {"type": sp.zone["type"], "limit_kmh": sp.zone["limit_kmh"]},
             "v_ego_kmh": None if sp.v_ego is None else round(sp.v_ego * 3.6, 1),
+            "ego_source": sp.ego_source,
             "odometer_m": round(sp.odo, 1),
             "rules": self.rules["country"],
         }

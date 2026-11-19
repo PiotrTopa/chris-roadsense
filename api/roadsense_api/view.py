@@ -52,6 +52,7 @@ No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC 
 """
 import math
 
+from .integrator import LocalEgo, validity
 from .roadview import RoadView
 
 NS = 1e9
@@ -187,12 +188,12 @@ class ViewBuilder:
     def __init__(self, cfg=None):
         self.cfg = dict(DEFAULT_CFG, **(cfg or {}))
         self.road_cfg = self.cfg.pop("road", None)
+        self._local = LocalEgo()               # the integrator of a builder that is not handed an ego state
         self.reset()
 
     def reset(self):
         self.ts = None
-        self.ego = None                        # (ts, speed, yaw rate positive right) from vehicle motion
-        self.model_motion = (0.0, 0.0)         # the model's (speed, yaw rate positive right) of the last frame
+        self.es = None                         # the integrator's `ego_state` of the last frame (docs/INTEGRATOR.md)
         self.static = {}                       # id -> _Static
         self.lines = {}                        # id -> _Line
         self.lead = None                       # {"id", "x", "y", "vx", "t0", "ts", "alpha", "msg"}
@@ -208,11 +209,8 @@ class ViewBuilder:
 
     # ---- inputs ------------------------------------------------------------------------------------------
     def on_ego(self, msg):
-        ts, v = msg.get("ts_mono_ns"), msg.get("speed_mps")
-        if not isinstance(ts, int) or not _fin(v):
-            return
-        yaw = msg.get("yaw_rate_rps")
-        self.ego = (ts, float(v), -float(yaw) if _fin(yaw) else None)   # the input's yaw rate is positive left
+        """A mapd `ego` message, for a builder that is not handed the integrator's state."""
+        self._local.feed(msg)
 
     # ---- the lane-source seam (lane L27) -----------------------------------------------------------------
     # The lines a consumer DRAWS may come from another source than the road model: a separate, cheap lane-line
@@ -386,24 +384,22 @@ class ViewBuilder:
         return self.ext_scale if self.ext_scale is not None else 1.0
 
     def _motion(self, ts):
-        v, r = self.model_motion
-        src = "vision"
-        if self.ego is not None and abs(ts - self.ego[0]) <= self.cfg["ego_max_age_s"] * NS:
-            v, src = self.ego[1], "vehicle"
-            if self.ego[2] is not None:
-                r = self.ego[2]
-        return v, r, src
+        """(speed, yaw rate positive right, source) of the car from the integrator's state of the last frame; an
+        unknown quantity carries nothing (0)."""
+        es = self.es
+        if es is None:
+            return 0.0, 0.0, "none"
+        sp, yr = es.get("speed") or {}, es.get("yaw_rate") or {}
+        src = "vehicle" if any(x.startswith("vehicle.") for x in sp.get("sources") or ()) else \
+            "vision" if sp.get("valid") else "none"
+        return (sp["value"] if sp.get("valid") else 0.0), (-yr["value"] if yr.get("valid") else 0.0), src
 
-    def on_road(self, road):
-        """The model's motion (fallback when no host feeds the vehicle's) and the plan."""
-        v = road.get("v_ego")
-        pose = road.get("pose") or {}
-        if not _fin(v):
-            v = pose.get("vx")
-        r = pose.get("yaw_rate")
-        self.model_motion = (float(v) if _fin(v) else 0.0, float(r) if _fin(r) else 0.0)
+    def on_road(self, road, usable=True):
+        """The plan of the frame (light positions: offset + path); none while the camera is not believable."""
         plan = road.get("plan") or {}
-        if isinstance(plan.get("x"), list) and isinstance(plan.get("y"), list):
+        if not usable:
+            self.plan = None
+        elif isinstance(plan.get("x"), list) and isinstance(plan.get("y"), list):
             self.plan = (plan["x"], plan["y"])
 
     def _static_upsert(self, oid, kind, x, y, sx, sy, ts):
@@ -486,18 +482,25 @@ class ViewBuilder:
     def on_map(self, msg):
         self.road.on_map(msg)
 
-    def on_frame(self, road, lead, lanes, geom=None, egolane=None):
+    def on_frame(self, road, lead, lanes, geom=None, egolane=None, ego=None):
         """After the api's `lead` / `lanes` for a road frame: returns the `view` message for that frame. `geom`:
-        RoadGeometryFusion's result for the frame; `egolane`: the ego-lane filter's."""
+        RoadGeometryFusion's result for the frame; `egolane`: the ego-lane filter's; `ego`: the integrator's
+        `ego_state` of the frame. While the integrator holds the vision source faulted the picture carries no
+        lead, no lines and no path, and `integrity` says why."""
         c = self.cfg
         ts = road.get("ts_mono_ns")
         if not isinstance(ts, int):
             return None
+        es = ego if ego is not None else self._local.at(road)
         if self.ts is not None and (ts <= self.ts or ts - self.ts > c["max_gap_s"] * NS):
-            keep_ego, keep_road = self.ego, self.road
+            keep_road = self.road
             self.reset()
-            self.ego, self.road = keep_ego, keep_road
-        self.on_road(road)
+            self.road = keep_road
+        self.es = es
+        valid, reason, inputs = validity(es, ("vision",), ())
+        self.on_road(road, valid)
+        if not valid:
+            lead = lanes = None
         dt = 0.0 if self.ts is None else (ts - self.ts) / NS
         self.ts = ts
         v, r, src = self._motion(ts)
@@ -523,7 +526,7 @@ class ViewBuilder:
                             "sx": round(math.sqrt(ob.px), 2), "sy": round(math.sqrt(ob.py), 2),
                             "age_s": round((ts - self.seen.get(oid, ob.t0)) / NS, 2), "meas_age_s": round(age, 3),
                             "phase": phase, "alpha": round(ob.alpha, 2), "attrs": ob.attrs, "box": ob.box})
-        lines = self._lines(self._display_lanes(lanes, ts), ts, dt, fade)
+        lines = self._lines(self._display_lanes(lanes, ts) if valid else None, ts, dt, fade)
         path = None
         if self.plan:
             ys = [_interp(self.plan[0], self.plan[1], x) for x in c["xs"]]
@@ -533,6 +536,9 @@ class ViewBuilder:
         return {"type": "view", "seq": road.get("seq"), "ts_mono_ns": ts, "ts_real_ns": road.get("ts_real_ns"),
                 "x": list(c["xs"]),
                 "ego": {"speed_mps": round(v, 2), "yaw_rate_rps": round(-r, 4), "source": src},   # positive left
+                # the health of what the picture is made from: valid false = the camera is not believable now
+                # (the reason says why); a consumer shows that instead of an empty road
+                "integrity": {"valid": valid, "reason": reason, "inputs": inputs},
                 "objects": objects, "lines": lines, "lines_source": self.lines_source, "lines_scale": self.lines_scale,
                 "path": path,
                 "road_model": road.get("road_model"),

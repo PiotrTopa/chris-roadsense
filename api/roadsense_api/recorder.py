@@ -25,7 +25,7 @@ Cost: about 30 kB/s of compressed messages and one 40-110 kB JPEG a second, a fe
 core per second. Old sessions are deleted, oldest first, when the directory exceeds `max_mb`. Nothing leaves
 the device. The recorder never raises into the fan-out: a full disk stops the recording, not the api.
 
-Config keys (all optional but `dir`): `max_mb` (4000), `road_hz` (20), `ego_hz` (10), `objects_hz` (10), `view_hz` (2),
+Config keys (all optional but `dir`): `max_mb` (4000), `road_hz` (20), `ego_hz` (25), `ego_state_hz` (2), `objects_hz` (10), `view_hz` (2),
 `frame_every_s` (1.0; 0 = no frames), `topics` (list; default below).
 """
 import gzip
@@ -38,9 +38,9 @@ import time
 log = logging.getLogger("roadsense_api.recorder")
 
 DEFAULT_TOPICS = ("road", "lights", "signs", "env", "speed_limit", "rules", "fused", "map", "ego", "calib", "camera",
-                  "vehicle", "objects", "view")
-DEFAULTS = dict(dir=None, max_mb=4000, road_hz=20.0, ego_hz=10.0, objects_hz=10.0, view_hz=2.0, frame_every_s=1.0,
-                topics=list(DEFAULT_TOPICS))
+                  "vehicle", "objects", "view", "gnss", "ego_state")
+DEFAULTS = dict(dir=None, max_mb=4000, road_hz=20.0, ego_hz=25.0, objects_hz=10.0, view_hz=2.0, frame_every_s=1.0,
+                ego_state_hz=2.0, topics=list(DEFAULT_TOPICS))
 CLOCK_STEP_S = 120.0            # the wall clock moved this much against the monotonic one: re-date the session
 
 
@@ -63,8 +63,11 @@ def _r(v, nd):
 
 def slim_road(road):
     """The part of a `road` message the trackers and the replay tools read, numbers shortened."""
+    # every scalar a tracker or a replay tool reads: `road_model` selects the trackers' profile (it was dropped
+    # until lane L37, so replays ran the supercombo profile on vision-model sessions), `camera` names the camera
     out = {k: road.get(k) for k in ("type", "seq", "ts_mono_ns", "ts_real_ns", "model_ms", "v_ego", "valid",
-                                    "frames_skipped", "pair_dt_ms") if k in road}
+                                    "frames_skipped", "pair_dt_ms", "road_model", "road_model_fallback",
+                                    "policy_hz", "frame_seq_prev", "camera") if k in road}
     pose = road.get("pose")
     if isinstance(pose, dict):
         out["pose"] = {k: round(v, 4) if isinstance(v, float) else v for k, v in pose.items()}
@@ -80,6 +83,9 @@ def slim_road(road):
     plan = road.get("plan")
     if isinstance(plan, dict):
         out["plan"] = {k: _r(plan.get(k), 2) for k in ("x", "y", "z") if k in plan}
+        for k in ("held", "age_ms"):
+            if k in plan:
+                out["plan"][k] = plan[k]
     return out
 
 
@@ -132,7 +138,7 @@ class Recorder:
             return
         now = self.clock()
         cap = {"road": self.cfg["road_hz"], "ego": self.cfg["ego_hz"], "objects": self.cfg["objects_hz"],
-               "view": self.cfg["view_hz"], "camera": 1.0}.get(mtype)
+               "view": self.cfg["view_hz"], "camera": 1.0, "ego_state": self.cfg["ego_state_hz"]}.get(mtype)
         if cap and now - self._last.get(mtype, -1e9) < 1.0 / cap - 0.005:
             return
         self._last[mtype] = now
