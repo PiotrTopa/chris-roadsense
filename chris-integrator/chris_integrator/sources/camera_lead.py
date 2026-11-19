@@ -52,6 +52,7 @@ DEFAULT_CFG = dict(
     radar_only_s=5.0,            # the camera's designation outlives its own evidence this long while a radar has it
     scale_tau_s=5.0, scale_min_n=10, scale_keep_s=60.0,   # camera distance scale learned from a range sensor
     adopt_gate_m=3.0, adopt_gate_rel=0.25, adopt_gate_lat_m=1.8,   # an existing track this near the camera's lead is it
+    adopt_gate_v=2.5,            # ... and its speed over ground agrees with the camera's within this (+ 2 sigma of the track)
     # evidence handling for a memoryless road model (off here; the `vision` profile below turns it on)
     weak_prob=None, weak_tol_m=2.0, weak_tol_rel=0.08, weak_v_tol=2.5, weak_inflate=2.5, weak_coast_s=2.5,
     acquire_score=None, acquire_tol_m=1.5, acquire_tol_rel=0.08, acquire_fast_prob=0.9, acquire_decay=0.5,
@@ -196,16 +197,20 @@ class CameraLeadModel(SensorModel):
         else:
             if cur is not None:
                 self._release(cur)
-            tr = self._adopt(layer, z, T) if not same else None
+            # a track another sensor holds where the camera's lead is: the camera designates that one (also on a
+            # re-acquisition: the track the camera lost may have been carried by a radar meanwhile)
+            tr = self._adopt(layer, z, T, vl=vl if z["v_rel"] is not None else None, vl_var=rv,
+                             prefer=g["id"] if same else None)
             if tr is None:
                 tid = g["id"] if same and all(t.id != g["id"] for t in layer.tracks) else layer.new_id()
                 tr = Track(tid, x0, P0, T, self.src, 0.9)
                 layer.tracks.append(tr)
-                if same:
-                    kind = "reacquired"
             else:
                 tr.sources.add(self.src)
+            if same:
+                kind = "reacquired"
         tr.designated = self.src
+        tr.mem["vehicle"] = True                           # the road model calls it a vehicle
         tr.state = "confirmed"
         tr.standing = False
         tr.last_seen[self.src] = T
@@ -226,8 +231,11 @@ class CameraLeadModel(SensorModel):
         self.version += 1
         self.event = {"kind": kind, "ts_mono_ns": ts, "track_id": tr.id}
 
-    def _adopt(self, layer, z, T, exclude=None):
-        """A track another sensor already holds where the camera's lead is: the camera designates that one."""
+    def _adopt(self, layer, z, T, exclude=None, vl=None, vl_var=0.0, prefer=None):
+        """A track another sensor already holds where the camera's lead is: the camera designates that one. vl: the
+        lead's speed over ground by the camera (None: unknown), vl_var its variance; a track whose own speed
+        disagrees beyond both uncertainties is another object (a stationary return beside a moving lead). prefer: a
+        track id that wins any tie (the track the camera lost)."""
         c = self.cfg
         gx = max(c["adopt_gate_m"], c["adopt_gate_rel"] * z["x"])
         best = None
@@ -237,7 +245,9 @@ class CameraLeadModel(SensorModel):
             dx, dy = abs(tr.x[X] - z["x"]), abs(tr.x[Y] + z["y"])
             if dx > gx or dy > c["adopt_gate_lat_m"]:
                 continue
-            cost = dx / gx + dy / c["adopt_gate_lat_m"]
+            if vl is not None and abs(tr.x[VX] - vl) > c["adopt_gate_v"] + 2.0 * math.sqrt(max(tr.P[VX, VX], 0.0) + vl_var):
+                continue
+            cost = dx / gx + dy / c["adopt_gate_lat_m"] - (1.0 if prefer is not None and tr.id == prefer else 0.0)
             if best is None or cost < best[0]:
                 best = (cost, tr)
         return None if best is None else best[1]
@@ -327,15 +337,16 @@ class CameraLeadModel(SensorModel):
         if cur is not None and self.other is None:
             # the camera's own track and another sensor's track of the same vehicle (they started apart by the
             # camera's range error): the camera designates the other one, which keeps this track's id
-            o = self._adopt(layer, {"x": float(cur.x[X]), "y": -float(cur.x[Y])}, T, exclude=cur)
+            o = self._adopt(layer, {"x": float(cur.x[X]), "y": -float(cur.x[Y])}, T, exclude=cur, vl=float(cur.x[VX]),
+                            vl_var=float(cur.P[VX, VX]))
             if o is not None:
                 layer.tracks.remove(cur)
-                o.id = cur.id
+                layer.take_identity(o, cur)
+                o.mem["vehicle"] = True
                 o.designated, o.state, o.standing = self.src, "confirmed", cur.standing
                 o.sources.add(self.src)
                 o.last_seen[self.src] = cur.last_seen.get(self.src, T)
                 o.mem["policy"] = cur.mem.get("policy")
-                o.t0 = min(o.t0, cur.t0)
                 cur = self.cur = o
                 self.other = self._has_other(cur, T)
         # the camera's distance on the scale a range sensor taught (docs/lanes/L14-lead.md)
