@@ -56,4 +56,7 @@ def start_clients(state, rundir, daemons):
         # the car as the host describes it (`vehicle`) and the scans of its range sensors (`objects`)
         tasks.append(asyncio.create_task(daemon_client(state, "mapd", os.path.join(rundir, "vehicle.sock"), track=False,
                                                        backoff_max=2.0), name="sock-vehicle"))
+    # optional: a separate lane source for the display (`display_lanes` messages, view.py); absent on most hosts
+    tasks.append(asyncio.create_task(daemon_client(state, "laned", os.path.join(rundir, "laned.sock"), track=False),
+                                     name="sock-laned"))
     return tasks

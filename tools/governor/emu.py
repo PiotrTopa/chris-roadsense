@@ -83,6 +83,7 @@ def main():
              {"what": "signs", "caps": {"signs_hz": NOM[1] / 2}},
              {"what": "lights", "caps": {"lights_hz": NOM[2] / 2}},
              {"what": "detectors_floor", "caps": {"env_hz": 0, "signs_hz": NOM[1] / 4, "lights_hz": NOM[2] / 4}},
+             {"what": "plan", "caps": {"policy_hz": 2}, "quick": True},
              {"what": "road", "caps": {"road_hz": NOM[0] / 2}, "last_resort": True}]
     gcfg = {"probe": "file:" + reading, "enabled": GOV == "on", "steps": steps,
             "floors": {"road": fl, "lead": fl, "lanes": fl, "lights": {"hz": round(0.7 * NOM[2], 1), "latency_ms": 800.0},

@@ -45,6 +45,31 @@ minute after the radar lost the object, so that the hand-over back to vision is 
 loses the lead but the radar still has the object, the track lives on the radar alone for `radar_only_s`.
 Without fresh scans nothing of this runs and the tracker is the vision tracker.
 
+Road-model profiles (`PROFILES`, lane L27). The tracker's noise model and life cycle were measured on supercombo
+v0.9.7. The v0.11.1 vision model (`road.road_model == "vision"`, the default road model since L27) is a different
+instrument: it has no memory, so its presence probability flickers from frame to frame and it finds and drops
+distant leads; but its relative speed comes from an image pair 200 ms apart and is 2-4 times steadier than
+supercombo's (0.8-1.0 m/s per frame at 50 m and beyond against 2-4 m/s), while its own `v_std` overstates that
+scatter. The profile is applied by the message's `road_model` (a user's config still wins) and builds on that:
+
+    relative speed  trusted (rv_scale 0.5, rv_rel 0.01), so the filter's speed carries the distance through gaps;
+    distance        its per-frame scatter is taken at 0.4 of the model's x_std (measured: 2-4 m at 50 m and beyond),
+                    and it gets a random walk of (3 % of d)^2 per second: the model's distance drifts against its
+                    own speed output, and a track that trusted the speed alone stopped following the distance;
+    weak evidence   a frame under `drop_prob` but at or above `weak_prob`, whose distance AND relative speed agree
+                    with the track's prediction, is a measurement with inflated noise. The track is then not
+                    confirmed: mode `coast`, `evidence: "weak"`, and it ends after `weak_coast_s` without a
+                    confirming frame. A frame that agrees with nothing is no evidence at all (`evidence: "none"`,
+                    prediction only, `coast_s`);
+    acquisition     by accumulated evidence (`acquire_score`): the probabilities of successive frames that agree
+                    with each other through the reported relative speed add up; a frame that does not agree
+                    starts again. One confident frame pair still acquires at once (a cut-in is not delayed);
+    re-acquisition  a track lost less than `reacquire_s` ago that the new lead continues (distance predicted with
+                    its last speed) keeps its `track_id` (event `reacquired`): the lead was absent in between and
+                    the message said so, but it is the same vehicle for a consumer that draws it.
+
+Nothing is held: a track without evidence is predicted for a bounded time, marked, and then dropped.
+
 No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC ns).
 """
 import collections
@@ -107,7 +132,36 @@ DEFAULT_CFG = dict(
     radar_only_s=5.0,            # the track lives on the radar alone this long after the camera lost the lead
     radar_scale_tau_s=5.0, radar_scale_min_n=10, radar_scale_keep_s=60.0,   # camera distance scale learned from the radar
     brake_max_age_s=3.0,         # a brake state older than this is unknown
+    # evidence handling for a memoryless road model (off here; the `vision` profile below turns it on)
+    weak_prob=None,              # a frame with weak_prob <= prob < drop_prob that agrees with the track is weak evidence
+    weak_tol_m=2.0, weak_tol_rel=0.08,     # ... agrees: |x - predicted| within max(m, rel * distance)
+    weak_v_tol=2.5,              # ... and |lead speed - the track's| within this, m/s
+    weak_inflate=2.5,            # sigma factor of a weak frame
+    weak_coast_s=2.5,            # a track ends this long after its last confirming frame (prob >= drop_prob)
+    acquire_score=None,          # a track starts when the summed probability of mutually consistent frames reaches this
+    acquire_tol_m=1.5, acquire_tol_rel=0.08,   # consistent: |x - (previous x + v_rel dt)| within max(m, rel * x)
+    acquire_fast_prob=0.9,       # two consistent frames in a row at or above this start the track at once (cut-in)
+    acquire_decay=0.5,           # a frame under drop_prob multiplies the sum by this
+    dist_walk_rel=0.0,           # the model's distance drifts against its own speed output: the distance gets a
+                                 # random walk of (this * distance)^2 per second on top of the kinematics
+    relocate_v_tol=None,         # a replacing hypothesis whose lead speed is within this (m/s) of the track's ...
+    relocate_y_tol=1.0,          # ... and whose lateral position is within this (m) is the same vehicle seen at another
+                                 # distance: the track jumps to it and keeps its id (event `relocated`)
+    reacquire_s=0.0,             # a new track within this long of a lost one, where that one would be now, keeps its id
+    reacquire_tol_m=3.0, reacquire_tol_rel=0.15,
 )
+
+# Per road model (`road.road_model`), on top of DEFAULT_CFG; a key set by the user's config wins. Tuned on the rides
+# krakow-2024, warsaw-storm, gdansk-night-snow, tunnels-s3 and scored on four others (docs/lanes/L27-new-model-default.md).
+PROFILES = {
+    "vision": dict(
+        rv_scale=0.5, rv_rel=0.01, rx_scale=0.4, dist_walk_rel=0.03,
+        weak_prob=0.1, weak_coast_s=2.5, coast_s=0.8,
+        acquire_score=2.5,
+        relocate_v_tol=1.5,
+        reacquire_s=3.0,
+    ),
+}
 
 
 def _fin(v):
@@ -163,7 +217,9 @@ class _KF:
 
 class LeadTracker:
     def __init__(self, cfg=None):
-        self.cfg = dict(DEFAULT_CFG, **(cfg or {}))
+        self.user_cfg = dict(cfg or {})
+        self.road_model = None                       # `road.road_model` of the last message (selects the profile)
+        self.cfg = dict(DEFAULT_CFG, **self.user_cfg)
         self.ego = collections.deque(maxlen=64)      # (ts_ns, signed speed m/s, standstill, tag, standing since ts)
         self.scans = {}                              # range sensor id -> (ts_ns, objects) of its last scan
         self.brake = None                            # (ts_ns, pressed) from the `vehicle` topic
@@ -191,6 +247,24 @@ class LeadTracker:
         self.sx_bias = 0.0            # the model's own distance std, smoothed (absolute accuracy)
         self.rad = None               # the radar object associated in this frame
         self.radar_only = 0.0         # s the track has lived without the camera
+        self.weak_s = 0.0             # s since the last confirming frame (prob >= drop_prob) of the track
+        self.evidence = "none"        # this frame: "strong" | "weak" | "none"
+        self.acq_score = 0.0          # summed probability of consistent frames (acquire_score)
+        self.acq_prev = None          # (ts, x, v_rel, prob) of the last usable frame without a track
+        self.ghost = None             # the last lost track: {"x","v","ts","id"} (reacquire_s)
+
+    def _profile(self, road):
+        """The road model named in the message selects the profile (a restart of modeld with the other model)."""
+        rm = road.get("road_model")
+        rm = rm if isinstance(rm, str) else None
+        if rm == self.road_model:
+            return
+        self.road_model = rm
+        self.cfg = dict(DEFAULT_CFG, **PROFILES.get(rm, {}))
+        self.cfg.update(self.user_cfg)
+        if self.kf is not None:
+            self._lose(road.get("ts_mono_ns"), "reset")
+        self._reset_keep_ego()
 
     def reset(self):
         self._reset()
@@ -335,9 +409,12 @@ class LeadTracker:
             return None
         v, a, y = _first(ld.get("v")), _first(ld.get("a")), _first(ld.get("y"))
         sx, sv, sa = _first(ld.get("x_std")), _first(ld.get("v_std")), _first(ld.get("a_std"))
-        vm = road.get("v_ego")
+        # the model's own speed, to turn the lead's speed into a relative one: supercombo's `v_ego` (what it was fed,
+        # the previous run's pose); the vision model's pose of this very run (lead speed and pose come from the
+        # same image pair, so their difference is the pair's relative speed)
+        vm = (road.get("pose") or {}).get("vx") if self.road_model == "vision" else road.get("v_ego")
         if not _fin(vm):
-            vm = (road.get("pose") or {}).get("vx")
+            vm = road.get("v_ego") if self.road_model == "vision" else (road.get("pose") or {}).get("vx")
         vm = float(vm) if _fin(vm) else None
         return {"p": float(p), "x": x, "y": y if y is not None else 0.0, "v": v, "a": a,
                 "sx": sx if sx is not None else 0.1 * x + 0.5, "sv": sv if sv is not None else 1.0,
@@ -357,6 +434,7 @@ class LeadTracker:
     def _start(self, z, v_ego, ts, kind):
         rx, rv = self._noise(z)
         vl = (z["v_rel"] + v_ego) if z["v_rel"] is not None else v_ego
+        old = (self.kf.x[1], self.y) if self.kf is not None else None
         self.kf = _KF(z["x"], vl, 0.0, 4.0 * rx, 4.0 * rv + 1.0, 1.0)
         self.y = z["y"]
         self.mode = "track"
@@ -367,11 +445,31 @@ class LeadTracker:
         self.both_stand_s = 0.0
         self.last_meas = ts
         self.sx_bias = z["sx"]
-        self.track_id += 1
+        self.weak_s = 0.0
+        self.evidence = "strong"
+        self.acq_score, self.acq_prev = 0.0, None
+        g, self.ghost = self.ghost, None
+        same = False
+        if g is not None and kind == "acquired" and (ts - g["ts"]) <= self.cfg["reacquire_s"] * NS:
+            pred = g["x"] + (g["v"] - v_ego) * (ts - g["ts"]) / NS
+            same = abs(z["x"] - pred) <= max(self.cfg["reacquire_tol_m"], self.cfg["reacquire_tol_rel"] * max(pred, 0.0))
+        if same:
+            kind = "reacquired"
+        elif kind in ("changed", "cut_in") and old is not None and self.cfg["relocate_v_tol"] is not None \
+                and z["v_rel"] is not None and abs(vl - old[0]) <= self.cfg["relocate_v_tol"] \
+                and abs(z["y"] - old[1]) <= self.cfg["relocate_y_tol"]:
+            kind = "relocated"
+        else:
+            self.track_id += 1
         self.version += 1
         self.event = {"kind": kind, "ts_mono_ns": ts, "track_id": self.track_id}
 
     def _lose(self, ts, kind="lost"):
+        if kind == "lost" and self.kf is not None and self.cfg["reacquire_s"] > 0 and isinstance(ts, int):
+            self.ghost = {"x": self.kf.x[0], "v": self.kf.x[1], "ts": ts}
+        else:
+            self.ghost = None
+        self.evidence = "none"
         self.kf = None
         self.mode = "none"
         self.cand = None
@@ -388,6 +486,8 @@ class LeadTracker:
         ts = road.get("ts_mono_ns")
         if not isinstance(ts, int):
             return None
+        self._profile(road)
+        c = self.cfg
         dt = None if self.ts is None else (ts - self.ts) / NS
         if dt is not None and (dt <= 0.0 or dt > c["max_gap_s"]):
             if self.kf is not None:
@@ -416,11 +516,19 @@ class LeadTracker:
             self.departed = None
 
         if self.kf is None:
-            self.acq = self.acq + 1 if strong else 0
-            if strong and self.acq >= c["acquire_frames"]:
+            self.evidence = "none"
+            if c["acquire_score"] is None:
+                self.acq = self.acq + 1 if strong else 0
+                if strong and self.acq >= c["acquire_frames"]:
+                    self._start(z, v_ego, ts, "acquired")
+            elif self._accumulate(z if usable else None, ts) and strong:
                 self._start(z, v_ego, ts, "acquired")
         elif dt is not None:
-            self._step_track(z if usable else None, v_ego, stands, src, ts, dt)
+            weak = None
+            if not usable and z is not None and c["weak_prob"] is not None and z["p"] >= c["weak_prob"] \
+                    and "r_abs" not in z:
+                weak = z
+            self._step_track(z if usable else None, v_ego, stands, src, ts, dt, weak)
         return self._message(road, zvis, v_ego, stands, src, ego_age, ego_tag)
 
     def _reset_keep_ego(self):
@@ -428,7 +536,26 @@ class LeadTracker:
         self._reset()
         self.ego, self.track_id, self.version = ego, tid, ver
 
-    def _step_track(self, z, v_ego, stands, src, ts, dt):
+    def _accumulate(self, z, ts):
+        """Acquisition by accumulated evidence: True when the probabilities of successive frames that agree with
+        each other (the distance moved as the reported relative speed says) sum to `acquire_score`."""
+        c = self.cfg
+        if z is None:
+            self.acq_score *= c["acquire_decay"]
+            if self.acq_score < 0.05:
+                self.acq_score, self.acq_prev = 0.0, None
+            return False
+        pv = self.acq_prev
+        ok = False
+        if pv is not None:
+            pred = pv[1] + (pv[2] if pv[2] is not None else 0.0) * (ts - pv[0]) / NS
+            ok = abs(z["x"] - pred) <= max(c["acquire_tol_m"], c["acquire_tol_rel"] * z["x"])
+        self.acq_score = self.acq_score + z["p"] if ok else z["p"]
+        fast = ok and z["p"] >= c["acquire_fast_prob"] and pv[3] >= c["acquire_fast_prob"]
+        self.acq_prev = (ts, z["x"], z["v_rel"], z["p"])
+        return ok and (fast or self.acq_score >= c["acquire_score"])
+
+    def _step_track(self, z, v_ego, stands, src, ts, dt, weak=None):
         c = self.cfg
         kf = self.kf
         if self.stand is not None and not stands:        # a wheel turns: back to the moving model at once
@@ -440,13 +567,26 @@ class LeadTracker:
                    0.0 if stands else sig_ve)
         if kf.x[0] < 0.3:
             kf.x[0] = 0.3
+        if c["dist_walk_rel"] and st is None:
+            kf.P[0][0] += (c["dist_walk_rel"] * kf.x[0]) ** 2 * dt
         if z is None:
-            self.miss_s += dt
             self.mode = "coast"
             self.both_stand_s = 0.0
-            if self.miss_s > (c["stand_coast_s"] if st is not None else c["coast_s"]):
+            self.weak_s += dt
+            lim = c["stand_coast_s"] if st is not None else c["coast_s"]
+            if weak is not None and self._weak_update(weak, v_ego):
+                # not confirmed, but not blind either: the frame agrees with the track in distance and speed
+                self.evidence = "weak"
+                self.miss_s = 0.0
+                if self.weak_s > max(lim, c["weak_coast_s"]):
+                    self._lose(ts)
+                return
+            self.evidence = "none"
+            self.miss_s += dt
+            if self.miss_s > lim or (c["weak_prob"] is not None and self.weak_s > max(lim, c["weak_coast_s"])):
                 self._lose(ts)
             return
+        self.evidence = "strong"
         rx, rv = self._noise(z)
         vl = None if z["v_rel"] is None else z["v_rel"] + v_ego
         ended = False
@@ -463,16 +603,19 @@ class LeadTracker:
         nu, s = kf.innovation(0, z["x"], rx)
         jump = abs(nu) > c["gate_sigma"] * math.sqrt(s) and abs(nu) > max(c["gate_min_m"], c["gate_rel"] * kf.x[0])
         if jump:
+            self.evidence = "none"
             self._candidate(z, v_ego, ts, nu)
             if self.kf is not kf or self.cand is None:       # the track was replaced
                 return
             self.miss_s += dt
+            self.weak_s += dt
             self.both_stand_s = 0.0
             if self.miss_s > max(c["coast_s"], c["change_confirm_s"] + 0.2):
                 self._start(z, v_ego, ts, "changed")
             return
         self.cand = None
         self.miss_s = 0.0
+        self.weak_s = 0.0
         self.mode = "track"
         self.last_meas = ts
         if st is not None:
@@ -498,6 +641,22 @@ class LeadTracker:
                 self.departed = None
         else:
             self.both_stand_s = 0.0
+
+    def _weak_update(self, z, v_ego):
+        """A frame under drop_prob: used (noise inflated) only when its distance and its relative speed both agree
+        with the track's prediction. Returns whether it was used."""
+        c = self.cfg
+        kf = self.kf
+        if abs(z["x"] - kf.x[0]) > max(c["weak_tol_m"], c["weak_tol_rel"] * kf.x[0]):
+            return False
+        vl = None if z["v_rel"] is None else z["v_rel"] + v_ego
+        if vl is None or abs(vl - kf.x[1]) > c["weak_v_tol"]:
+            return False
+        rx, rv = self._noise(z)
+        f = (c["weak_inflate"] / c["low_prob_inflate"]) ** 2     # _noise already applied low_prob_inflate
+        kf.update(0, z["x"], rx * f)
+        kf.update(1, vl, rv * f)
+        return True
 
     def _cusum(self, st, rvn, dt, ts):
         """Standing: two-sided CUSUM on the lead speed in sigmas (the model's own motion cue: it stays within a few
@@ -548,7 +707,7 @@ class LeadTracker:
         ts = self.ts
         out = {"type": "lead", "seq": road.get("seq"), "ts_mono_ns": ts, "ts_real_ns": road.get("ts_real_ns"),
                "present": self.kf is not None, "mode": self.mode, "track_id": self.track_id if self.kf else None,
-               "source": "vision+ego" if src == "vehicle" else "vision"}
+               "source": "vision+ego" if src == "vehicle" else "vision", "road_model": self.road_model}
         rad = self.rad
         if rad is not None and self.kf is not None:
             seen = z is not None and z["p"] >= c["drop_prob"]
@@ -585,6 +744,7 @@ class LeadTracker:
                 ttc_s=round(max(ref, 0.0) / -v_rel, 1) if v_rel <= -c["ttc_min_closing"] else None,
                 standing=self.stand is not None,
                 meas_age_s=round((ts - self.last_meas) / NS, 3) if self.last_meas is not None else None,
+                evidence=self.evidence,
                 pending_change=self.cand is not None,
                 prob=None if z is None else round(z["p"], 3))
             if gap is not None:
@@ -592,7 +752,7 @@ class LeadTracker:
         else:
             out.update(age_s=None, dist_m=None, dist_std_m=None, dist_filter_std_m=None, lateral_m=None,
                        v_rel_mps=None, v_rel_std_mps=None, v_lead_mps=None, a_lead_mps2=None, time_gap_s=None,
-                       ttc_s=None, standing=False, meas_age_s=None, pending_change=False, prob=None if z is None else round(z["p"], 3))
+                       ttc_s=None, standing=False, meas_age_s=None, evidence="none", pending_change=False, prob=None if z is None else round(z["p"], 3))
         dep = self.departed
         out["departed"] = dep is not None
         out["departure"] = None if dep is None else {

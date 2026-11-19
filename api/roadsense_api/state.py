@@ -212,6 +212,8 @@ class State:
         if mtype == "objects":     # a scan of a range sensor: the lead tracker's radar input (lead.json radar_fusion)
             self.objects[msg.get("sensor")] = msg
             self.lead.on_objects(msg)
+        if mtype == "display_lanes":   # an external lane source for the display only (view.py, the lane-source seam)
+            self.view.on_display_lanes(msg)
         if mtype == "map":         # lane count of the matched road: a soft prior for the outer lane lines
             self.lanes.on_map(msg)
             self.roadgeom.on_map(msg)
@@ -457,6 +459,12 @@ class State:
             "daemons": daemons,
             "fps": {t: self.fps(t) for t in TOPICS},
             "model_ms": road.get("model_ms"),
+            # which road model runs and where its plan comes from (lane L27): "vision" (openpilot v0.11.1
+            # driving_vision + driving_policy, the default) or "supercombo" (v0.9.7); `fallback` = modeld was not told
+            # a model and the default one's files were missing, so it runs the other
+            "road_model": {"model": road.get("road_model"), "fallback": road.get("road_model_fallback"),
+                           "plan": "plan" in road, "plan_age_ms": (road.get("plan") or {}).get("age_ms"),
+                           "policy_hz": road.get("policy_hz"), "policy_ms": road.get("policy_ms")} if road else None,
             "detect_ms": signs.get("detect_ms"),
             "env_ms": env.get("env_ms"),
             "env": {g: (env.get(g) or {}).get("label") for g in ("place", "weather", "light")} if env else None,
