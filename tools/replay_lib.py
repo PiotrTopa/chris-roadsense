@@ -16,11 +16,13 @@ import os
 import sys
 import zlib
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_ROOT, "api"))
+sys.path.insert(0, os.path.join(_ROOT, "integrator"))
 
 NS = 1e9
 PASS = ("lights", "signs", "env", "speed_limit", "rules", "map", "ego", "vehicle", "camera", "calib", "gnss", "objects")
-INTEGRATOR_INPUTS = ("ego", "vehicle", "gnss", "objects")
+INTEGRATOR_INPUTS = ("ego", "vehicle", "gnss", "objects", "map", "calib")
 
 
 def read_lines(path):
@@ -140,7 +142,7 @@ def _with_map(session, map_path):
     maps.sort(key=lambda m: m["ts_mono_ns"])
     k = 0
     for m in read_lines(session):
-        if m.get("type") == "ego_state":      # recomputed by the pipeline
+        if m.get("type") in ("ego_state", "tracks"):      # recomputed by the pipeline
             continue
         if m.get("type") == "map":
             continue
@@ -154,18 +156,17 @@ def _with_map(session, map_path):
 
 class Pipeline:
     def __init__(self, view_cfg=None, egolane_cfg=None, fused_period_s=0.5, integrator_cfg=None, integrator=True):
-        """integrator False: the trackers run as on a car whose integrator sees the road model only and never
-        faults it (the before-L37 behaviour for a comparison: vision fault detection off)."""
-        from roadsense_api.integrator import Integrator
+        """integrator: an `Integrator` to use (extra sources registered), or True for the stack's default."""
+        from roadsense_integrator import Integrator
         from roadsense_api.egolane import EgoLaneEstimator
         from roadsense_api.fusion import Fusion
         from roadsense_api.lanes import RoadGeometryTracker
-        from roadsense_api.lead import LeadTracker
         from roadsense_api.roadgeom import RoadGeometryFusion
         from roadsense_api.view import ViewBuilder
-        self.lead, self.lanes, self.geom = LeadTracker(), RoadGeometryTracker(), RoadGeometryFusion()
+        self.lanes, self.geom = RoadGeometryTracker(), RoadGeometryFusion()
         self.egolane, self.view, self.fusion = EgoLaneEstimator(egolane_cfg), ViewBuilder(view_cfg), Fusion()
-        self.integrator = Integrator(integrator_cfg)
+        self.integrator = integrator if not isinstance(integrator, bool) else Integrator(integrator_cfg)
+        integrator = integrator is not False
         self.gate = integrator
         self.latest = {}
         self.intr = (975.0, 640.0, 360.0, 1280, 720)
@@ -177,11 +178,11 @@ class Pipeline:
         if t == "calib" and m.get("focal_px"):
             self.intr = (float(m["focal_px"]), float(m.get("cx") or 640), float(m.get("cy") or 360),
                          int(m.get("width") or 1280), int(m.get("height") or 720))
-        if t == "ego_state":              # a recorded one: the pipeline computes its own
+        if t in ("ego_state", "tracks"):  # recorded ones: the pipeline computes its own
             return []
         if t in INTEGRATOR_INPUTS:
             self.integrator.on_message(m)
-        elif t == "map":
+        if t == "map":
             for x in (self.lanes, self.geom, self.view, self.egolane):
                 x.on_map(m)
         elif t == "lights":
@@ -197,14 +198,12 @@ class Pipeline:
         if t != "road" or not isinstance(ts, int):
             return []
         self.latest["road"] = m
-        es = self.integrator.on_road(m)
-        if not self.gate:                 # comparison mode: the same ego state, no source ever counts as faulted
-            for g in es["sources"].values():
-                if g["state"] == "fault":
-                    g["state"] = "unchecked"
+        es, tr, ld = self.integrator.frame(m)
         self.latest["ego_state"] = es
         out = [m, es]
-        ld = self.lead.on_road(m, es)
+        if tr is not None:
+            self.latest["tracks"] = tr
+            out.append(tr)
         if ld is not None:
             self.latest["lead"] = ld
             out.append(ld)

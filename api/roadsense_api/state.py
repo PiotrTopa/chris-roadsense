@@ -22,8 +22,9 @@ from .speedlimit import load_rules
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd", "mapd")
 TOPICS = ("camera", "road", "signs", "calib", "env", "speed_limit", "lights", "rules", "map", "fused", "ego", "lead", "lanes",
-          "vehicle", "objects", "view", "ego_state", "gnss")
-INTEGRATOR_INPUTS = ("ego", "vehicle", "gnss", "objects")      # besides `road`: what the integrator is fed
+          "vehicle", "objects", "view", "ego_state", "gnss", "tracks")
+INTEGRATOR_INPUTS = ("ego", "vehicle", "gnss", "objects", "map", "calib")   # besides `road`: what the integrator is fed
+INTEGRATOR_OUTPUTS = ("ego_state", "tracks", "lead")           # what it puts out (in-process, or over integrator.sock)
 FUSED_PERIOD_S = 0.45
 SPEED_LIMIT_HEARTBEAT_S = 1.0
 HISTORY_MAX = 500
@@ -164,11 +165,14 @@ class State:
         self.fusion = Fusion(load_rules(rules).get("defaults_kmh"))   # derived topic `fused` (fusion.py)
         self._fused_emit = 0.0
         # every input passes through the integrator first; the trackers below read its `ego_state` (integrator/)
-        self.integrator = Integrator(load_integrator_config())
+        self.integrator_mode = "inproc"                    # "daemon": roadsense-integratord serves integrator.sock
+        self._pending = collections.OrderedDict()          # daemon mode: ts_mono_ns -> [road msg, outputs so far, deadline]
+        self.integrator_timeouts = 0
+        self.integrator = self._new_integrator()
         self.fault_file = os.path.join(datadir, "integrator.json") if datadir and os.path.isdir(datadir) else None
         self._faults_saved = None
         self._carry_faults()
-        self.lead = LeadTracker(load_lead_config())        # derived topic `lead` (lead.py)
+        self.lead = LeadTracker                            # the `lead` topic comes from the integrator (lead.py: summary)
         self.lanes = RoadGeometryTracker(load_lanes_config())   # derived topic `lanes` (lanes.py)
         self.roadgeom = RoadGeometryFusion(load_roadgeom_config())   # the road geometry inside `view.road` (roadgeom.py)
         self.view = ViewBuilder(load_view_config())        # derived display channel `view` (view.py, roadview.py)
@@ -187,6 +191,13 @@ class State:
         return self.governor.topic_status(topic, self.fps(topic) or None, lat)
 
     # ---- the integrator ----------------------------------------------------
+    def _new_integrator(self):
+        cfg = dict(load_integrator_config() or {})
+        lead = load_lead_config()
+        if lead:
+            cfg["lead"] = dict(lead, **(cfg.get("lead") or {}))
+        return Integrator(cfg)
+
     def _carry_faults(self):
         """A source that was faulted when the last run ended starts this run faulted (a camera knocked off its
         mount stays knocked off while the car is parked); evidence of agreement clears it as any other fault."""
@@ -200,6 +211,7 @@ class State:
         for group, rec in (saved.get("faults") or {}).items():
             if isinstance(rec, dict):
                 self.integrator.carry_fault(group, "carried over from the previous run: %s" % rec.get("reason"))
+        self.integrator.calibration_restore(saved.get("calibration"))
         self._faults_saved = sorted(self.integrator.faults())
 
     def _save_faults(self):
@@ -213,7 +225,8 @@ class State:
         try:
             with open(self.fault_file + ".tmp", "w") as f:
                 json.dump({"ts_real_ns": time.time_ns(),
-                           "faults": {g: {"reason": r.get("reason"), "rule": r.get("rule")} for g, r in faults.items()}}, f)
+                           "faults": {g: {"reason": r.get("reason"), "rule": r.get("rule")} for g, r in faults.items()},
+                           "calibration": self.integrator.calibration_snapshot()}, f)
             os.replace(self.fault_file + ".tmp", self.fault_file)
         except OSError:
             pass
@@ -234,12 +247,20 @@ class State:
         self.last_msg[daemon] = now
         if not isinstance(mtype, str):
             return
-        if mtype in INTEGRATOR_INPUTS:
+        if mtype in INTEGRATOR_OUTPUTS and daemon == "integratord":
+            return self._on_integrator_output(msg, line, now)
+        if mtype in INTEGRATOR_INPUTS and self.integrator_mode == "inproc":
             try:
                 self.integrator.on_message(msg)
                 if mtype == "ego" and self.integrator.camera_silent() and isinstance(msg.get("ts_mono_ns"), int):
-                    # no road frames: the ego state still goes out, at the vehicle's rate
-                    self._ego_state(self.integrator.state(msg["ts_mono_ns"], msg.get("ts_real_ns")), now)
+                    # no road frames: the ego state (and the tracks other sensors hold) still go out, at the
+                    # vehicle's rate
+                    es, tr, ld = self.integrator.tick(msg["ts_mono_ns"], msg.get("ts_real_ns"))
+                    self._ego_state(es, now)
+                    if tr is not None:
+                        self._emit("tracks", tr, now)
+                        ld["rate"] = self._rate("lead", msg)
+                        self._emit("lead", ld, now)
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("integrator failed")
@@ -268,9 +289,8 @@ class State:
         if mtype == "road":
             ts = msg.get("ts_real_ns")
             self._road_lat_ms = (time.time_ns() - ts) / 1e6 if isinstance(ts, int) and ts > 0 else None
-        if mtype == "objects":     # a scan of a range sensor: the lead tracker's radar input (lead.json radar_fusion)
+        if mtype == "objects":     # a scan of a range sensor (an input of the integrator's object layer)
             self.objects[msg.get("sensor")] = msg
-            self.lead.on_objects(msg)
         if mtype == "display_lanes":   # an external lane source for the display only (view.py, the lane-source seam)
             self.view.on_display_lanes(msg)
         if mtype == "map":         # lane count of the matched road: a soft prior for the outer lane lines
@@ -295,22 +315,77 @@ class State:
                 logging.getLogger("roadsense_api.state").exception("view (%s) failed", mtype)
         for cb in list(self.subscribers):
             cb(mtype, line)
-        es = None
         if mtype == "road":
-            try:                              # the integrator's state for this frame: what every tracker below reads
-                es = self.integrator.on_road(msg)
-                self._ego_state(es, now)
+            if self.integrator_mode == "daemon":
+                self._road_wait(msg, now)     # the trackers run when the integrator's outputs for this frame are in
+                return
+            es = tr = ld = None
+            try:                              # the integrator's outputs for this frame: what every tracker below reads
+                es, tr, ld = self.integrator.frame(msg)
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("integrator failed")
+            self._on_frame(msg, es, tr, ld, now)
+        elif mtype in ("signs", "env", "lights"):
+            self._on_speed(msg, now, None)
+        self._fused_tick(mtype, now)
+
+    # ---- daemon mode: the integrator is another process (integrator.sock) ------------------------------
+    def _road_wait(self, msg, now):
+        ts = msg.get("ts_mono_ns")
+        self._flush_pending(now)
+        if not isinstance(ts, int):
+            return
+        self._pending[ts] = [msg, {}, now + self.integrator_deadline_s]
+        while len(self._pending) > 8:         # the integrator is gone: frames go out as unknown, oldest first
+            self._release(next(iter(self._pending)), now, timeout=True)
+
+    def _on_integrator_output(self, msg, line, now):
+        ts = msg.get("ts_mono_ns")
+        p = self._pending.get(ts)
+        if p is None:                         # no road frame waits for it (the camera is silent): pass it on
+            if msg["type"] == "lead":
+                msg["rate"] = self._rate("lead", msg)
+            self._emit(msg["type"], msg, now)
+            if msg["type"] == "ego_state":
+                self._save_faults()
+            return
+        p[1][msg["type"]] = msg
+        if len(p[1]) == len(INTEGRATOR_OUTPUTS):
+            for old in [t for t in self._pending if t < ts]:
+                self._release(old, now, timeout=True)
+            self._release(ts, now)
+
+    def _flush_pending(self, now):
+        for ts in [t for t, p in self._pending.items() if now >= p[2]]:
+            self._release(ts, now, timeout=True)
+
+    def _release(self, ts, now, timeout=False):
+        msg, outs, _ = self._pending.pop(ts)
+        if timeout:
+            self.integrator_timeouts += 1
+        self._on_frame(msg, outs.get("ego_state"), outs.get("tracks"), outs.get("lead"), now)
+        self._fused_tick("road", now)
+
+    integrator_deadline_s = 0.08
+
+    # ---- one road frame with the integrator's outputs for it ---------------------------------------------
+    def _on_frame(self, msg, es, tr, ld, now):
+        if True:
             try:
-                out = self.lead.on_road(msg, es)
-                if out is not None:
-                    out["rate"] = self._rate("lead", msg)
-                    self._emit("lead", out, now)
+                self._ego_state(es, now)
+                if tr is not None:
+                    self._emit("tracks", tr, now)
+                if ld is None:                # no answer from the integrator for this frame: unknown, never raw
+                    ld = {"type": "lead", "seq": msg.get("seq"), "ts_mono_ns": msg.get("ts_mono_ns"),
+                          "ts_real_ns": msg.get("ts_real_ns"), "present": False, "mode": "none", "track_id": None,
+                          "valid": False, "reason": "integrator_timeout", "inputs": {}, "standing": False,
+                          "departed": False, "event": None, "vision": None, "radar": None}
+                ld["rate"] = self._rate("lead", msg)
+                self._emit("lead", ld, now)
             except Exception:                 # a malformed road message must not stop the fan-out
                 import logging
-                logging.getLogger("roadsense_api.state").exception("lead tracker failed")
+                logging.getLogger("roadsense_api.state").exception("integrator outputs failed")
             lanes_out = geom = None
             try:
                 out = lanes_out = self.lanes.on_road(msg, es)
@@ -336,8 +411,9 @@ class State:
             except Exception:
                 import logging
                 logging.getLogger("roadsense_api.state").exception("view failed")
-        if mtype in ("road", "signs", "env", "lights"):
             self._on_speed(msg, now, es)
+
+    def _fused_tick(self, mtype, now):
         if now - self._fused_emit >= FUSED_PERIOD_S and mtype in ("map", "road", "env", "signs"):
             self._fused_emit = now
             try:
@@ -367,8 +443,8 @@ class State:
         self.suppressed_tracks.clear()
         self.signctx = signctx.SignContext()
         self.fusion = Fusion(load_rules(self._rules).get("defaults_kmh"))
-        self.integrator = Integrator(load_integrator_config())   # another drive: nothing of the old one is evidence
-        self.lead.reset()
+        self.integrator = self._new_integrator()     # another drive: nothing of the old one is evidence
+        self._pending.clear()
         self.lanes.reset()
         self.roadgeom.reset()
         self.view.reset()

@@ -1,4 +1,5 @@
-"""How consumers read the integrator's output (the `ego_state` message)."""
+"""How consumers read the integrator's outputs (`ego_state`, `tracks`, `lead`). These helpers are the whole
+consumer-side dependency: no consumer reaches into the estimator."""
 
 
 def usable(es, group):
@@ -18,6 +19,8 @@ def validity(es, depends=("vision",), need=("speed",)):
     src = (es or {}).get("sources") or {}
     groups = list(depends) + [g for g in ("vehicle",) if g in src and g not in depends]
     inputs = inputs_health(es, groups)
+    if es is None:
+        return False, "integrator: no state", inputs
     for g in depends:
         s = src.get(g) or {}
         if s.get("state") == "fault":
@@ -36,17 +39,23 @@ def signal(es, name, max_age_s):
     return s.get("value")
 
 
+def quantity(es, name):
+    """(value, std) of an ego quantity when valid, else (None, None)."""
+    q = (es or {}).get(name) or {}
+    return (q.get("value"), q.get("std")) if q.get("valid") else (None, None)
+
+
 class LocalEgo:
-    """A consumer that is not handed an ego state builds its own from the same messages, so a tracker in a
-    test or a tool runs the same code path as in the api."""
+    """A consumer that is not handed an ego state builds its own integrator from the same messages (ego part
+    only), so a tracker in a test or a tool runs the same code path as in the stack."""
 
     def __init__(self):
         self.integ = None
 
     def _get(self):
         if self.integ is None:
-            from .core import Integrator
-            self.integ = Integrator()
+            from .core.integrator import Integrator
+            self.integ = Integrator(objects=False)
         return self.integ
 
     def feed(self, msg):
@@ -56,7 +65,6 @@ class LocalEgo:
         return self._get().on_road(road)
 
     def state(self, ts_mono_ns):
-        """The state at a time without feeding a frame (None when nothing was ever fed)."""
         return self.integ.state(ts_mono_ns) if self.integ is not None and isinstance(ts_mono_ns, int) else None
 
     def reset(self):

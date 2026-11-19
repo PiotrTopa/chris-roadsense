@@ -209,3 +209,45 @@ class SelfCheck:
 
     def reset_data(self):
         self.win.clear()
+
+
+class NisMonitor:
+    """Innovation consistency of one (group, quantity): the scaled median of the normalised innovations squared
+    over a window of time (1 when the filter's stated uncertainty is right; the median, not the mean, so a
+    heavy-tailed source is judged by its bulk)."""
+
+    kind = "nis"
+    MED = 0.4549                      # median of chi-square with 1 degree of freedom
+
+    def __init__(self, group, quantity, cfg):
+        self.group, self.quantity, self.c = group, quantity, cfg
+        self.q = collections.deque(maxlen=cfg["max_n"])
+        self.value = None
+        self.high = False
+        self.n_total = 0
+
+    def offer(self, t, d2):
+        q = self.q
+        q.append((t, d2))
+        while q and q[0][0] < t - self.c["window_s"]:
+            q.popleft()
+        self.n_total += 1
+        if len(q) >= self.c["min_n"]:
+            self.value = statistics.median(d for _, d in q) / self.MED
+            old = self.high
+            self.high = self.value > (self.c["recover"] if old else self.c["fire"])
+            return self.high != old
+        return False
+
+    def report(self):
+        return {"kind": "nis", "a": self.group, "quantity": self.quantity,
+                "verdict": "unknown" if self.value is None else "high" if self.high else "ok",
+                "n": len(self.q), "ratio": None if self.value is None else round(self.value, 2)}
+
+    def describe(self):
+        return "%s innovations %.1fx the stated uncertainty" % (self.quantity, self.value or 0.0)
+
+    def reset_data(self):
+        self.q.clear()
+        self.value = None
+        self.high = False
