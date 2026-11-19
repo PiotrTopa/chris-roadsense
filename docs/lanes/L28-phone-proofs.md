@@ -309,3 +309,13 @@ Readings:
 * The road step (9) and plan step (8) were never reached automatically; a hotter condition (fan 0 % with the
   governor) would test them, at the cost of running close to the stop.
 
+
+## Correction (main thread, 2026-11-19)
+
+"No CPU limiter exists on this kernel" is wrong as stated. The CPU zones have no cooling device bound, but the
+SoC's hardware limiter (LMh, driver `qcom-lmh`) is bound for both clusters: `lmh@17d70800` and `lmh@17d78800`
+with arm 65 C, low 94.5 C, high 95 C (device tree properties `qcom,lmh-temp-*-millicelsius`), and
+`/proc/interrupts` shows `lmh-irq` / `dcvsh-irq-4` at 3 since boot for the big cluster, 0 for the little one.
+It acts at 95 C, which is also the lane safety stop, so every run was stopped before its effect could be seen;
+it does not show in the `cooling_device*` states the governor reads as "limiter". Its holding behaviour above
+95 C is not measured.
