@@ -118,23 +118,33 @@ method and every row in [docs/lanes/L21-budget-and-models.md](lanes/L21-budget-a
 * Per-process GPU time is in `/proc/<pid>/fdinfo/*` (`drm-engine-gpu`); the daemons name their threads
   (`md-prep`, `md-prefetch`, `md-main`, `sg-signs`, `sg-lights`), so `top -H` shows the stages.
 
-### Budget with the new default road model (lane L27, 2026-11-19): estimate
+### Budget with the new default road model (measured 2026-11-19, lane L27)
 
-The default road model is now openpilot v0.11.1 `driving_vision` (GPU) + `driving_policy` (CPU). Until the
-phone numbers of docs/lanes/L27-new-model-default.md section 6 are in, the budget is an estimate from L21's
-table above, L24-M's laptop ratios and this lane's laptop measurements:
+The default road model is openpilot v0.11.1 `driving_vision` (GPU) + `driving_policy` (CPU, 5 runs a second).
+Same bench, same session, the same sign / light / scenery daemons (L21's proposed stack: envd on the little
+cores, lights 5 Hz), candidates run from `~/l27`, nothing installed
+([docs/lanes/L27-new-model-default.md](lanes/L27-new-model-default.md) section 6):
 
-| | supercombo (measured, L21) | vision + policy (estimate) | from |
+| | supercombo | vision + policy at 5 Hz (default) | vision + policy after every run |
 |---|---|---|---|
-| GPU per road run | 47 ms | 28-38 ms | L21's survey ratios 0.60-0.77; laptop GPU ratio 0.73 (9.5 against about 13 ms incl. dispatch) |
-| road runs a second next to the sign detector at 5 a second | 13.8 | 17-20 (`--max-hz 20` caps it), or 13.8 with 12-26 % of the GPU's time free | GPU time per run |
-| frame prep on the little cores, per frame | 10 ms (19 % of an A55 at 20 frames/s) | about 4 ms (8 %) | laptop ratio 0.39 (nearest warp, one gather) |
-| policy on a big core | - | 10-20 ms per run expected; at the default 5 runs a second 5-10 % of an A75 (about 0.1-0.2 W); at every run (17/s) 17-34 % | laptop 6.0 ms per run, 1.1 ms per vision run on average at 5 Hz |
-| rail power of the stack (L21's proposed profile, 7.0 W) | 7.0 W | about 7.0 W: the GPU stays full in time (more road runs instead of fewer watts), the policy adds 0.1-0.2 W, the prep saves about 0.1 W | - |
-| governor step `plan` (policy at 2 runs a second) | - | saves three policy runs a second: under 0.1 W | - |
+| rail W | 6.83 | 6.59 | 6.73 |
+| GPU busy (modeld's part) | 91 % (66 %) | 84 % (59 %) | 83 % (57 %) |
+| big cores busy / C | 139 % / 71 | 137 % / 68 | 146 % / 70 |
+| little cores busy; of it frame prep | 204 %; 20.7 % | 192 %; 11.8 % | 192 %; 11.7 % |
+| model thread on a big core (GPU dispatch, parsing, policy) | 7.5 % | 8.6 % | 17.0 % |
+| road runs a second; model step | 13.8; 54 ms | 15.2; 44 ms | 14.8; 50 ms |
+| `road` latency camera -> consumer, median / p90 | 111 / 131 ms | 85 / 97 ms | 101 / 121 ms |
 
-The estimate says: about the same power, 3-6 more road runs a second or the same rate with GPU time to spare,
-and a small new big-core load that the governor sheds before it touches the road model's rate.
+* Single process (`modeld_replay --backend ncnn`, clocks pinned): 46.8 ms per run against supercombo's 60.5 ms;
+  frame prep 1.8-4.7 ms against 12.9 ms; the policy 7.9 ms per run on an A75 (18.0 ms on an A55).
+* The GPU is no longer full in time (84 %): 7 points are free, and the road rate is now set by the turn-taking
+  with the sign detector, not by the GPU.
+* fp16 on the Adreno against ORT fp32 for this model: lines that are present are within 0.007 m (to 30 m) and
+  0.019 m (30-100 m) on average, like supercombo's; the lead distance differs by 0.37 m on average (0.86 m p95,
+  about 1 % of the distance), twice supercombo's 0.19 m. The strict script of the "GPU inference" section
+  (maximum over all four lines to 192 m) rejects both models on the bench clip; see the lane report.
+* Governor step `plan` (the policy at 2 runs a second): three policy runs a second less, about 0.7 % of a big
+  core; it is in the order for completeness, not for its saving.
 
 ### Thermal headroom and the load governor (lane L24, 2026-11-18)
 

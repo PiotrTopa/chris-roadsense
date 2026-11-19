@@ -17,14 +17,14 @@ that uses it (headless render with simulated data).</sub>
   facts are combined, its provenance. A car gateway, a logger or a display is a separate project.
 * **Informs, never controls.** roadsense gathers and serves data; it does not steer, brake or
   accelerate anything.
-* In the spirit of [openpilot](https://github.com/commaai/openpilot) (its MIT supercombo model is
+* In the spirit of [openpilot](https://github.com/commaai/openpilot) (its MIT driving models are
   used) and [flowpilot](https://github.com/flowdriveai/flowpilot) (GPL-3.0: ideas only, no code).
 
 ## What it serves
 
 | Topic | Source | Content |
 |---|---|---|
-| `road` | modeld: openpilot supercombo (v0.9.7, MIT) | planned path, 4 lane lines and 2 road edges with probabilities, lead vehicles, ego pose, desire and meta state |
+| `road` | modeld: openpilot v0.11.1 `driving_vision` + `driving_policy` (MIT; the default), or supercombo v0.9.7 (`road_model`) | planned path, 4 lane lines and 2 road edges with probabilities, lead vehicles, ego pose, desire and meta state |
 | `lanes` | api tracker | the road geometry over time: lane-line and edge presence with hysteresis, Kalman-filtered geometry, coasting through drop-outs |
 | `lead` | api tracker | the lead vehicle: distance, relative speed, time gap, a live filtered value while standing, a "lead moved off" cue, raw vision value alongside |
 | `lights` | sign provider + api | traffic lights with state, the ego light held over short misses, and the light assigned to the ego lane where several are visible |
@@ -90,7 +90,7 @@ The processes share only two mechanisms:
   mass-storage volume ([docs/HUIYING_DVR_PROTOCOL.md](docs/HUIYING_DVR_PROTOCOL.md),
   [docs/PHONE_DVR_DEPLOY.md](docs/PHONE_DVR_DEPLOY.md)). V4L2, GStreamer, a video file or a network
   stream only have to fill the same header and slots.
-* **Model:** supercombo is device-independent given the intrinsics: modeld reads them from the ring
+* **Model:** the road model (openpilot's, vision + policy or supercombo) is device-independent given the intrinsics: modeld reads them from the ring
   header and warps each frame to the model's camera, so a different lens needs correct intrinsics
   and a mounting calibration, not a different model.
 * **Compute:** plain C++17 and Python; ncnn (Vulkan) or ONNX Runtime (CPU). Any Linux box that runs
@@ -124,7 +124,7 @@ work package: [docs/lanes/](docs/lanes/).
 ### Quick start
 
 ```sh
-scripts/fetch-models.sh            # dev box: download supercombo, convert (fp32 + ncnn)
+scripts/fetch-models.sh            # dev box: download the road models (pinned sha256), convert (fp32 + ncnn)
 scripts/push-models.sh             # models -> phone ~/roadsense/models
 scripts/sync-phone.sh user@phone   # source tree -> phone ~/roadsense
 ssh user@phone 'cd ~/roadsense && sudo sh scripts/install-phone.sh && sudo systemctl start roadsense.target'

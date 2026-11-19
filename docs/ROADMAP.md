@@ -161,4 +161,7 @@ The ncnn/Vulkan fp16-packed backend misses the original accuracy gate only at th
 - [x] seam for a separate lane source for the display (`display_lanes` on `<rundir>/laned.sock`, `view.lines_source`); no provider yet
 - [ ] lane lines of this model are worse than supercombo's at far range and flicker more (L24-M); by the owner's ruling a separate cheap lane analysis for the display is the next step, not part of this lane
 - [x] load governor: the policy's rate (`plan`, level 8) is shed before the road model's rate (now level 9)
+- [x] phone, benchmarks only (nothing installed): the stack with the new default against the same stack with supercombo: 6.59 against 6.83 W, GPU busy 84 against 91 %, road 15.2 against 13.8 runs a second, road latency 85 / 97 against 111 / 131 ms (median / p90), frame prep on the little cores 11.8 against 20.7 % of a core; the policy 7.9 ms per run on a big core (1.1 % of a core at 5 Hz)
+- [ ] fp16 on the Adreno: the lead distance of this model differs from fp32 by 0.37 m on average (0.86 m p95), twice supercombo's; the strict gate script rejects both models on the 120-frame bench clip (its maximum runs over absent lines to 192 m). A longer clip with leads through both arithmetic paths and the tracker is open
+- [ ] the run rate is now set by the GPU turn-taking with the sign detector (tuned for supercombo's 54 ms run), not by the GPU: 7 points of GPU time are unused
 - [ ] not deployed; the car's own camera has not seen this model

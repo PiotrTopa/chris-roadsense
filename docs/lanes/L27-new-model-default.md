@@ -279,9 +279,101 @@ runbook of docs/lanes/L24-quality-max.md, section 5 step 3, forces levels by num
 plan step and the road step is `9`. `tools/governor/emu.py` has the step; `camerad/governor.h` documents the
 key; tests in `api/tests/test_governor.py` (15).
 
-## 6. Phone
+## 6. Phone (benchmarks only; nothing installed, the installed units and the car backend untouched)
 
-PENDING at the time of this commit (the phone part follows the laptop commit; see the end of this report).
+2026-11-19 01:08-01:43 CET, bench, phone lock taken from `L24` as `L27` and given back as `L24`. Sources of
+this branch (commit d447378) and the four model files (sha256 as in section 1) in `/home/user/l27`; built there
+(`l27-build`, 2.5 min); every job a transient unit (`l27-bench`, `l27-gatesc`, `l27-batch`, the stack as
+`l21-*` units of `tools/budget/stack.sh` with `L21_HOME=/home/user/l27`). Fan 100 % and host mode `on` during
+the runs, `fan_auto` and mode `auto` afterwards. Hottest zone during the gate 47 C. The netwatch hold
+(`/run/systemd/system/prius-netwatch.service.d/99-lane-off.conf`) was in place and was not touched.
+
+### fp16 gate (ncnn Vulkan on the Adreno 630, fp16 packed, against ORT fp32)
+
+`REPLAY_ARGS="--calib /etc/roadsense/calib.json" MODELD_REPLAY=~/l27/build-rs/modeld/modeld_replay sh
+tools/ncnn/vision_gate.sh ~/rs-replay/ljkr.nv12 1920 1080 ~/l27/models 400 ~/l27/gate` (the file holds 120
+frames: 116 runs), and the same comparison for the installed supercombo on the same frames (`gate_sc.sh`):
+
+| ncnn fp16 against ORT fp32, 120 frames | vision + policy (new default) | supercombo (installed model) |
+|---|---|---|
+| the script's verdict (mean lane error < 0.05 m, max < 0.2 m over 4 lines x 192 m, lead x < 1 m, lane prob < 0.05) | **REJECT** (0.077 m, 5.2 m, 1.40 m, 0.040) | **REJECT** (0.044 m, 0.89 m, 1.82 m, 0.018) |
+| lines that are there (prob >= 0.5), up to 30 m: mean / max | 0.007 / 0.03 m | 0.008 / 0.05 m |
+| lines that are there, 30-100 m: mean / max | 0.019 / 0.17 m | 0.027 / 0.32 m |
+| all four lines (also absent ones), up to 100 m: mean / max | 0.033 / 2.07 m | 0.021 / 0.35 m |
+| lead distance, lead present (prob >= 0.5): mean / p95 / max | **0.37 / 0.86 / 1.16 m** (1.1 % of the distance) | 0.19 / 0.44 / 0.72 m |
+| lead speed minus own speed (the relative speed): mean / max | 0.12 / 0.69 m/s | 0.13 / 0.81 m/s |
+| own speed `pose.vx`: mean / max | 0.21 / 0.73 m/s | 0.27 / 1.32 m/s |
+| lane probabilities: max | 0.040 | 0.018 |
+| plan y at 30 m: mean / max | 0.015 / 0.07 m | 0.010 / 0.08 m |
+| pipelined (split) against one-stage | identical | (L4) |
+
+The script says REJECT, and it says the same for the model that is installed today, on these frames: its
+maximum runs over lines the model does not see (probability under 0.3, where y is arbitrary and the two
+arithmetic paths wander apart by metres) and out to 192 m. Where a line is present the fp16 error of the new
+model is at or below supercombo's (0.007 / 0.019 m mean, 0.17 m worst within 100 m). **The lead distance is the
+exception: 0.37 m mean and 0.86 m p95 against 0.19 / 0.44 m**, about 1 % of the distance; the relative speed is
+not affected (0.12 m/s, like supercombo). The laptop proxy (section 1: lane mean 0.003 m, lead max 0.13 m) was
+much too optimistic for the Adreno. All of section 3 was measured on fp32 streams: with fp16 the lead distance
+carries this extra error, which a 120-frame clip cannot turn into after-tracker numbers. Open: a longer clip
+with leads through both arithmetic paths and the tracker; where in the graph the fp16 loss arises.
+
+### Time per run and the policy's cost (clocks pinned as the modeld unit pins them; single process, no sign provider)
+
+| `modeld_replay --backend ncnn`, 120 frames of `ljkr.nv12` | ms per run |
+|---|---|
+| supercombo, model step | 60.5 |
+| vision without the policy, model step | 46.8 (0.77 of supercombo's) |
+| frame prep (both inputs), vision / supercombo | 1.8-4.7 / 12.9 |
+| policy on a big core (cpu6), every vision run | 7.9 per run |
+| policy on a big core, `--policy-hz 5` | 2.1 on average per vision run (20 runs a second in the replay) |
+| policy on a little core (cpu2), every vision run | 18.0 per run |
+
+The vision model's run is 23 % shorter than supercombo's in the same tool (L24-M's estimate was 23-40 %); the
+prep is a third. The policy costs 7.9 ms of a big core per run: at the default 5 runs a second 4 % of one A75,
+at every run of a 17 runs/s stack 13 % (the estimate was 10-20 ms per run).
+
+### Budget of the stack (`tools/budget/run.sh`, 240 s after 60 s, ride `krakow-2024`, fan 100 %)
+
+Four profiles in one session, the same signd / envd / camerad-replay / mapd in all (L21's proposed stack: envd
+on the little cores, lights at 5 Hz, `~/l21/profiles/F-final.sh`): `sc-ref` = L21's own build and the
+installed api (the row of L21's table, re-measured); `sc-new` = this branch's modeld with `--road-model
+supercombo` and this branch's api; `new-default` = this branch with no model named (vision + policy at 5 Hz,
+`--models-dir ~/l27/models`); `new-hz0` = the policy after every vision run. `sudo sh ~/l27/batch.sh`
+(`L21_HOME=~/l27 sh ~/l27/run.sh NAME ~/l27/profiles/NAME.sh 240 60`), table by `tools/budget/table.py`.
+No run aborted (hottest zone at most 81 C, at the start of a run).
+
+| | L21's table (F-final, 18 Nov) | `sc-ref` | `sc-new` (supercombo, this branch) | **`new-default`** | `new-hz0` |
+|---|---|---|---|---|---|
+| phone rail, W (mean of 240 s) | 7.01 | 6.85 | 6.83 | **6.59** | 6.73 |
+| GPU busy, % of wall | 91 | 91.4 | 91.3 | **84.1** | 82.6 |
+| modeld's GPU time, % of wall | - | 66.0 | 66.0 | **58.8** | 57.2 |
+| big cores busy (of 400 %) / their temperature, last 60 s | 137 % / 68 C | 138 % / 68 C | 139 % / 71 C | **137 % / 68 C** | 146 % / 70 C |
+| little cores busy (of 400 %) | - | 203 % | 204 % | **192 %** | 192 % |
+| `md-prep` (frame prep, little cores) | - | 20.7 % | 20.7 % | **11.8 %** | 11.7 % |
+| `md-prefetch` (big) | - | 12.0 % | 11.9 % | **10.8 %** | 11.2 % |
+| `md-main` (big; GPU dispatch, parsing, **the policy**) | - | 7.7 % | 7.5 % | **8.6 %** | 17.0 % |
+| road runs a second (modeld's own count) | 13.8 | 13.75 | 13.76 | **15.18** | 14.78 |
+| model step, ms mean / p90 | - | 54.1 / 57.2 | 54.2 / 57.2 | **44.3 / 50.1** | 50.4 / 52.7 |
+| `road` at `/ws`: rate, latency camera -> consumer median / p90 | 13.8/s, 110 / 131 ms | 13.7/s, 110 / 132 ms | 13.8/s, 111 / 131 ms | **15.0/s, 85 / 97 ms** | 14.8/s, 101 / 121 ms |
+| `lead`, `lanes`: latency median / p90 | - | 111 / 134 ms | 112 / 133 ms | **87 / 99 ms** | 103 / 122 ms |
+| `signs` / `lights` rate | 5.0 / 5.0 | 5.0 / 5.0 | 5.0 / 5.0 | **5.0 / 5.0** | 5.0 / 5.0 |
+| health `road_model` | - | - | supercombo | vision, `plan_age_ms` 0-150, `policy_hz` 5 | vision, `policy_hz` 0 |
+
+Reading (`new-default` against `sc-new`, the same code and daemons with the other model):
+
+* **Cheaper and faster at once.** 0.24 W less at the rail (6.59 against 6.83), the GPU busy 84 % instead of 91 %
+  (7 points of its time free), frame prep on the little cores almost halved (20.7 -> 11.8 % of a core), the
+  big cores unchanged (137 against 139 %) and 3 C cooler.
+* **Road rate and latency.** 15.2 road runs a second instead of 13.8, and the road / lead / lanes messages reach
+  a consumer 25 ms earlier (85 / 97 ms median / p90 against 111 / 131 ms). The run rate is not GPU-bound any
+  more (84 % busy): it is set by the turn-taking with the sign detector; that schedule was tuned for
+  supercombo's 54 ms run and is the place to look for the rest.
+* **The policy.** At 5 Hz it adds 1.1 % of a big core to `md-main` (7.5 -> 8.6 %). After every vision run it adds
+  9.5 % of a big core (17.0 %), 0.14 W, and it costs road rate and latency (14.8 runs/s, 101 / 121 ms: the policy
+  sits in the model thread between two GPU runs). That is a measurement cost against a plan that is at most
+  0.03 m (median, 30 m) fresher: `--policy-hz 5` stands.
+* `sc-ref` and `sc-new` agree (6.85 / 6.83 W, 13.75 / 13.76 runs/s): this branch's supercombo path and api cost
+  what L21's did. L21's own row was 7.01 W on 18 November; the 0.16 W between the two days is the bench.
 
 ## 7. MFD (the car repo, not edited)
 
