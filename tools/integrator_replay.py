@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Recorded sessions through the data integrator (docs/INTEGRATOR.md, docs/lanes/L37-integrator.md).
 
+    integrator_replay.py characterise SESSION...          the sources as measured: vehicle speed (leave-one-out), wheels,
+                                                          yaw-rate sources, accelerometer, camera lag and noise, the
+                                                          camera's stated uncertainty, the feed's silences
     integrator_replay.py detect   SESSION... [--pos F]    fault detection: when, how long, by which monitor; per-source
                                                           state shares; the monitors' margins (good drives: false alarms)
     integrator_replay.py accuracy SESSION...              the ego state against held-out sources (vehicle held out
@@ -12,6 +15,9 @@
     integrator_replay.py summary  F...                    one `products` file: lead / lanes / view, split by the
                                                           integrator's verdict on the camera
     integrator_replay.py cost     SESSION                 CPU of the integrator alone and of the pipeline per frame
+    integrator_replay.py mfd      SESSION --car-repo DIR  the api's stream through the car computer's scene builder
+                              [--no-gate]                 (cyberpunk_computer/backend/roadsense_scene.py, imported
+                                                          read-only): what the MFD is handed, by the camera's verdict
 
 Sessions: recorder directories or their messages.jsonl.gz (a truncated gzip stream is read as far as it goes).
 `--road-model vision` (the default) puts the model name back into `road` messages recorded before lane L37 (the
@@ -82,6 +88,91 @@ class Veh:
 def messages(rl, a, path):
     pos = rl.load_pos(a.pos) if getattr(a, "pos", None) else None
     return rl.read_session(path, road_model=a.road_model or None, pos=pos)
+
+
+# ---- characterise ---------------------------------------------------------------------------------------------
+def cmd_characterise(a):
+    import numpy as np
+    rl = tree_lib()
+    A = lambda rows: np.array([[np.nan if x is None else x for x in r] for r in rows], float)
+    mad = lambda x: 1.4826 * np.median(np.abs(x - np.median(x))) if len(x) else float("nan")
+    for path in a.sessions:
+        ego, road = [], []
+        for m in rl.read_lines(path):
+            ts = m.get("ts_mono_ns")
+            if not isinstance(ts, int):
+                continue
+            if m.get("type") == "ego":
+                ws = m.get("wheel_speeds_mps") or [None] * 4
+                ego.append((ts / NS, m.get("speed_mps"), m.get("yaw_rate_rps"), m.get("accel_long_mps2"), ws[0], ws[1], ws[2], ws[3]))
+            elif m.get("type") == "road":
+                p = m.get("pose") or {}
+                road.append((ts / NS, p.get("vx"), p.get("vx_std"), p.get("yaw_rate")))
+        r = A(road)
+        tr, vx, vxs = r[:, 0], r[:, 1], r[:, 2]
+        print("== %s: road frames %d, vehicle samples %d" % (name_of(path), len(road), len(ego)))
+        own = np.abs(vx) >= 1.0
+        if own.sum() > 50:
+            q = (vxs / (0.25 + 0.035 * np.abs(vx)))[own]
+            print("  camera's stated vx_std / characterised sigma (frames with |vx| >= 1): p5/p50/p95/p99 %s" % np.round(np.percentile(q, [5, 50, 95, 99]), 2))
+        if len(ego) < 100:
+            continue
+        e = A(ego)
+        te, ve, ye, al, ws = e[:, 0], e[:, 1], e[:, 2], e[:, 3], e[:, 4:8]
+        d = np.diff(te)
+        ok = (d[:-1] < 0.25) & (d[1:] < 0.25) & (ve[1:-1] > 0.5)
+        pred = ve[:-2] + (ve[2:] - ve[:-2]) * (te[1:-1] - te[:-2]) / (te[2:] - te[:-2])
+        res = (ve[1:-1] - pred)[ok]
+        print("  vehicle speed, one sample left out and interpolated from its neighbours: robust sigma %.3f m/s, p99 |.| %.3f (n %d)" % (
+            mad(res), np.percentile(np.abs(res), 99), len(res)))
+        mv = ve > 3
+        print("  wheel speed / speed signal, per wheel (median): %s; mean wheel speed / 0.98 - speed: robust sigma %.3f m/s" % (
+            np.round(np.nanmedian(ws[mv] / ve[mv, None], axis=0), 4), mad(np.nanmean(ws[mv], axis=1) / 0.98 - ve[mv])))
+        turn = mv & (np.abs(ye) > 0.08)
+        if turn.sum() > 20:
+            yw = (ws[:, 3] - ws[:, 2]) / 1.48
+            print("  rear wheel-difference yaw rate against the gyro: gain in turns %.3f (n %d), robust sigma %.4f rad/s" % (
+                np.sum(yw[turn] * ye[turn]) / np.sum(ye[turn] ** 2), turn.sum(), mad((yw - ye)[mv])))
+        for lag in (0.0, 0.125, 0.25):
+            vi, yi = np.interp(tr - lag, te, ve), np.interp(tr - lag, te, ye)
+            gap = np.interp(tr - lag, te[1:], d)
+            okf = (vi > 3) & (gap < 0.3) & (tr - lag > te[0]) & (tr - lag < te[-1])
+            dv, dy = (vx - vi)[okf], (-r[:, 3] - yi)[okf]
+            tf = okf & (np.abs(yi) > 0.08)
+            print("  camera pose taken %.3f s before the frame stamp: speed median %+.3f robust sigma %.3f m/s; yaw rate median %+.4f "
+                  "sigma %.4f rad/s, gain in turns %.3f, rms in turns %.4f (n %d)" % (
+                      lag, np.median(dv), mad(dv), np.median(dy), mad(dy),
+                      np.sum((-r[:, 3])[tf] * yi[tf]) / max(np.sum(yi[tf] ** 2), 1e-9), np.sqrt(np.mean(((-r[:, 3]) - yi)[tf] ** 2)) if tf.any() else float("nan"), tf.sum()))
+        i = np.arange(2, len(te) - 2)
+        dt = te[i + 2] - te[i - 2]
+        oka = (dt < 0.5) & (ve[i] > 1) & ~np.isnan(al[i])
+        dvdt = (ve[i + 2] - ve[i - 2]) / dt
+        print("  accelerometer - d(speed)/dt: median %+.3f robust sigma %.3f m/s2, correlation %.2f" % (
+            np.median((al[i] - dvdt)[oka]), mad((al[i] - dvdt)[oka]), np.corrcoef(al[i][oka], dvdt[oka])[0, 1]))
+        for T in (0.5, 1.0, 2.0):
+            vt = np.interp(te + T, te, ve)
+            okb = (ve > 2) & (te + T < te[-1]) & ~np.isnan(al)
+            print("  bridging %.1f s: rms error holding the speed %.3f, speed + accelerometer %.3f m/s" % (
+                T, np.sqrt(np.mean((vt - ve)[okb] ** 2)), np.sqrt(np.mean((vt - ve - al * T)[okb] ** 2))))
+        gi = np.where(d > 1.0)[0]
+        stale = 0
+        worst = 0.0
+        for k in gi:
+            j = np.arange(k + 1, min(k + 4, len(te)))
+            j = j[te[j] - te[k + 1] <= 0.3]
+            later = np.where(te - te[k + 1] >= 0.35)[0]
+            if not len(later) or later[0] + 2 >= len(te):
+                continue
+            # the speed the feed settles to, extended back with its own slope, against its first samples
+            b = later[0]
+            slope = (ve[b + 2] - ve[b]) / max(te[b + 2] - te[b], 1e-3)
+            err = np.abs(ve[j] - (ve[b] + slope * (te[j] - te[b])))
+            if err.max() > 1.0:
+                stale += 1
+            worst = max(worst, err.max())
+        print("  vehicle feed silences > 1 s: %d%s; resumes whose first samples (0.3 s) are more than 1 m/s off where the feed "
+              "settles: %d, worst %.1f m/s" % (len(gi), "" if not len(gi) else " (length median %.1f s, max %.1f s)" % (
+                  np.median(d[gi]), d[gi].max()), stale, worst))
 
 
 # ---- detect ---------------------------------------------------------------------------------------------------
@@ -181,7 +272,8 @@ def cmd_detect(a):
                 line += "; ratio p1/p50/p99/max %s" % pct(d["ratio"], (0.01, 0.5, 0.99, 1.0))
             print(line)
         es = rows[-1][1]
-        print("  rejected (innovation gate) %s, late %s" % (es["rejected"], es["late"]))
+        print("  rejected (innovation gate) %s, late %s; vehicle feed silences > 1 s (warm-ups): %s" % (
+            es["rejected"], es["late"], es["sources"].get("vehicle", {}).get("warmups")))
 
 
 # ---- accuracy -------------------------------------------------------------------------------------------------
@@ -449,6 +541,60 @@ def cmd_compare(a):
                 la, sum(1 for x, _ in vw if x["view"][1] > 0) / len(vw), lb, sum(1 for _, y in vw if y["view"][1] > 0) / len(vw)))
 
 
+# ---- mfd ------------------------------------------------------------------------------------------------------
+def cmd_mfd(a):
+    rl = tree_lib()
+    import importlib.util
+    import logging
+    logging.disable(logging.CRITICAL)
+    sys.dont_write_bytecode = True       # the car repo is only read: the one module, by its file, no package import
+    spec = importlib.util.spec_from_file_location(
+        "car_roadsense_scene", os.path.join(a.car_repo, "cyberpunk_computer", "backend", "roadsense_scene.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["car_roadsense_scene"] = mod
+    spec.loader.exec_module(mod)
+    SceneBuilder, SceneFeedConfig = mod.SceneBuilder, mod.SceneFeedConfig
+    b = SceneBuilder(SceneFeedConfig())
+    p = rl.Pipeline(integrator=not a.no_gate)
+    veh = Veh()
+    stats = {}
+    vision = None
+    for m in messages(rl, a, a.session):
+        if m.get("type") == "ego":
+            veh.add(m)
+        ts = m.get("ts_mono_ns")
+        for o in p.feed(m):
+            if o.get("type") == "ego_state":
+                vision = o["sources"]["vision"]["state"]
+            if not isinstance(ts, int):
+                continue
+            now = ts / NS
+            b.feed(json.dumps(o, separators=(",", ":")), now)
+            if o.get("type") != "view":
+                continue
+            sc = b.build(now)
+            if sc is None:
+                continue
+            v = veh.at(now)
+            for key in ("vision %s" % vision, "vision %s, vehicle >= 5 m/s" % vision if v is not None and v >= 5.0 else None):
+                if key is None:
+                    continue
+                d = stats.setdefault(key, {"n": 0, "lead": 0, "vw_lead": 0, "lanes": 0, "d": []})
+                d["n"] += 1
+                ld = sc.get("lead")
+                if ld:
+                    d["lead"] += 1
+                    d["d"].append(ld.get("d"))
+                vw = sc.get("vw") or {}
+                d["vw_lead"] += 1 if vw.get("lead") else 0
+                d["lanes"] += 1 if any(vw.get("lanes") or []) or any(sc.get("lanes") or []) else 0
+    print("== %s through the car's SceneBuilder (%s)" % (name_of(a.session), "fault detection off" if a.no_gate else "integrator"))
+    for k, d in sorted(stats.items()):
+        print("  %-36s scenes %6d | scene.lead %.3f (dist p10/50/90 %s) | drawn lead (vw.lead) %.3f | any lane line %.3f" % (
+            k, d["n"], d["lead"] / d["n"], pct([x for x in d["d"] if x is not None], (0.1, 0.5, 0.9), 1), d["vw_lead"] / d["n"],
+            d["lanes"] / d["n"]))
+
+
 # ---- cost -----------------------------------------------------------------------------------------------------
 def cmd_cost(a):
     rl = tree_lib()
@@ -475,7 +621,8 @@ def cmd_cost(a):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, multi in (("detect", True), ("accuracy", True), ("cost", False), ("products", False)):
+    for name, multi in (("characterise", True), ("detect", True), ("accuracy", True), ("cost", False), ("products", False),
+                        ("mfd", False)):
         p = sub.add_parser(name)
         p.add_argument("sessions" if multi else "session", **({"nargs": "+"} if multi else {}))
         p.add_argument("--pos")
@@ -483,6 +630,9 @@ def main():
         if name == "products":
             p.add_argument("--out", required=True)
             p.add_argument("--tree")
+            p.add_argument("--no-gate", action="store_true")
+        if name == "mfd":
+            p.add_argument("--car-repo", required=True)
             p.add_argument("--no-gate", action="store_true")
     p = sub.add_parser("compare")
     p.add_argument("a")

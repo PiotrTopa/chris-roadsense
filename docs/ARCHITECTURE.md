@@ -636,6 +636,12 @@ an implicit `reset` first (`last_reset.reason` "gnss source changed from synthet
 carried on by synthetic motion, at any time since the last reset: a consumer that must not act on a made-up
 place checks this one flag.
 
+**`{"type":"gnss", ...}` on `<rundir>/ego.sock`** (output; since lane L37): every receiver fix mapd accepted, as
+the feeder sent it (`fix`, `lat`, `lon`, `hacc_m`, `speed_mps`, `course_deg`, `alt_m`, `sats`, and `speed_acc_mps`,
+`course_acc_deg`, `hdop`, `utc_ms`, `age_ms`, `source` when sent), with `ts_mono_ns` = the time mapd gave the fix
+and `arrival_mono_ns`. Repeated fixes are relayed too. For the api's integrator (the receiver's speed as a
+witness) and the drive recorder; mapd's own use of the fix is unchanged.
+
 **`{"type":"ego", ...}` on `<rundir>/ego.sock`** (output; since 2026-11-15): every vehicle `motion` message
 mapd accepted, passed on as it was measured, at most `ego_hz` (20) per second; a change of `standstill` is
 never held back by that limit. It exists because the car's own speed is needed at the feeder's rate by
@@ -904,7 +910,7 @@ tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsens
 | `GET /v2/health` | `governor` (shed level, what is shed, headroom, per-topic rate / latency / degraded marker); `road_model` (`model`: `vision` or `supercombo`, `fallback`, `plan`: whether `road` carries one, `plan_age_ms`, `policy_hz`, `policy_ms`); `calibration` (the camera calibration modeld warps with: `source` `config` or `auto`, `pitch`, `yaw`, `roll`, `height_m`, and `online`: the estimate's `state`, `applied`, `pitch`, `yaw`, `off_config_deg` = how far calib.json is from it, `spread_deg`, `error_deg`, `blocks`; section Calibration); per-daemon: connected, last message age, fps, latency (`model_ms`, `detect_ms`, `env_ms`), current `env` labels, `speed_limit` summary, `rules` summary (short strings: in effect / recent / ahead), `lights_ms` and the ego light, `map` (position state, availability, pack date, matched road, map limit, mapd CPU share), `fused` (limit and source, place, lanes, tunnel) and `vehicle` (feeders, fresh signals, yaw source, range sensors) summaries; CPU temp, battery |
 | `GET /v2/frame.jpg` | current preview JPEG |
 | `GET /preview` | MJPEG stream with lane lines, path, leads, sign boxes and traffic lights (box in the state colour, the ego light thick with its distance) drawn on top; HUD lines IN EFFECT / RECENT / AHEAD from the `rules` topic |
-| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `lead`, `lanes` and `view`; mapd's `ego` (the car's motion, while a feeder sends it), `vehicle` and `objects` pass through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,view,ego,vehicle,objects` filters. Per road frame the order is `road`, `lead`, `lanes`, `view`: a consumer that needs one frame complete waits for `view` |
+| `GET /ws` | WebSocket; every message from every daemon, as-is (`lights` with the api's annotation, `signs` with its context flags), plus the api's own `speed_limit`, `rules`, `fused`, `ego_state`, `lead`, `lanes` and `view`; mapd's `ego` (the car's motion, while a feeder sends it), `vehicle` and `objects` pass through like every daemon message; `?topics=road,signs,env,speed_limit,rules,lights,map,fused,lead,lanes,view,ego,vehicle,objects` filters. Per road frame the order is `road`, `lead`, `lanes`, `view`: a consumer that needs one frame complete waits for `view` |
 
 
 Paths: `/v2/...` since roadsense 2.0. Every `/v1/...` path of api 1 still answers, from the same handler and
@@ -1075,6 +1081,74 @@ Rules:
 * **Tunnel.** In a tunnel when the matched edge is one (then `exit_in_m` is the map distance to its end) or
   when envd's label is `tunnel` with confidence >= 0.5 (no distance).
 
+### The data integrator: api-derived topic `{"type":"ego_state", ...}`
+`api/roadsense_api/integrator/` (lane L37, 2026-11-19; design, alternatives and limits: `docs/INTEGRATOR.md`;
+measurements: `docs/lanes/L37-integrator.md`). **Every input enters the integrator; the trackers, the rules,
+the fused layer and the display read what it hands on, and none of them selects a raw source.** One message
+per `road` message, stamped with the frame time (and at the vehicle's rate while no road frame arrives for
+0.3 s); about 1.5 kB; `GET /v2/ego_state`, `/ws?topics=ego_state`.
+
+```
+vehicle motion (`ego`), brake (`vehicle`) ─┐   sources: an input description + a measurement model each
+receiver fixes (`gnss`, relayed by mapd) ──┼─> time-ordered buffer ─> ego filters (speed/accel, yaw rate)
+road model pose (`road`) ──────────────────┤                       ─> monitors: source against source, a source
+range sensors (`objects`; a model per one) ┘                          against its own stated uncertainty ─> isolation
+        ─> `ego_state` ─> lead · lanes · ego lane · road geometry · speed limit / rules · lights · signs context · fused · view
+```
+
+```
+"epoch": 0,                      // counts restarts of the device clock (boot; a replay joining sessions)
+"speed":    {"value": 12.31, "std": 0.02,     // m/s along the heading, negative in reverse; 1 sigma
+             "valid": true, "reason": null,   // false: value null, reason "no_measurement" | "no_healthy_source"
+             "mode": "fused|coast|none",      // coast: predicted past its newest measurement (more than 0.3 s); none after 1 s
+             "age_s": 0.04,                   // distance in time from the frame to the nearest measurement used
+             "sources": ["vehicle.speed", "vision.pose"]},   // the measurements in the estimate around the frame
+"accel":    {...},               // m/s2, same shape
+"yaw_rate": {...},               // rad/s, POSITIVE LEFT (ISO 8855), same shape
+"standstill": {"value": true, "for_s": 4.9, "source": "vehicle|vision|null"},   // vehicle: speed and wheels exactly zero
+"signals":  {"turn_signal": {"value": "left", "age_s": 0.1}, "brake": {"value": true, "age_s": 0.3}},   // passed through with their age
+"sources":  {"vehicle": {"state": "ok", "reason": null, "usable": true, "age_s": 0.04, "rate_hz": 9.5, "tag": "prius-can", "warmups": 3},
+             "wheels":  {...},   // mean wheel speed: checks the speed signal's decoding (same sensors: no independent vote)
+             "vision":  {"state": "fault", "usable": false, "isolation": "rank|vote|self|carried", "since_s": 412.0,
+                         "reason": "speed disagrees with vehicle (ratio 0.26, 93 % of 64 samples beyond 4 sigma); own speed uncertainty 7.3x its characterised level", ...},
+             "gnss":    {"state": "suspect", "fix": "3d", "hacc_m": 5.0, "repeat_share": 0.46, ...}},
+"checks":   [{"kind": "pair", "a": "vehicle", "b": "vision", "quantity": "speed", "verdict": "agree|disagree|unknown",
+              "n": 64, "share": 0.02, "ratio": 1.01, "evidence_s": 5.0},      // share: samples beyond 4 sigma over 5 s of evidence
+             {"kind": "self", "a": "vision", "quantity": "speed", "verdict": "ok|fault|unknown", "ratio": 0.8, ...},   // stated / characterised sigma, 5 s median
+             {"kind": "witness", "a": "vehicle", "b": "gnss", "quantity": "speed", "verdict": ..., "ratio": 0.9, ...}],   // ratio of medians over 30 s
+"rejected": {"vision.pose": 3},  // single measurements not applied (5 sigma from the prediction), since start
+"late": {}                       // measurements older than the 2 s buffer (monitors only)
+```
+
+Source `state`: `absent` (never seen) · `stale` (silent longer than its stale time; a vehicle feed is also
+`stale` for 0.35 s after a silence of more than 1 s, because its first samples repeat old values) ·
+`unchecked` (alive; nothing to check it against, or no evidence yet: a car without a vehicle feed, a car that
+has not moved) · `ok` (checked against another ranked source and agreeing) · `suspect` (a check is between
+its thresholds, or a witness disagrees) · `fault` (not used: its measurements leave the estimate at once, and
+what is made from it goes out as unknown). A fault ends by evidence only (the check agrees again over 10 s of
+driving, the source's stated uncertainty is back to normal), never by time; standing still is no evidence. A
+fault is kept across restarts of the api (`<data dir>/integrator.json`; `isolation: "carried"`).
+
+What the estimate is: with a vehicle feed the speed is the vehicle's (the road model's weight is below 1 %),
+smoothed over the samples around the frame time, so it is right *at* the frame, not at the last sample
+before it; in a gap of the feed and on a car without one it is the road model's, with the model's own
+uncertainty. The road model's pose is taken 0.125 s before the frame's stamp (the 200 ms image pair).
+
+Derived topics carry the integrator's verdict on what they were made from:
+
+```
+"valid": true,                   // false: the product is UNKNOWN (not "nothing there"), every value absent
+"reason": null,                  // "vision: speed disagrees with vehicle (...)" | "ego speed unknown: no_healthy_source"
+"inputs": {"vision": "ok", "vehicle": "ok"}    // the sources' states; "unchecked" is not invalid
+```
+in `lead` and `lanes` at the top level, in `view` as `integrity`. Raw `road` stays the road model's raw output:
+a consumer that reads it takes its validity from `ego_state.sources.vision.usable`.
+
+Adding a sensor is a `SourceSpec` (id, group, rank, family, message types, stale time) and a measurement model
+(`integrator/sources.py`; message -> measurements with their time of validity and noise) registered with the
+integrator; consumers do not change. Config: `<config dir>/integrator.json` overrides `integrator.DEFAULT_CFG`
+per key. `/v2/health` carries `integrator` (per-source state, faults, the speed's sources).
+
 ### api-derived topic: `{"type":"lead", ...}`
 `api/roadsense_api/lead.py` tracks the lead vehicle over time: one message per `road` message (so at the
 model's rate, 10-14 per second on the reference phone), about 0.7 kB; `/v1/lead`. `road.leads[]` is not
@@ -1086,11 +1160,18 @@ single frames 0.5-1 m off, e.g. under a wiper) and wanders by a few decimetres o
 standing car; shown rounded to metres it flips between two values several times a second whenever the true
 distance is near a half metre.
 
-Inputs: `road` (`leads[0]`: `prob`, `x[0]`, `y[0]`, `v[0]`, `x_std[0]`, `v_std[0]`; `v_ego`) and, when a
-position feeder sends vehicle motion, mapd's `ego` messages (speed, standstill). Without `ego` (no feeder, no
-mapd, or the last one more than 0.5 s from the frame) the model's own `v_ego` is the ego speed and the
-message says `source: "vision"`: the tracker runs the same way on vision alone.
+Inputs: `road` (`leads[0]`: `prob`, `x[0]`, `y[0]`, `v[0]`, `x_std[0]`, `v_std[0]`; the relative speed is
+`v[0]` minus the model's own speed of the same frame) and the integrator's `ego_state` of the frame (above):
+the ego speed with its source, standstill, the brake, and whether the camera may be believed. With a vehicle
+feed the ego speed is the vehicle's (`ego.source: "vehicle"`, `source: "vision+ego"`); without one, or in a
+gap of the feed, the road model's as the integrator filters it (`"vision"`): the tracker runs the same way on
+vision alone. While the integrator holds the vision source faulted, or the ego speed is unknown, nothing is
+tracked: `valid: false`, `present: false`, `mode: "none"`, `vision: null`, event `invalid`, and `reason` says
+why (since 2.1, lane L37; before, the tracker followed whatever the model reported: on 2026-11-19 a standing
+"lead" at 4-8 m for minutes behind a camera knocked 8 degrees off).
 
+```
+"valid": true, "reason": null, "inputs": {"vision": "ok", "vehicle": "ok"},   // the integrator's verdict (above)
 ```
 "present": true,                 // a lead is tracked; false: every numeric field below is null
 "mode": "track|coast|none",      // see below (until roadsense 2.0 also "hold", which froze the value)
@@ -1118,9 +1199,9 @@ message says `source: "vision"`: the tracker runs the same way on vision alone.
 "prob": 0.99,                    // road.leads[0].prob of this frame (null when the frame had no usable lead output)
 "departed": false,               // the lead moved off while ego still stands (below)
 "departure": null,               // or {"age_s":0.4,"dist_at_stop_m":3.61,"moved_m":0.8}
-"event": {"kind":"acquired|reacquired|cut_in|changed|relocated|departed|gap_changed|lost|reset","ts_mono_ns":..,"track_id":12,"age_s":31.4},   // the last one; null before the first
-"ego": {"speed_mps":0.0,"standstill":true,"source":"vehicle|vision","age_s":0.04,"tag":"prius-can",   // what the tracker used; age_s: distance in time between the frame and the nearest motion sample
-        "brake":true},              // the brake pedal from the `vehicle` topic (controls.brake); null when no host sends it
+"event": {"kind":"acquired|reacquired|cut_in|changed|relocated|departed|gap_changed|lost|reset|invalid","ts_mono_ns":..,"track_id":12,"age_s":31.4},   // the last one; null before the first
+"ego": {"speed_mps":0.0,"std_mps":0.0,"standstill":true,"source":"vehicle|vision","age_s":0.04,"tag":"prius-can",   // the integrator's ego speed of the frame (null when unknown); age_s: distance in time to the nearest vehicle sample
+        "brake":true},              // the brake pedal (the integrator's pass-through of `vehicle.controls.brake`); null when no host sends it
 "radar": null,                   // or {"sensor":"front_radar","id":17,"dist_m":31.4,"lateral_m":0.2,"v_rel_mps":-0.8,"age_s":0.03}: the range-sensor object used in this frame
 "vision_scale": null,            // radar distance / camera distance, learned while both see the lead (radar fusion only)
 "vision": {"dist_m":3.58,"dist_std_m":0.61,"lateral_m":-0.07,"v_lead_mps":0.0,"v_rel_mps":0.0,"a_lead_mps2":0.0,"prob":0.99}   // road.leads[0] of this frame, unfused; null without a lead output
@@ -1220,7 +1301,8 @@ stands on them.
 "lane_width_m": 3.42,              // between the inner lines over 6-30 m; null unless both are present
 "prior": null,                     // or {"total":2,"forward":1,"backward":1,"source":"tagged","outer_left":"expected","outer_right":"unlikely"}
 "source": "vision|vision+map",
-"ego": {"speed_mps": 12.1, "yaw_rate": 0.004, "source": "vehicle|vision"}
+"valid": true, "reason": null, "inputs": {"vision": "ok", "vehicle": "ok"},   // the integrator's verdict; false: no line is present, the lines are unknown
+"ego": {"speed_mps": 12.1, "yaw_rate": 0.004, "source": "vehicle|vision"}   // the integrator's ego motion of the frame; yaw rate positive RIGHT here (the device frame)
 ```
 `seq`, `ts_mono_ns`, `ts_real_ns` are those of the `road` message.
 
@@ -1370,7 +1452,9 @@ Derived from the measurement topics, never fed back into them; nothing in it bel
 
 ```
 "x": [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 100, 120],   // distances of every line, m
-"ego": {"speed_mps": 12.1, "yaw_rate_rps": 0.01, "source": "vehicle|vision"},   // yaw positive left
+"ego": {"speed_mps": 12.1, "yaw_rate_rps": 0.01, "source": "vehicle|vision|none"},   // the integrator's; yaw positive left
+"integrity": {"valid": true, "reason": null, "inputs": {"vision": "ok", "vehicle": "ok"}},   // false: the camera is not believable
+                                 //   now (the reason says why): no lead, no lines, no path in this message; a display shows that state
 "objects": [ {"id": "lead:12" | "light:7" | "sign:31",   // stable while the measurement track lives
               "kind": "vehicle|traffic_light|sign", "role": "lead|ego|other",   // ego: the ego traffic light
               "x": 34.2, "y": 1.9,                        // car frame (x forward from the camera, y right), m
@@ -1678,6 +1762,9 @@ where the first column says "breaking"; everything else is additive.
 | config (L27) | `modeld.json` | - | `road_model`, `policy`, `policy_hz`, `models_dir` |
 | config (L32) | `modeld.json` | - | `auto_calib` (`on` / `observe` / `off`), `calib_state` |
 | unchanged | vehicle input API (`position.sock`, `POST /v2/vehicle`) | 1.1 | 1.1 (`"api": 1` in `map` / `ego` / `vehicle` messages is that API's version, not this one's) |
+| new (2.1, L37) | topic `ego_state`, `GET /v2/ego_state`, `health.integrator`; mapd relays raw `gnss` (also on `/ws`) | - | the data integrator's output: ego motion with uncertainty and sources, per-source health, checks |
+| new (2.1, L37) | `lead.valid` / `reason` / `inputs`, `lead.ego.std_mps`, event `invalid`; `lanes.valid` / `reason` / `inputs`; `view.integrity`; `fused.lead.valid` / `reason`; `rules.ego_source` | - | a product made from a faulted source goes out as unknown with the reason. A consumer that knows nothing of the new fields sees `present: false` / no present line (as when nothing is there), which keeps a 2.0 consumer correct; one that reads them can show "unknown" |
+| changed (2.1, L37) | where the ego motion comes from | each tracker: vehicle within 0.5 s, else the model; the speed-limit / rules odometer always the model's | the integrator's estimate everywhere (`lead.ego`, `lanes.ego`, `view.ego`, the odometer of `rules` / `speed_limit`) |
 
 Which topic for what: decisions (alerts, anything that acts) read the measurement topics (`lead`, `lanes`,
 `lights`, `signs`, `speed_limit`, `rules`, `fused`, `map`); pictures read `view`. The reference consumer (the
@@ -1689,8 +1776,11 @@ measurement topics.
 (`{"dir": "/var/lib/roadsense/rec", "max_mb": 4000}`). Every api start opens a session
 `<dir>/<YYYYmmdd-HHMMSS>/` with `messages.jsonl.gz` (the topics as they went out: `road` reduced to lane
 lines, road edges, `leads[0]`, plan x / y / z, speed and pose; `lights`, `signs`, `env`, `speed_limit`,
-`rules`, `fused`, `map`, `ego` at 10 Hz, `vehicle`, `objects` at 10 Hz, `view` at 2 Hz, `calib`, one
-`camera` message a second) and `frames/<seq>.jpg`,
+`rules`, `fused`, `map`, `ego` as relayed (cap 25 Hz), raw `gnss`, `ego_state` at 2 Hz (the record of what was
+said; replays recompute it), `vehicle`, `objects` at 10 Hz, `view` at 2 Hz, `calib`, one
+`camera` message a second; since lane L37 `road` keeps `road_model`, without which a replay ran the trackers'
+supercombo profile on a vision-model session: `tools/replay_lib.read_session(..., road_model="vision")` puts it
+back for older sessions) and `frames/<seq>.jpg`,
 camerad's preview JPEG once a second (copied, not re-encoded). About 30 kB/s of messages plus the JPEGs
 (0.2-0.5 GB per hour); the oldest sessions are deleted above `max_mb`; a write error stops the recording, not
 the api. The file is flushed and synced every 5 s (a host that loses power keeps all but the last seconds;

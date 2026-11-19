@@ -117,6 +117,25 @@ class DaemonTest(unittest.TestCase):
         self.assertEqual((err["type"], err["reason"], err["line"]), ("error", "bad JSON", 2))
         s.close()
 
+    def test_4c_receiver_fixes_are_relayed_raw(self):
+        """ego.sock also carries every accepted `gnss` fix as it was sent (lane L37: the api's integrator and the
+        drive recorder), repeated ones included."""
+        sub = Sub(os.path.join(self.rundir, "ego.sock"))
+        time.sleep(0.2)
+        feed = PositionFeed(self.rundir, name="test")
+        t0 = time.monotonic_ns()
+        for k in range(2):
+            self.assertTrue(feed.gnss(52.1, 21.0, hacc_m=4.0, speed_mps=7.5, course_deg=90.0, ts_mono_ns=t0 + k * 10 ** 6,
+                                      source="headunit"))
+        got = [sub.next(), sub.next()]
+        self.assertEqual([g["type"] for g in got], ["gnss", "gnss"])
+        g = got[0]
+        self.assertEqual((g["fix"], g["lat"], g["lon"], g["hacc_m"], g["speed_mps"], g["course_deg"], g["source"]),
+                         ("3d", 52.1, 21.0, 4.0, 7.5, 90.0, "headunit"))
+        self.assertEqual(g["ts_mono_ns"], t0)
+        self.assertGreaterEqual(g["arrival_mono_ns"], t0)
+        self.assertEqual(got[1]["seq"], g["seq"] + 1)
+
     def test_4b_vehicle_motion_is_relayed_as_ego(self):
         """ego.sock: one `ego` message per accepted vehicle motion (rate limited, standstill changes at once);
         mapd.sock keeps carrying `map` messages only."""

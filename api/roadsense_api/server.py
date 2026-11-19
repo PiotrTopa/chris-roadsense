@@ -196,6 +196,13 @@ async def h_lead(req):
     return _json(msg or {"error": "no road message yet"}, 200 if msg else 503)
 
 
+async def h_ego_state(req):
+    """The data integrator's output for the last frame (docs/INTEGRATOR.md): ego motion with uncertainty and
+    sources, per-source health, the consistency checks."""
+    msg = req.app["state"].latest.get("ego_state")
+    return _json(msg or {"error": "no input yet"}, 200 if msg else 503)
+
+
 async def h_lanes(req):
     st = req.app["state"]
     msg = st.latest.get("lanes")
@@ -477,6 +484,7 @@ def make_app(rundir, datadir=None, ring_path=None, connect=True, rules="pl", rec
             ("GET", "map", h_map),
             ("GET", "fused", h_fused),
             ("GET", "lead", h_lead),
+            ("GET", "ego_state", h_ego_state),
             ("GET", "lanes", h_lanes),
             ("GET", "view", h_view),
             ("GET", "roadgeom", h_roadgeom),
@@ -551,6 +559,10 @@ async function tick(){
       const lead = (r.leads || [])[0];
       s += "\\nlead (raw): " + (lead ? `${f(lead.x[0])} m  p ${f(lead.prob, 2)}  v ${f(lead.v[0])} m/s` : "-");
       const ld = await get("/v2/lead");
+      if (ld && ld.valid === false) s += "\\nlead: UNKNOWN (" + ld.reason + ")";
+      const es = await get("/v2/ego_state");
+      if (es) s += "\\nego: " + (es.speed.valid ? `${f(es.speed.value)} +- ${f(es.speed.std, 2)} m/s (${es.speed.sources.join(", ")}; ${es.speed.mode})` : "speed unknown: " + es.speed.reason) +
+        "  sources: " + Object.entries(es.sources).map(([k, v]) => k + " " + v.state).join(", ");
       s += "\\nlead (tracked): " + (ld && ld.present ? `${f(ld.dist_m)} +- ${f(ld.dist_std_m)} m  v_rel ${f(ld.v_rel_mps)} m/s  ` +
         `gap ${f(ld.time_gap_s)} s  ${ld.mode}${ld.departed ? " DEPARTED" : ""}  ego ${f(ld.ego.speed_mps)} m/s (${ld.ego.source})` : "-");
       s += `\\nseq ${r.seq}  model ${f(r.model_ms, 0)} ms`;
