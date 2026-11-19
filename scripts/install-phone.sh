@@ -11,7 +11,7 @@ BUILD=${BUILD:-build}
 cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release ${CMAKE_ARGS:-} >/dev/null
 cmake --build "$BUILD" -j"$(nproc)"
 install -m 755 "$BUILD/camerad/camerad" "$BUILD/modeld/modeld" /usr/local/bin/
-for t in modeld/modeld_replay tools/ringdump camerad-dvr/camerad-dvr envd/envd envd/envd_replay; do [ -x "$BUILD/$t" ] && install -m 755 "$BUILD/$t" /usr/local/bin/ || true; done
+for t in modeld/modeld_replay tools/ringdump camerad-dvr/camerad-dvr envd/envd envd/envd_replay laned/laned laned/laned_replay; do [ -x "$BUILD/$t" ] && install -m 755 "$BUILD/$t" /usr/local/bin/ || true; done
 mkdir -p /usr/local/lib/roadsense /var/lib/roadsense/models /etc/roadsense
 rm -rf /usr/local/lib/roadsense/api && cp -r api /usr/local/lib/roadsense/api
 # mapd (Python, needs py3-numpy) and its tools; map packs live in /var/lib/roadsense/maps and are
@@ -21,7 +21,7 @@ cp -r mapd/roadsense_mapd /usr/local/lib/roadsense/mapd/
 install -m 755 tools/position_client.py /usr/local/bin/roadsense-position
 install -m 755 tools/vehicle_client.py /usr/local/bin/roadsense-vehicle
 for m in models/*.onnx models/*.param models/*.bin models/*.txt models/*.json; do [ -f "$m" ] && install -m 644 "$m" /var/lib/roadsense/models/; done
-for c in camera.json calib.json modeld.json envd.json mapd.json; do
+for c in camera.json calib.json modeld.json envd.json mapd.json laned.json; do
     [ -f "/etc/roadsense/$c" ] || { [ -f "config/$c" ] && install -m 644 "config/$c" /etc/roadsense/; }
 done
 # API port/bind: API_PORT=N / API_HOST=ADDR write /etc/roadsense/api.env (kept afterwards; an
@@ -55,4 +55,5 @@ done
 systemctl daemon-reload
 # boot autostart is opt-in (AUTOSTART=1): the reference phone overheats without cooling
 [ "${AUTOSTART:-0}" = 1 ] && systemctl enable roadsense.target >/dev/null || true
+# laned (lane lines for the display) is optional and stays off: systemctl enable roadsense-laned.service
 echo "installed. start:  systemctl start roadsense.target   status: systemctl status 'roadsense-*'"

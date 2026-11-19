@@ -1,0 +1,5 @@
+{
+  "_comment": "laned, the optional display lane source. hz = frames analysed a second, cpus = affinity. Any analysis constant of laned/lanefind.h (struct Config) may be set here by its name, for example ignore_bottom for a bonnet or burned-in text at the bottom of the frame.",
+  "hz": 5,
+  "cpus": "0-3"
+}

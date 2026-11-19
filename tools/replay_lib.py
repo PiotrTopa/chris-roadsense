@@ -105,6 +105,9 @@ class Pipeline:
             self.view.on_lights(m)
         elif t == "signs":
             self.view.on_signs(m, self.intr)
+        if t == "display_lanes":          # an external display lane source (laned): the view's lines only
+            self.view.on_display_lanes(m)
+            return []
         if t in PASS:
             self.latest[t] = m
             return [m]

@@ -78,7 +78,7 @@ def main():
     # the shed steps of governor.DEFAULT_STEPS with the rates scaled to this platform's full-clock rates
     steps = [{"what": "preview", "caps": {"preview_hz": 1}, "quick": True},
              {"what": "recorder_frames", "caps": {"record_frames": 0, "preview_hz": 0}, "quick": True},
-             {"what": "scenery", "caps": {"env_hz": 0.2 * NOM[3]}},
+             {"what": "scenery", "caps": {"env_hz": 0.2 * NOM[3], "laned_hz": 0}},
              {"what": "view", "caps": {"view_hz": round(NOM[0] * 5 / 13.8, 2)}},
              {"what": "signs", "caps": {"signs_hz": NOM[1] / 2}},
              {"what": "lights", "caps": {"lights_hz": NOM[2] / 2}},
