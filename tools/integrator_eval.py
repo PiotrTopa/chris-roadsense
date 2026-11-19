@@ -440,7 +440,6 @@ def cmd_position(a):
                         row += [float("nan")] * 3
                     f = Eg.filter
                     if f.initialised:
-                        Eg._advance(ts, 0.0, None, False) if False else None
                         lat, lon = f.latlon
                         d = geo.haversine_m(lat, lon, m["lat"], m["lon"]) if hasattr(geo, "haversine_m") else math.hypot(
                             math.radians(m["lon"] - lon) * 6371000.0 * math.cos(math.radians(lat)), math.radians(m["lat"] - lat) * 6371000.0)
