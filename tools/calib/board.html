@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calibration board</title>
+<!-- roadsense lens calibration target (tools/calib/board.html). Self-contained: no network resources.
+     Screen: open the file, enter the screen's lit width in mm, F11 for full screen, H hides the bar.
+     Paper: set the printed square size, Print, "actual size / 100 %", then measure one square with a ruler.
+     The board is OpenCV's ChArUco layout (DICT_4X4_50, marker = 0.75 square, top-left square black) or a plain
+     chessboard; tools/calib/lens.py reads both. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #fff; color: #111; font: 14px/1.4 system-ui, sans-serif; }
+  #bar { position: fixed; left: 0; right: 0; top: 0; z-index: 2; background: #f2f2f2; border-bottom: 1px solid #bbb;
+         padding: 6px 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+  #bar label { white-space: nowrap; }
+  #bar input, #bar select { font: inherit; width: 5em; }
+  #bar select { width: auto; }
+  #bar button { font: inherit; padding: 2px 10px; }
+  #info { flex-basis: 100%; font-family: ui-monospace, monospace; font-size: 13px; }
+  #note { flex-basis: 100%; color: #444; font-size: 12px; }
+  #screen { position: absolute; image-rendering: pixelated; }
+  #paper { display: none; }
+  body.hidden #bar { display: none; }
+  @media print {
+    @page { margin: 8mm; }
+    #bar, #screen { display: none !important; }
+    #paper { display: block; margin: 0 auto; }
+    #paperinfo { display: block; text-align: center; font: 9pt ui-monospace, monospace; margin-top: 4mm; }
+  }
+  @media screen { #paperinfo { display: none; } }
+</style>
+</head>
+<body>
+<div id="bar">
+  <label>board <select id="type"><option value="charuco">ChArUco (partly visible is fine)</option>
+    <option value="checker">chessboard (must be fully visible)</option></select></label>
+  <label>squares <input id="cols" type="number" min="3" max="12" step="1"> x
+    <input id="rows" type="number" min="3" max="8" step="1"></label>
+  <label>lit screen width <input id="wmm" type="number" min="50" max="3000" step="0.5"> mm</label>
+  <label>printed square <input id="pmm" type="number" min="5" max="200" step="0.5"> mm</label>
+  <button id="fs">Full screen</button>
+  <button id="pr">Print</button>
+  <button id="hide">Hide this bar (H)</button>
+  <div id="info"></div>
+  <div id="note">Measure the lit part of the screen (not the bezel) and enter its width. Brightness to about half, no
+    reflections on the glass, browser zoom 100 %. Check with a ruler that the board is as wide as the line above says.
+    The square size only sets the scale of the board's distance; focal length, picture centre and distortion do not
+    depend on it, but the screen or the paper must be flat.</div>
+</div>
+<canvas id="screen"></canvas>
+<svg id="paper" xmlns="http://www.w3.org/2000/svg"></svg>
+<div id="paperinfo"></div>
+<script>
+"use strict";
+// DICT_4X4_50: the 16 inner bits of every marker, row by row, most significant bit first (1 = white).
+var DICT_4X4_50 = [46386, 3994, 13101, 39238, 21662, 31181, 40494, 50418, 65242, 53078, 63889, 4519, 3767, 10767,
+  9393, 9790, 18021, 26112, 27742, 30383, 34443, 45099, 52437, 56706, 65095, 38001, 44260, 42324, 8483, 13423, 17429,
+  22450, 40655, 61643, 2222, 2345, 6261, 1279, 3574, 7258, 5912, 10792, 12940, 14514, 9448, 12011, 11583, 19300, 20526,
+  20499];
+var CELLS = 8;   // cells per square: 1 white margin, 6 marker cells (black border, 4 bits, black border), 1 margin
+
+// The board as a matrix of cells, 1 = white: rows * 8 by cols * 8. Square (r, c) is black when r + c is even;
+// ChArUco markers sit in the white squares, ids in reading order.
+function boardCells(type, cols, rows) {
+  var H = rows * CELLS, W = cols * CELLS, m = [], id = 0, r, c, i, j;
+  for (i = 0; i < H; i++) { m.push(new Uint8Array(W)); }
+  for (r = 0; r < rows; r++) {
+    for (c = 0; c < cols; c++) {
+      var white = (r + c) % 2 === 1;
+      for (i = 0; i < CELLS; i++) { for (j = 0; j < CELLS; j++) { m[r * CELLS + i][c * CELLS + j] = white ? 1 : 0; } }
+      if (white && type === "charuco") {
+        var code = DICT_4X4_50[id++];
+        for (i = 0; i < 6; i++) {
+          for (j = 0; j < 6; j++) {
+            var bit = 0;
+            if (i >= 1 && i <= 4 && j >= 1 && j <= 4) { bit = (code >> (15 - ((i - 1) * 4 + (j - 1)))) & 1; }
+            m[r * CELLS + 1 + i][c * CELLS + 1 + j] = bit;
+          }
+        }
+      }
+    }
+  }
+  return m;
+}
+if (typeof module !== "undefined") { module.exports = { boardCells: boardCells, DICT_4X4_50: DICT_4X4_50 }; }
+
+if (typeof document !== "undefined") { (function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var q = new URLSearchParams(location.search), saved = {};
+  try { saved = JSON.parse(localStorage.getItem("roadsense-board") || "{}"); } catch (e) { saved = {}; }
+  function init(id, key, dflt) { $(id).value = q.get(key) || saved[key] || dflt; }
+  init("type", "type", "charuco"); init("cols", "cols", 8); init("rows", "rows", 5);
+  init("wmm", "w", ""); init("pmm", "print", 30);
+  if (q.get("hide")) { document.body.classList.add("hidden"); }
+
+  function draw() {
+    var type = $("type").value, cols = Math.max(3, Math.min(12, +$("cols").value || 8));
+    var rows = Math.max(3, Math.min(8, +$("rows").value || 5));
+    if (type === "charuco" && Math.floor(cols * rows / 2) > DICT_4X4_50.length) { cols = 10; rows = 8; }
+    var wmm = +$("wmm").value, pmm = +$("pmm").value || 30;
+    try { localStorage.setItem("roadsense-board", JSON.stringify({ type: type, cols: cols, rows: rows, w: wmm || "", print: pmm })); } catch (e) { /* private window */ }
+    var cells = boardCells(type, cols, rows), dpr = window.devicePixelRatio || 1;
+    var barH = document.body.classList.contains("hidden") ? 0 : $("bar").offsetHeight;
+    // physical pixels available, with a white margin of one square around the board
+    var availW = Math.floor(window.innerWidth * dpr), availH = Math.floor((window.innerHeight - barH) * dpr);
+    var cell = Math.floor(Math.min(availW / (cols + 2), availH / (rows + 2)) / CELLS);   // physical px per cell
+    if (cell < 1) { cell = 1; }
+    var sq = cell * CELLS, cv = $("screen"), W = cols * sq, H = rows * sq;
+    cv.width = W; cv.height = H;
+    cv.style.width = (W / dpr) + "px"; cv.style.height = (H / dpr) + "px";
+    cv.style.left = (Math.round((availW - W) / 2) / dpr) + "px";
+    cv.style.top = (barH + Math.round((availH - H) / 2) / dpr) + "px";
+    var ctx = cv.getContext("2d"), i, j;
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#000";
+    for (i = 0; i < cells.length; i++) {
+      for (j = 0; j < cells[i].length; j++) { if (!cells[i][j]) { ctx.fillRect(j * cell, i * cell, cell, cell); } }
+    }
+    var name = type + ":" + cols + "x" + rows, physW = window.screen.width * dpr, txt;
+    if (wmm > 0) {
+      var sqmm = sq * wmm / physW;
+      txt = "square " + sqmm.toFixed(2) + " mm, board " + (sqmm * cols).toFixed(1) + " mm wide (check with a ruler)   |   " +
+        "lens.py solve PICTURES --board " + name + " --square-mm " + sqmm.toFixed(2);
+    } else {
+      txt = "enter the lit screen width for the square size   |   lens.py solve PICTURES --board " + name;
+    }
+    $("info").textContent = txt + "   |   " + sq + " px per square, screen " + Math.round(physW) + " px wide";
+
+    // paper: the same matrix as an SVG in millimetres
+    var svg = $("paper"), parts = [], run;
+    svg.setAttribute("width", (cols * pmm) + "mm"); svg.setAttribute("height", (rows * pmm) + "mm");
+    svg.setAttribute("viewBox", "0 0 " + (cols * CELLS) + " " + (rows * CELLS));
+    svg.setAttribute("shape-rendering", "crispEdges");
+    for (i = 0; i < cells.length; i++) {
+      run = -1;
+      for (j = 0; j <= cells[i].length; j++) {
+        var black = j < cells[i].length && !cells[i][j];
+        if (black && run < 0) { run = j; }
+        if (!black && run >= 0) { parts.push("M" + run + " " + i + "h" + (j - run) + "v1h-" + (j - run) + "z"); run = -1; }
+      }
+    }
+    svg.innerHTML = '<path fill="#000" d="' + parts.join("") + '"/>';
+    $("paperinfo").textContent = name + ", square " + pmm + " mm if printed at 100 % (measure it): board " +
+      (cols * pmm) + " x " + (rows * pmm) + " mm   |   lens.py solve PICTURES --board " + name + " --square-mm <measured>";
+  }
+
+  ["type", "cols", "rows", "wmm", "pmm"].forEach(function (id) { $(id).addEventListener("input", draw); });
+  window.addEventListener("resize", draw);
+  $("fs").addEventListener("click", function () {
+    if (document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen(); }
+  });
+  $("pr").addEventListener("click", function () { window.print(); });
+  function toggle() { document.body.classList.toggle("hidden"); draw(); }
+  $("hide").addEventListener("click", toggle);
+  document.addEventListener("keydown", function (e) {
+    if ((e.key === "h" || e.key === "H") && e.target.tagName !== "INPUT") { toggle(); }
+  });
+  draw();
+})(); }
+</script>
+</body>
+</html>
