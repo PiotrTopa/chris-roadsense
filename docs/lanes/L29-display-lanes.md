@@ -64,6 +64,33 @@ Reading:
   13.8/s (1.94) and 17/s (2.19): not adopted (not asked for), a decision for the owner. The phone runs about 15
   runs/s.
 
+### Follow-up: `weak_coast_s` 2.5 -> 1.5 (owner's ruling, adopted)
+
+Rule set by the coordinator: adopt if on the held-out scoring rides the release improves and on/off and identity
+changes do not rise by more than about 5 % against `coast_s` 0.6 / `weak_coast_s` 2.5 at 13.8 runs/s.
+`python tools/vision_eval/lead_eval.py score LEAD_DIR --rides s7-elblag-lowsun,krakow-night-tunnel,a1-night,warsaw-city --set weak_coast_s=W`
+(mean of the four scoring rides; 20/s: three rides; each cell 2.5 -> 1.5):
+
+| after the tracker, `coast_s` 0.6 | 13.8/s: weak 2.5 -> **1.5** | 17/s | 20/s |
+|---|---|---|---|
+| release after the lead is gone, median / longest, s | 0.70 / 1.27 -> **0.70 / 0.86** | 0.98 / 1.73 -> 0.72 / 0.97 | 0.98 / 1.43 -> 0.73 / 0.93 |
+| lead on/off changes / min | 2.05 -> **2.05** | 2.25 -> 2.25 | 2.47 -> 2.60 |
+| identity changes / min | 0.84 -> **0.84** | 0.94 -> 0.94 | 1.00 -> 1.07 |
+| distance jumps over max(1.5 m, 8 %) / min | 0.40 -> **0.40** | 0.50 -> 0.50 | 0.40 -> 0.40 |
+| per-frame step after the relative speed: rms / p95, m | 0.71 / 1.25 -> **0.72 / 1.25** | 0.63 / 1.10 -> 0.63 / 1.12 | 0.56 / 0.94 -> 0.52 / 0.95 |
+| relative-speed noise, m/s | 0.69 -> **0.69** | 0.69 -> 0.70 | 0.70 -> 0.72 |
+| lead present, % of runs | 45.2 -> **45.0** | 45.9 -> 45.5 | 53.1 -> 52.3 |
+
+In between (release median / longest at 13.8, 17, 20 runs/s): 2.0: 0.70 / 1.10, 0.84 / 1.31, 0.89 / 1.25;
+1.75: 0.70 / 0.96, 0.78 / 1.14, 0.82 / 1.10. On/off and identity at 13.8/s and 17/s are the same for every value
+from 1.5 to 2.5.
+
+The rule is met: at 13.8 runs/s on/off and identity changes do not move, the median release stays 0.70 s and the
+longest falls from 1.27 to 0.86 s; at 17 and 20 runs/s the median falls from 0.98 to 0.72-0.73 s and the longest
+under 1 s. The one cost: at 20 runs/s (three rides) on/off +5 % (2.47 -> 2.60) and identity +7 % (1.00 -> 1.07),
+which is one or two events in 15 minutes. `PROFILES["vision"]["weak_coast_s"]` is 1.5 now; a release of about
+0.7 s holds at every rate.
+
 ## 2. Candidates
 
 Phone: Adreno 630 at 84 % with two GPU clients already taking turns (envd on ncnn/Vulkan hung the GPU once:
