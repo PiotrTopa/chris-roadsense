@@ -101,6 +101,16 @@ class BoxTest(unittest.TestCase):
         m = box.on_ego_state(ego_state(500.0, 1500, 2000, frame=2))               # the estimator anchored anew, far away
         self.assertEqual(m["road"]["ref"], "A9")
 
+    def test_a_synthetic_receiver_is_marked(self):
+        box = self.box()
+        es = ego_state(1.0, 100, 0)
+        es["sources"] = {"gnss": {"state": "ok", "receiver": "synthetic-drive", "fix": "3d", "hacc_m": 5.0}}
+        m = box.on_ego_state(es)
+        self.assertEqual((m["input"]["synthetic"], m["input"]["gnss"]["source"], m["input"]["gnss"]["fix"]), (True, "synthetic-drive", "3d"))
+        es = ego_state(2.0, 110, 0)
+        es["sources"] = {"gnss": {"state": "ok", "receiver": "headunit", "fix": "3d"}}
+        self.assertFalse(box.on_ego_state(es)["input"]["synthetic"])
+
     def test_no_pack(self):
         box = MapBox({"pack": os.path.join(self.tmp, "missing.rsmap")})
         m = box.on_ego_state(ego_state(1.0, 100, 0))

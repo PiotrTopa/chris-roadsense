@@ -59,6 +59,7 @@ class MapBox:
         else:
             self.pack_path = self.cfg["pack"] or os.environ.get("CHRIS_MAP_PACK") or DEFAULT_PACK
         self.view_memo = {}             # orientation of the last roundabout view (context.junction_view)
+        self.receiver = None            # the estimator's entry for its receiver (`ego_state.sources.gnss`)
         self.seq = 0
         self.counts = {"in": 0, "matches": 0, "errors": 0}
         self.last_error = None
@@ -149,6 +150,7 @@ class MapBox:
             return None
         self.t_out = t
         self.check_pack(t)
+        self.receiver = ((es.get("sources") or {}).get("gnss") or None)
         c = self.cfg
         prev = self.state
         self.state, pose = self.pose(es)
@@ -204,9 +206,17 @@ class MapBox:
         out["pack"] = {"region": man.get("region"), "osm_timestamp": man.get("osm_timestamp"),
                        "built": man.get("built"), "format": man.get("format")} if man else None
         # what the pose is made from is the estimator's statement (`ego_state.sources`, `ego_state.position`)
-        out["input"] = {"pose": "ego_state", "gnss": None if pose is None else {"age_s": pose["fix_age_s"]},
+        # what the pose is made from is the estimator's statement; its receiver's tag is passed on, so that a
+        # consumer can tell a made-up position (a source tagged "synthetic...") from a real one
+        rx = self.receiver or {}
+        tag = rx.get("receiver")
+        out["input"] = {"pose": "ego_state",
+                        "gnss": None if pose is None and not rx else {
+                            "source": tag, "fix": rx.get("fix"), "hacc_m": rx.get("hacc_m"),
+                            "age_s": None if pose is None else pose["fix_age_s"]},
                         "motion": {"source": "integrator", "tag": None, "age_s": 0.0},
-                        "errors": self.counts["errors"], "last_error": self.last_error, "synthetic": False}
+                        "errors": self.counts["errors"], "last_error": self.last_error,
+                        "synthetic": isinstance(tag, str) and tag.strip().lower().startswith("synthetic")}
         if pose is not None:
             hacc = pose["hacc"]
             if self.state == "good":
