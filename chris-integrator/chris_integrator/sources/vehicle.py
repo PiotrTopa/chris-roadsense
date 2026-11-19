@@ -20,13 +20,32 @@ def _H_V(x):
     return x[E.V], _I_V, _ONE
 
 
-SCALE_MIN_YAW = 0.05             # rad/s: a scale factor is learned only where its regressor stands clear of the noise
+SCALE_CLEAR = 3.0                # a scale factor is learned where its regressor stands this many sigma clear of its noise
+SCALE_MIN_YAW = 0.02             # ... and at least this far from zero (rad/s): a straight road with its wiggles teaches nothing
+SCALE_MIN_SPEED = 1.0            # m/s
+
+
+def clear_reg(value, var, floor=0.0, k=SCALE_CLEAR):
+    """The regressor of a scale state, as it enters the row's Jacobian.
+
+    The Jacobian of a scale state is the quantity it multiplies. Where that quantity is mostly its own estimation
+    noise (a yaw rate on a straight road), a noisy regressor teaches the scale nonsense: the errors-in-variables
+    bias of an EKF (the scale walks steadily, on a straight road, by rows that should say nothing about it).
+    The regressor is therefore shrunk towards zero by its own uncertainty: zero inside the dead zone
+    max(k sigma, floor), the value itself far outside. `var` is the estimate's variance of the regressor.
+
+    Before L41 the rule was a fixed floor (0.05 rad/s, 3 m/s) below which the Jacobian was dropped. That also
+    dropped the scale's *uncertainty* from every gentle bend (an unlearned gyro scale of 8 % at 0.04 rad/s is
+    3 degrees of heading in a long motorway bend that the covariance did not contain), although the yaw rate is
+    known there to 0.003 rad/s and the scale is perfectly learnable."""
+    a = value * value
+    lim = max(k * k * var, floor * floor)
+    return 0.0 if a <= lim else value * (1.0 - lim / a)
 
 
 def scale_reg(value, floor):
-    """The Jacobian of a scale state is the quantity it multiplies. Near zero that quantity is mostly its own
-    estimation noise, and a noisy regressor teaches the scale nonsense (the errors-in-variables bias of an EKF);
-    below `floor` the row therefore says nothing about the scale."""
+    """The fixed-floor rule (kept for regressors that are either far from zero or absent, like a radar's own
+    speed while moving): the value, or 0 below the floor."""
     return value if abs(value) >= floor else 0.0
 
 
@@ -77,6 +96,7 @@ class VehicleSource(Source):
         still = bool(msg.get("standstill")) and v == 0.0
         out.append(Meas("standstill", t, still, src="vehicle.standstill", role="flag"))
         ibg, isg, iswy, ibax, ibay = (self.ix[k] for k in ("b_g", "s_g", "s_wy", "b_ax", "b_ay"))
+        vw = float(ctx.P[E.W, E.W])        # how well the yaw rate is known: the scales' regressor is judged by it
         if not still:
             # the speed state is in this signal's scale by definition (core/ego.py, SV)
             sg = 0.03 + 0.002 * abs(v)
@@ -107,15 +127,21 @@ class VehicleSource(Source):
             if ysrc == "yaw_rate":
                 i_g = np.array([E.W, isg, ibg], dtype=np.intp)
 
-                def h_g(x):
+                def h_g(x, vw=vw):
                     k = 1.0 + x[isg]
-                    return k * x[E.W] + x[ibg], i_g, np.array([k, scale_reg(x[E.W], SCALE_MIN_YAW), 1.0])
+                    return k * x[E.W] + x[ibg], i_g, np.array([k, clear_reg(x[E.W], vw, SCALE_MIN_YAW), 1.0])
             else:
                 i_w = np.array([E.W], dtype=np.intp)
 
                 def h_g(x):
                     return x[E.W], i_w, np.array([1.0])
-            out.append(Meas("yaw_rate", t, r, sg, h_g, "vehicle.yaw", mon=(r, sg)))
+            # the gyro's own row never corrects the gyro's scale: nothing in a yaw-rate sensor says what its scale is
+            # (every yaw sensor of the car has one). The scale is a consider state here, so the heading carries its
+            # uncertainty through every bend, and it is corrected by what does know: heading references (a
+            # receiver's track over turns, the map's bearing) through that very correlation. The other yaw
+            # sensors' scales are then learned relative to the gyro's.
+            out.append(Meas("yaw_rate", t, r, sg, h_g, "vehicle.yaw", mon=(r, sg),
+                            consider=(isg,) if ysrc == "yaw_rate" else None))
         ws = msg.get("wheel_speeds_mps")
         if ysrc == "yaw_rate" and not still and isinstance(ws, (list, tuple)) and len(ws) == 4 \
                 and all(fin(w) for w in ws):
@@ -124,9 +150,9 @@ class VehicleSource(Source):
                 rw = -rw
             i_wy = np.array([E.W, iswy], dtype=np.intp)
 
-            def h_wy(x):
+            def h_wy(x, vw=vw):
                 k = 1.0 + x[iswy]
-                return k * x[E.W], i_wy, np.array([k, scale_reg(x[E.W], SCALE_MIN_YAW)])
+                return k * x[E.W], i_wy, np.array([k, clear_reg(x[E.W], vw, SCALE_MIN_YAW)])
             out.append(Meas("yaw_rate", t, rw, 0.02 + 0.05 * abs(rw), h_wy, "vehicle.wheel_yaw", robust=True))
         return out
 

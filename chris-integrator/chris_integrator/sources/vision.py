@@ -13,7 +13,7 @@ import numpy as np
 from ..core import ego as E
 from ..core.ego import AuxState
 from ..core.registry import NS, Meas, Source, fin
-from .vehicle import SCALE_MIN_YAW, scale_reg
+from .vehicle import SCALE_MIN_SPEED, SCALE_MIN_YAW, clear_reg
 
 PAIR_LAG_S = 0.125               # prior of the delay: the pose describes the image pair
 STOP_SPEED, GO_SPEED, STOP_CONFIRM_S = 0.15, 0.8, 1.0
@@ -79,10 +79,12 @@ class VisionSource(Source):
             white = max(white, float(vs))
         i_sp = np.array([E.V, isc, im, itau], dtype=np.intp)
 
+        vv, vw = float(ctx.P[E.V, E.V]), float(ctx.P[E.W, E.W])
+
         def h_speed(x, tau0=tau):
             k = 1.0 + x[isc]
             d = x[itau] - tau0
-            return k * (x[E.V] - x[E.A] * d) + x[im], i_sp, np.array([k, scale_reg(x[E.V], 3.0), 1.0, -k * x[E.A]])
+            return k * (x[E.V] - x[E.A] * d) + x[im], i_sp, np.array([k, clear_reg(x[E.V], vv, SCALE_MIN_SPEED), 1.0, -k * x[E.A]])
         # without a speed reference the scale cannot be told from the speed: it then stays at its prior and its
         # uncertainty is the speed's (a "consider" state), instead of drifting on its own linearisation
         sp0 = ctx.speed_known()
@@ -103,7 +105,7 @@ class VisionSource(Source):
 
             def h_w(x):
                 k = 1.0 + x[isw]
-                return k * x[E.W], i_w, np.array([k, scale_reg(x[E.W], SCALE_MIN_YAW)])
+                return k * x[E.W], i_w, np.array([k, clear_reg(x[E.W], vw, SCALE_MIN_YAW)])
             ref_w = ctx.P[E.W, E.W] < 0.01 ** 2          # a gyro (or wheels) holds the yaw rate
             out.append(Meas("yaw_rate", t, r, max(sig_f, float(rs)) if fin(rs) else sig_f, h_w, "vision.pose",
                             robust=True, mon=(r, sig), local=True, consider=None if ref_w else (isw,)))

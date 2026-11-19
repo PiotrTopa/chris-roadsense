@@ -160,7 +160,8 @@ class GnssSim:
     def generate(self, w):
         rng = random.Random(self.seed)
         ge, gn = _GM(rng, self.sigma_gm, self.tau_gm), _GM(rng, self.sigma_gm, self.tau_gm)
-        t = w.t0 + 0.4
+        # the world has no past before its start: the first fix is the first one that describes a time inside it
+        t = w.t0 + 0.4 + math.ceil(max(self.lag, self.speed_lag))
         while t < w.t0 + w.T:
             rel = t - w.t0
             if not any(a <= rel < b for a, b in self.outage):

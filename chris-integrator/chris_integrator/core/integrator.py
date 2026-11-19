@@ -398,7 +398,7 @@ class Integrator:
                     psi = math.atan2(n - f[1], e - f[0])
             if psi is None:
                 return []
-            self._anchor(e, n, psi, sigma, tau)
+            self._anchor(e, n, psi, sigma, tau, itau)
             return []
         v, ps = float(x[E.V]) / (1.0 + float(x[E.SV])), float(x[E.PSI])
         idx = [E.PE] if itau is None else [E.PE, itau]
@@ -427,19 +427,42 @@ class Integrator:
                 m.reset_data()
         self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
 
-    def _anchor(self, e, n, psi, sigma, tau):
+    def _anchor(self, e, n, psi, sigma, tau, itau=None):
+        """Place the local frame on a fix. The position is the fix carried forward by speed x delay along the
+        heading, so it inherits the uncertainty of the delay (along the track) and of the heading (across it),
+        correlated with those states: a delay and an along-track offset cannot be told apart at constant speed,
+        and the covariance has to say so (the filter then learns the delay when the speed changes, and the
+        position's uncertainty stays honest until it does)."""
         l = self.ekf.latest()
         if l is None:
             return
         t, x, P = l
         x, P = x.copy(), P.copy()
-        v = float(x[E.V])
-        dpsi = psi - x[E.PSI]
-        x[E.PE], x[E.PN], x[E.PSI] = e + v * tau * math.cos(psi), n + v * tau * math.sin(psi), psi
-        for i, var in ((E.PE, (2.0 * sigma) ** 2 + 4.0), (E.PN, (2.0 * sigma) ** 2 + 4.0), (E.PSI, 0.35 ** 2)):
+        v = float(x[E.V]) / (1.0 + float(x[E.SV]))
+        c, s = math.cos(psi), math.sin(psi)
+        x[E.PE], x[E.PN], x[E.PSI] = e + v * tau * c, n + v * tau * s, psi
+        var_psi = 0.35 ** 2
+        var_tau = float(P[itau, itau]) if itau is not None else 0.0
+        if itau is not None:                       # the delay keeps its variance, loses stale correlations
+            P[itau, :] = 0.0
+            P[:, itau] = 0.0
+            P[itau, itau] = var_tau
+        for i, var in ((E.PE, (2.0 * sigma) ** 2 + 4.0), (E.PN, (2.0 * sigma) ** 2 + 4.0), (E.PSI, var_psi)):
             P[i, :] = 0.0
             P[:, i] = 0.0
             P[i, i] = var
+        d = v * tau
+        u, nrm = (c, s), (-s, c)                   # along the track, across it
+        for a_, ia in ((u[0], E.PE), (u[1], E.PN)):
+            for b_, ib in ((u[0], E.PE), (u[1], E.PN)):
+                P[ia, ib] += v * v * var_tau * a_ * b_
+        for a_, ia in ((nrm[0], E.PE), (nrm[1], E.PN)):
+            for b_, ib in ((nrm[0], E.PE), (nrm[1], E.PN)):
+                P[ia, ib] += d * d * var_psi * a_ * b_
+            P[ia, E.PSI] = P[E.PSI, ia] = d * var_psi * a_
+        if itau is not None:
+            for a_, ia in ((u[0], E.PE), (u[1], E.PN)):
+                P[ia, itau] = P[itau, ia] = v * var_tau * a_
         self.ekf.rebase(t, x, P)
         self.anchored = True
         self.frame_id += 1
