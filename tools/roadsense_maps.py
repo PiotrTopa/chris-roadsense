@@ -597,8 +597,8 @@ def sha256(path):
 
 def cmd_install(a):
     """Copy the pack to <host>:<remote-dir>/ (rsync, resumable), check its sha256 there, and print the
-    root step that makes it current. Nothing is restarted: mapd picks up a changed
-    /var/lib/roadsense/maps/current.rsmap by itself."""
+    root step that makes it current. Nothing is restarted: the map box of chris-integrator (and a legacy mapd)
+    picks up a changed current.rsmap by itself."""
     rsmap.Pack(a.pack).close()                         # refuse to ship something that is not a pack
     name = os.path.basename(a.pack)
     want = sha256(a.pack)
@@ -606,8 +606,10 @@ def cmd_install(a):
     cmds = [["ssh", a.host, "mkdir -p %s" % a.remote_dir],
             ["rsync", "--partial", "--inplace", "--info=progress2", a.pack, "%s:%s.part" % (a.host, remote)],
             ["ssh", a.host, "sha256sum %s.part" % remote]]
+    # the legacy mapd's link and, where chris-integrator is installed, the map box's (both reload by themselves)
     activate = ("sudo install -d /var/lib/roadsense/maps && sudo ln -sfn \"$(readlink -f %s)\" "
-                "/var/lib/roadsense/maps/current.rsmap" % remote)
+                "/var/lib/roadsense/maps/current.rsmap && { [ ! -d /var/lib/chris/maps ] || sudo ln -sfn "
+                "\"$(readlink -f %s)\" /var/lib/chris/maps/current.rsmap; }" % (remote, remote))
     if a.dry_run:
         for c in cmds:
             print(" ".join(c))
@@ -621,7 +623,7 @@ def cmd_install(a):
         sys.exit("sha256 mismatch on the device (%s, expected %s); the .part file was left there" % (got, want))
     subprocess.run(["ssh", a.host, "mv %s.part %s" % (remote, remote)], check=True)
     log("installed %s:%s (sha256 ok)" % (a.host, remote))
-    print("# make it the current pack (root on the device; mapd reloads it without a restart):")
+    print("# make it the current pack (root on the device; reloaded without a restart):")
     print("ssh -t %s '%s'" % (a.host, activate))
 
 
