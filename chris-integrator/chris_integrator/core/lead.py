@@ -2,7 +2,7 @@
 import math
 
 from ..contract import signal, validity
-from .objects import AX, VX, VY, X, Y
+from .objects import AX, VX, VY, X, Y, class_of
 from .registry import NS
 
 LEAD_CFG = dict(time_gap_min_speed=1.0, ttc_min_closing=0.5, camera_to_front_m=None, brake_max_age_s=3.0,
@@ -45,6 +45,8 @@ def tracks_message(layer, es, ts, valid=True, reason=None):
             "flags": sorted(tr.flags | ({"standing"} if tr.standing else set())
                             | ({"designated"} if tr.designated else set())),
             "path_offset_m": None if tr.mem.get("path_offset") is None else round(tr.mem["path_offset"], 2),
+            # what kind of road user (non-critical metadata: label, confidence, the sensor that said so); null: unknown
+            "class": class_of(tr, T),
             "attrs": tr.mem.get("attrs") or {}})
     sensors = {}
     for src, (m, t) in layer.models.items():
@@ -67,7 +69,8 @@ def lead_message(layer, es, road, lead, ego_T, cfg=LEAD_CFG):
     e = ego_of(es, c["ego_stop_confirm_s"])
     v_ego, stands, src, ego_age, ego_tag = e if e is not None else (None, False, None, None, None)
     # which object sources are alive and believable now
-    live = [s for s, (m, t) in layer.models.items() if T - t <= 1.0 and m.name != "camera_lead"]
+    live = [s for s, (m, t) in layer.models.items() if T - t <= 1.0 and m.name != "camera_lead"
+            and not getattr(m, "annotates_only", False)]
     vis_ok = ((es.get("sources") or {}).get("vision") or {}).get("state") != "fault"
     valid, reason, inputs = validity(es, () if live else ("vision",), ("speed",))
     if valid and not live and cam is None and road is None:
@@ -163,4 +166,5 @@ def lead_message(layer, es, road, lead, ego_T, cfg=LEAD_CFG):
                   "std_mps": (es.get("speed") or {}).get("std"), "age_s": ego_age, "tag": ego_tag,
                   "brake": signal(es, "brake", c["brake_max_age_s"])}
     out["vision"] = vis
+    out["class"] = None if lead is None else class_of(lead, T)     # non-critical: what kind of road user, if a sensor says
     return out

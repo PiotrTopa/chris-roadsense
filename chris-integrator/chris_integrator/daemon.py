@@ -169,6 +169,11 @@ class Daemon:
             runner = web.AppRunner(app, access_log=None)
             await runner.setup()
             await web.TCPSite(runner, self.http[0], self.http[1]).start()
+        loop = asyncio.get_running_loop()
+        for slot in self.mixer.slots.values():          # out-of-process plug-ins in async mode: publish as they answer
+            pl = slot.plugin
+            if getattr(pl, "remote", False) and not pl.sync and pl.fileno() is not None:
+                loop.add_reader(pl.fileno(), pl.pump)
         log.info("chris-integrator: %d source sockets, %d plug-ins (%s), state size %d, http %s", len(tasks),
                  len(self.mixer.order), ", ".join(s.name for s in self.mixer.order), self.integ.model.n, self.http)
         try:

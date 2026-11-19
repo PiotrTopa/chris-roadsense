@@ -104,13 +104,18 @@ class RulesInEffect:
         self.junctions = [j for j in self.junctions if j["odo"] > self.odo - 500]
 
     def _sync_junctions(self):
+        # keyed by content: an object's id() is reused once the engine has dropped an old cue, and a new cue
+        # that happened to get the same address was then taken for one already seen (lane L39: one junction in
+        # a 25 min replay, depending on the process' allocation pattern)
+        def key(j):
+            return (j["odo"], j.get("sign"), j.get("track_id"))
         for j in self.speed.junctions:
-            key = id(j)
-            if key not in self._sl_junctions_seen and j.get("cls") != "lights":
-                self._sl_junctions_seen.add(key)
+            k = key(j)
+            if k not in self._sl_junctions_seen and j.get("cls") != "lights":
+                self._sl_junctions_seen.add(k)
                 self._add_junction(j["odo"], f"sign {j['sign']}", j.get("track_id"))
         if len(self._sl_junctions_seen) > 500:
-            self._sl_junctions_seen = set(id(j) for j in self.speed.junctions)
+            self._sl_junctions_seen = set(key(j) for j in self.speed.junctions)
 
     def _turn_proxy(self):
         h = self.speed.heading

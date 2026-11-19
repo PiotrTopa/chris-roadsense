@@ -20,7 +20,10 @@ Object model (all in the car's frame of the `road` topic: x forward from the cam
   "sx", "sy" (1 sigma of the displayed position), "age_s" (since the object first appeared), "meas_age_s"
   (since the last measurement went in; > 0 = predicted), "phase" ("appear" | "steady" | "coast" | "leave"),
   "alpha" (0..1: a suggested opacity for the fade in / out), "attrs" (kind-specific: a light's state, a
-  sign's class, the lead's distance read-out values), "box" (last image box in frame pixels where there is one)}.
+  sign's class, the lead's distance read-out values), "cls" (vehicles: what kind of road user, {"label": "car" |
+  "truck" | "bus" | "bike" | "human" | ..., "confidence", "source"} or null while no sensor says; non-critical: a
+  consumer draws by it and must draw something sensible without it), "box" (last image box in frame pixels where
+  there is one)}.
 * `lines[]`: {"id": "lane:0".."lane:3" (far left, left, right, far right), "edge:0"/"edge:1", "kind":
   "lane_line|road_edge", "y" (at the shared `x` distances; null beyond `reach_m`), "dy" (lateral rate m/s per
   point, for extrapolation), "reach_m" (the line is drawn up to here: the tracker's sigma under 1 m), "conf",
@@ -96,6 +99,13 @@ DEFAULT_CFG = dict(
     display_scale=True, display_scale_tau_s=8.0,   # bring the source's metres to the road model's (lane-width ratio)
     max_static=24,
 )
+
+
+def _cls(c):
+    """An object's class for the display: label, confidence, source (non-critical metadata of the track)."""
+    if not isinstance(c, dict) or not c.get("label"):
+        return None
+    return {"label": c["label"], "confidence": c.get("confidence"), "source": c.get("source")}
 
 
 def _fin(v):
@@ -586,6 +596,8 @@ class ViewBuilder:
                 "attrs": {"dist_m": m.get("dist_m"), "dist_std_m": m.get("dist_std_m"), "v_rel_mps": m.get("v_rel_mps"),
                           "a_lead_mps2": m.get("a_lead_mps2"), "time_gap_s": m.get("time_gap_s"), "ttc_s": m.get("ttc_s"),
                           "standing": m.get("standing"), "departed": m.get("departed"), "mode": m.get("mode")},
+                # what to draw it as: {"label": "car|truck|bus|bike|human|...", "confidence", "source"} or null (unknown)
+                "cls": _cls(m.get("class")),
                 "box": None}
 
     def _lines(self, lanes, ts, dt, fade):

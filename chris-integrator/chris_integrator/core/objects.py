@@ -40,6 +40,45 @@ DEFAULT_CFG = dict(
 )
 
 
+# ---- object class: non-critical metadata ----------------------------------------------------------------------
+# A detection may say what kind of road user it is (`class`, with `class_conf` or the detection's `prob`). The
+# layer keeps that as an attribute of the track: a decayed vote per label, the winning label with its share as
+# confidence, and the sensor that said so. It is never read by gating, association, existence or the lead
+# selection: a wrong or missing class changes what is drawn, not what is measured.
+CLASS_ALIASES = {"person": "human", "pedestrian": "human", "bicycle": "bike", "cyclist": "bike", "motorcycle": "motorbike",
+                 "van": "car", "lorry": "truck", "coach": "bus"}
+CLASS_DECAY = 0.9
+
+
+def classify(tr, attrs, src, t):
+    """Fold a detection's class label into the track's class attribute."""
+    label = attrs.get("class", attrs.get("cls"))
+    if not isinstance(label, str) or not label:
+        return
+    label = CLASS_ALIASES.get(label.strip().lower(), label.strip().lower())
+    conf = attrs.get("class_conf", attrs.get("prob"))
+    conf = min(1.0, max(0.0, float(conf))) if isinstance(conf, (int, float)) and not isinstance(conf, bool) else 0.5
+    c = tr.mem.get("cls")
+    if c is None:
+        c = tr.mem["cls"] = {"w": {}, "src": {}, "t": t, "n": 0}
+    for k in c["w"]:
+        c["w"][k] *= CLASS_DECAY
+    c["w"][label] = c["w"].get(label, 0.0) + (1.0 - CLASS_DECAY) * conf
+    c["src"][label] = src
+    c["t"], c["n"] = t, c["n"] + 1
+
+
+def class_of(tr, T):
+    """The track's class attribute for the output messages, or None: {"label", "confidence" (0..1: the decayed
+    share of confident votes for the label), "source" (the sensor that last said so), "age_s", "votes"}."""
+    c = tr.mem.get("cls")
+    if not c or not c["w"]:
+        return None
+    label = max(c["w"], key=c["w"].get)
+    return {"label": label, "confidence": round(min(1.0, c["w"][label]), 2), "source": c["src"].get(label),
+            "age_s": round(max(0.0, T - c["t"]), 2), "votes": c["n"]}
+
+
 class Det:
     """One detection: measurement vector, its covariance (or variances), free attributes."""
     __slots__ = ("z", "R", "attrs", "used")
@@ -277,6 +316,9 @@ class ObjectLayer:
         st["dets"] += len(scan.dets)
         self.models[scan.src] = (scan.model, scan.t)
         model = scan.model
+        if getattr(model, "annotates_only", False):     # metadata for the tracks as they stand: nothing is advanced,
+            model.process(self, scan, None)             # measured, started or kept alive by it
+            return
         if self.t is not None and scan.t < self.t - 1e-6:
             if self.t - scan.t > c["oosm_max_s"]:
                 st["dropped"] += 1
@@ -348,6 +390,7 @@ class ObjectLayer:
                 st["nis"] = d2 / len(nu) if st.get("nis") is None else st["nis"] + 0.02 * (d2 / len(nu) - st["nis"])
             if d.attrs:
                 tr.mem.setdefault("attrs", {}).update(d.attrs)
+                classify(tr, d.attrs, scan.src, scan.t)
             # existence: a hit multiplies the odds by P_D x likelihood / clutter density (bounded)
             like = math.exp(-0.5 * d2) / math.sqrt(max((2.0 * math.pi) ** len(nu) * np.linalg.det(S), 1e-12))
             tr.logodds += min(max(math.log(max(model.p_d * like / model.clutter, 1e-9)), math.log(1.5)), math.log(20.0))
@@ -367,6 +410,7 @@ class ObjectLayer:
                 tr = Track(self.new_id(), x0, P0, self.t, scan.src, c["new_exist"])
                 if d.attrs:
                     tr.mem["attrs"] = dict(d.attrs)
+                    classify(tr, d.attrs, scan.src, scan.t)
                 self.tracks.append(tr)
                 st["started"] += 1
 

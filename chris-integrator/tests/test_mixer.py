@@ -236,6 +236,19 @@ class OutOfProcess(unittest.TestCase):
         finally:
             m.close()
 
+    def test_async_remote_plugin_publishes_when_it_answers(self):
+        import select
+        r = RemotePlugin(cmd=self.CMD, sync=False)
+        m, ch, got = mixer(r)
+        try:
+            ch.deliver("a", a(1, 4))                         # sent, not waited for
+            self.assertEqual([t for t, _ in got], ["a"])
+            self.assertTrue(select.select([r.fileno()], [], [], 5.0)[0])     # what an event loop would watch
+            r.pump()
+            self.assertEqual(got[-1], ("b", {"type": "b", "ts_mono_ns": 1000, "v": 8}))
+        finally:
+            m.close()
+
     def test_a_dead_remote_plugin_is_a_fault_not_a_stall(self):
         r = RemotePlugin(cmd=self.CMD, timeout_s=0.3, retry_s=0.0)
         m, ch, got = mixer(Sum(), r)

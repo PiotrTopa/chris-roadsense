@@ -2,7 +2,7 @@
 """Lane L39: the consolidated side before and after the move, message by message.
 
     tools/mixer_equiv.py run SESSION --pos POS --out OUT.jsonl.gz [--tree OLD_TREE] [--limit N] [--mapper box|recorded]
-    tools/mixer_equiv.py diff A.jsonl.gz B.jsonl.gz [--topics lead,lanes,...]
+    tools/mixer_equiv.py diff A.jsonl.gz B.jsonl.gz [--topics lead,lanes,...] [--drop class,cls]
 
 `run` feeds a recorder session (inputs only: `road`, `calib`, `camera`, `env`, `lights`, `signs`, `map`, `ego`,
 `vehicle`, `objects`, `gnss`, `display_lanes`) in recorded order through
@@ -102,10 +102,15 @@ def run_new(a, sink):
     from chris_integrator.mixer import MessageClock
     from chris_integrator.stack import build
     cfg = {}
-    if a.mapper == "box":
+    mapper = None
+    if a.mapper == "box":                      # the map box in process
         cfg["mapper"] = {"pack": os.path.expanduser(a.pack)}
-    stack = build(cfg=cfg, clock=MessageClock(), external_map=a.mapper == "recorded",
-                  mapper="auto" if a.mapper == "box" else None)
+        mapper = "auto"
+    elif a.mapper == "remote":                 # the same box as its own process behind the plug-in wire contract
+        from chris_integrator.mixer.remote import RemotePlugin
+        mapper = RemotePlugin(name="mapper", cmd=[sys.executable, "-m", "chris_mapper", "--plugin", "--pack", os.path.expanduser(a.pack)],
+                              env=dict(os.environ, PYTHONPATH=os.path.join(HERE, "chris-mapper")), timeout_s=5.0)
+    stack = build(cfg=cfg, clock=MessageClock(), external_map=a.mapper == "recorded", mapper=mapper)
     stack.mixer.add_output("equiv", lambda e: sink(e.stream, e.line))
     cpu = 0.0
     for m in session(a, HERE):
@@ -114,7 +119,9 @@ def run_new(a, sink):
         c = time.process_time()
         stack.deliver(m)
         cpu += time.process_time() - c
-    return cpu, stack.mixer.describe()
+    desc = stack.mixer.describe()
+    stack.mixer.close()
+    return cpu, desc
 
 
 def cmd_run(a):
@@ -131,7 +138,8 @@ def cmd_run(a):
     if desc:
         for p in desc["plugins"]:
             print("  %-13s order %s calls %7d  %.4f ms/call  total %.2f s  errors %d  %s" % (
-                p["name"], p["order"], p["calls"], p["ms_per_call"] or 0.0, p["cpu_s"], p["errors"], p["health"].get("state")))
+                p["name"], p["order"], p["calls"], p["ms_per_call"] or 0.0, p["cpu_s"], p["errors"], p["health"].get("state"))
+                + ("  remote: %s" % p["health"].get("transport") if p["remote"] else ""))
         with open(a.out + ".mixer.json", "w") as f:
             json.dump(desc, f, indent=1)
 
@@ -142,8 +150,20 @@ def load(path):
             yield json.loads(ln)
 
 
+def _drop(o, keys):
+    if isinstance(o, dict):
+        return {k: _drop(v, keys) for k, v in o.items() if k not in keys}
+    if isinstance(o, list):
+        return [_drop(v, keys) for v in o]
+    return o
+
+
 def cmd_diff(a):
     A, B = list(load(a.a)), list(load(a.b))
+    if a.drop:                                 # compare modulo fields added since (e.g. --drop class,cls)
+        keys = set(a.drop.split(","))
+        A = [(t, json.dumps(_drop(json.loads(l), keys), separators=(",", ":"))) for t, l in A]
+        B = [(t, json.dumps(_drop(json.loads(l), keys), separators=(",", ":"))) for t, l in B]
     topics = a.topics.split(",") if a.topics else sorted({t for t, _ in A} | {t for t, _ in B})
     ok = True
     for t in topics:
@@ -177,13 +197,16 @@ def main():
     p.add_argument("--tree")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--road-model", default="vision")
-    p.add_argument("--mapper", choices=("recorded", "box", "none"), default="recorded")
+    p.add_argument("--mapper", choices=("recorded", "box", "remote", "none"), default="recorded",
+                   help="where `map` comes from: the session's own messages (as the old api had them), the map box in "
+                        "process, the map box as another process, or nothing")
     p.add_argument("--pack", default="~/roadsense-maps/packs/poland-20261114.rsmap")
     p = sub.add_parser("diff")
     p.add_argument("a")
     p.add_argument("b")
     p.add_argument("--topics")
     p.add_argument("--show", action="store_true")
+    p.add_argument("--drop", help="comma-separated keys removed from every message before comparing")
     a = ap.parse_args()
     sys.exit(cmd_run(a) if a.cmd == "run" else cmd_diff(a))
 

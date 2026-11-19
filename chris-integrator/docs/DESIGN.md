@@ -1,27 +1,32 @@
-# The data integrator
+# chris-integrator: design
 
-Lane L38, 2026-11-19. Design of the component every input passes through before any logic reads it: one box
-in the architecture, with a full ego state, an object layer, and sources that plug in without touching the
-core. It replaces the design of lane L37 (ego motion only, inside the api); what is kept from L37 is listed in
-section 12. Facts about the inputs: `docs/lanes/L35-ego-fusion-audit.md` and section 1. Measured results of
-what was built: `docs/lanes/L38-integrator.md`. Sections marked "(as built)" were corrected after the code and
-the replays; the report says what is not built.
+The component every input of the car passes through before any logic reads it, and the component consumers
+talk to. Its shape is an **audio mixer**: input channels, a bus, plug-in transformers that take named streams
+from the bus and put named streams back, output channels. Sections 1-8 and 10-13 describe the estimator box
+(one ego estimate with a full state, the object layer, sources that plug in without touching the core);
+section 9 is the cut of the whole stack; **section 14 is the mixer**: channels, the bus, the plug-in contract,
+and the boxes of the stack; section 15 the map box; section 16 object classes. Sections marked "(as built)"
+were corrected after the code and the replays.
 
 ```
- inputs (any process, any rate, any latency)          THE INTEGRATOR  (package chris_integrator,          consumers (downstream only)
-                                                       daemon chris-integrator, or a library)     
- vehicle motion `ego`, `vehicle` ─┐                ┌────────────────────────────────────────────┐
- receiver fixes `gnss`            │  input         │ timebase: clock epochs, per-source delay   │  `ego_state`  position, heading, speed,
- road model `road` (pose, leads,  ├─ contract ───> │ ego estimator: one EKF, full state +       ├─>  accel, yaw rate, grade, calibration,
-   plan), `calib`                 │  (JSON lines,  │   per-source calibration states, time-     │    per-source health, checks
- map matcher `map`                │   one socket   │   ordered buffer, fixed-lag smoothing      │  `tracks`     one multi-target list in the
- radars `radar` (N of them)       │   per producer)│ monitors + fault isolation (raw pairs, NIS)│    car frame, existence, sources
- further cameras `camera_objects` ┘                │ object layer: association, track life      ├─> `lead`       the track on the path
-                                                   │   cycle, existence, lead by the path       │   all with time of validity, std,
-                                                   └────────────────────────────────────────────┘   valid / reason, held / coasted marks
-                                                                                                       │
-        api: lanes · ego lane · road geometry · speed limit / rules · lights · sign context · fused · view · recorder · MFD
-        mapd: map matcher (reads the integrator's position; its match comes back as an input)
+ INPUT CHANNELS                      BUS (named streams; envelopes: time of validity,                OUTPUT CHANNELS
+ (any process, rate, latency)        arrival time, producer, one serialised line)
+                                                                                                 
+ chris-roadsense, one per camera ─┐    road calib camera env lights_raw signs_raw governor       ┌─> HTTP /v2 + WebSocket /ws
+   road, calib, camera, env,      │    ego vehicle gnss objects                                  │     (the consolidated API)
+   lights, signs, governor        ├──>   │        ▲                                          ────┼─> integrator.sock (JSON lines
+ the car (feed.sock, POST):       │      ▼        │                                              │     for other processes)
+   motion, gnss, controls, body,  │   PLUG-IN TRANSFORMERS, in an order derived from             └─> recorder
+   objects (radars, cameras)     ─┘   what each declares it reads and writes:
+                                        estimator   motion, fixes, pose, map match, scans -> ego_state, tracks, lead
+                                        mapper      ego_state -> map                  (chris-mapper; feeds back)
+                                        lanes       road, ego_state, map -> lanes
+                                        egolane, roadgeom   lanes, map -> (wiring for view / fused)
+                                        ego_light   lights_raw, road, lanes, map -> lights
+                                        sign_context  signs_raw, lead, lights -> signs
+                                        view        all of the above -> view      (the display channel)
+                                        rules       signs, env, road, ego_state -> speed_limit, rules
+                                        fused       map + camera decisions -> fused
 ```
 
 ## 0. Requirements this design answers
@@ -286,7 +291,7 @@ carry `sources`, the health table grows a row. Proven in the commit history of t
 the second radar and the second camera were each added by commits that touch `sources/`, `sim/`, tests and
 tools only.
 
-## 8. Output contract (`contract.py`; ARCHITECTURE.md has the field tables)
+## 8. Output contract of the estimator box (`contract.py`)
 
 Three messages per road frame (and per vehicle sample while no camera frames arrive), all stamped with the
 frame's `ts_mono_ns` = time of validity:
@@ -299,7 +304,8 @@ frame's `ts_mono_ns` = time of validity:
   monitor's verdict. `signals`: pass-through values with age. Counters (late, dropped, rejected).
 * **`tracks`**: `frame: "car"`, every track with id, `state` (`tentative | confirmed | coast`), `exist`,
   position / velocity / acceleration with std, `age_s`, `meas_age_s` per source, `sources`, `flags`
-  (`standing`, `ghost`, `stationary`, `on_path`), and per-sensor health of the object sources.
+  (`standing`, `ghost`, `stationary`, `on_path`), `class` (section 16: what kind of road user, with confidence
+  and source, or null; non-critical), and per-sensor health of the object sources.
 * **`lead`**: section 6.
 
 Rules: `valid: false` always carries a `reason`; a value that is not a fresh fusion is marked (`mode: coast`,
@@ -345,8 +351,8 @@ is the consumer's interface.
 | `api/recorder.py` | integrator | it records the consolidated inputs and outputs; the video DVR stays with the camera |
 | `api/state.py`, `api/server.py`, `api/sockets.py` (HTTP / WebSocket / topics) | integrator: the consolidated API | the consumer's interface |
 | `mapd/posfilter.py`, `mapd/vehicle.py` calibration | absorbed by the ego estimator (position, heading, scales, GNSS delay are its states) | position is estimated once |
-| `mapd/engine.py` input handling (`position.sock`, vehicle input API 1.1), `VehicleStore` | integrator: the feed input (the car backend feeds the integrator directly) | not video analysis |
-| `mapd/matcher.py`, `rsmap.py`, `context.py`, `limits/` (the map) | integrator: map side; the matcher reads the integrator's position, its match is a measurement (below) | needs the position |
+| `mapd/engine.py` input handling (`position.sock`, vehicle input API 1.1) | integrator: the feed input channel (the car backend feeds the integrator directly) | not video analysis |
+| `mapd/matcher.py`, `rsmap.py`, `context.py`, `limits/` (the map) | **chris-mapper**, its own box (section 15): it reads the integrator's pose, its match is a measurement | needs the position, estimates none |
 
 What remains of roadsense's api: the sockets it already publishes (`road`, `calib`, `signs`, `lights`, `env`,
 `camera`, `display_lanes`), the frame ring, and a small HTTP face for stand-alone use and debugging
@@ -361,13 +367,13 @@ the vehicle input API as it does to mapd today (`gnss`, `motion`, `controls`, `b
 `ego` / `gnss`, so the switch is a socket path on the car.
 
 **Process and the cost of crossing it.** One daemon (`python3 -m chris_integrator`): it reads each
-roadsense instance's sockets and the feed, runs estimator, object layer, trackers and the API. With the
-integrator on top there is no second parse of the `road` message any more (L37's objection to a separate
-process): the integrator is the only consumer that parses it, roadsense's own api does not. Library form
-for replay and tests: the same `Integrator` object without sockets.
+roadsense instance's sockets and the feed and runs the mixer (section 14) with the API as an output channel.
+The integrator is the consumer that parses `road` for the trackers; a message that is only passed on (a raw
+`road` line to a WebSocket client) keeps the line it arrived as and is never serialised again. Library form
+for replay and tests: the same mixer and plug-ins on a clock that follows the messages.
 
-**The position is estimated once.** The matcher is a module of the integrator that reads the ego state's
-position and returns `match` as a constraint measurement. What returns is the *map's geometry* (cross-track
+**The position is estimated once.** The map box (section 15) reads the ego state's position and returns
+`match` as a constraint measurement. What returns is the *map's geometry* (cross-track
 to a road, the road's bearing), not the position that was sent, so the loop is not incestuous; lock-in on a
 wrong road is bounded by the robust weighting, by a lane-offset state, by using only unambiguous matches and
 by setting the map rows aside while their innovations are far off (section 5).
@@ -381,11 +387,14 @@ the split is a move of `chris-integrator/` plus packaging (`pyproject`, a unit f
 roadsense is MIT; the integrator can be MIT as well (it contains no code of roadsense-signs, which is AGPL
 and stays a separate provider process whose *messages* it reads).
 
-**Built in this lane, and the order of the rest.** See the report: the estimator, object layer, sources,
-simulator and the daemon are in `chris-integrator/`; the api's trackers already read only the integrator's outputs.
-The physical move of the tracker modules, the consolidated HTTP / WebSocket server and the map side from
-`api/` and `mapd/` into `chris-integrator/` is a move of files that already depend only on messages; where it was
-not completed in this lane the report says so file by file.
+**As built.** Everything in the table is where the table says: the trackers and decision logic are
+`chris_integrator/trackers/` behind plug-in faces (`plugins/`), the consolidated HTTP / WebSocket API and the
+recorder are output channels (`io/`), the car's feed and each roadsense instance's sockets are input channels,
+the map is the box chris-mapper (section 15) and the position is estimated once. roadsense's api process is
+the debug face of one camera: raw topics, `/preview`, the frame ring, the load governor (whose state it
+publishes as the `governor` message the integrator marks measurement topics with). chris-integrator imports
+nothing from roadsense and reads only its sockets. What a consumer sees is unchanged: the paths, topic names
+and message shapes of the API are those roadsense's api served (api 2), with additions.
 
 ## 10. Simulator and test plan
 
@@ -462,3 +471,191 @@ position only in mapd -> position in the integrator, the map as a measurement.
 * Thresholds of the monitors rest on the drives of one day (L37 section 6); the simulator covers what the car
   cannot show, and no threshold is tuned to the drives without the report saying so.
 * Python + numpy: the cost on the phone is an estimate from laptop measurements until measured there.
+
+## 14. The mixer: channels, bus, plug-ins
+
+The owner's picture: "the integrator is like an audio mixer, balancing and getting things together; it can
+take many inputs, many outputs, and have plug-in input-output transformers." This is code structure
+(`chris_integrator/mixer/`, 600 lines that know no sensor, tracker or consumer), not a metaphor.
+
+### 14.1 The bus
+
+Named **streams** of messages. A message travels in an **envelope**: the stream, the message (a JSON object),
+`ts` (its `ts_mono_ns`: the time it is valid at, on the stack's one time axis), `t_arr` (when it reached the
+bus), `source` (the channel or plug-in that put it there), a sequence number, and its serialised line, made at
+most once and shared by every output channel.
+
+A stream is declared by its producer (`StreamSpec`): `kind` (`raw`: a source's message as it came;
+`measurement`; `estimate`: fused state; `decision`: what a consumer acts on; `context`: the map; `display`:
+informational, may be smoothed; `status`), `time` (`frame`: one message per camera frame, stamped with the
+frame's time of validity; `sample`: the source's own samples; `periodic`; `event`: on change), `public`
+(served to consumers under its name, or wiring between plug-ins), a description. One producer per stream: a
+second one is refused when it is added.
+
+**Clock.** Plug-ins never read the wall clock. "Now" is the bus clock: the host's clocks in a running stack
+(`LiveClock`), the messages' own time in a replay (`MessageClock`). A recording replayed through the mixer is
+deterministic and runs the same code as the car.
+
+### 14.2 Input channels
+
+A channel declares the streams it provides and delivers messages (`channel.deliver(stream, msg, line)`). It
+moves messages and holds no logic. In the stack:
+
+| channel | transport | streams |
+|---|---|---|
+| `roadsense` (one per camera instance; a further instance's streams are suffixed, `road@rear`) | the instance's Unix sockets, JSON lines | `road`, `calib`, `camera`, `env`, `lights_raw`, `signs_raw`, `display_lanes`, `governor` |
+| `vehicle` | `feed.sock` (the vehicle input API; also under the name `position.sock`), `POST /v2/vehicle` | `ego`, `vehicle`, `gnss`, `objects` (radars, further cameras, class detectors) |
+| `map_in` (only without the map box) | a socket or a recording | `map` of an external matcher |
+| a recorder session (`replay.py`) | a file | everything it recorded |
+
+No channel is required: a plug-in whose input has no producer reports `idle` with the reason and the rest
+runs.
+
+### 14.3 The plug-in contract
+
+A plug-in is a box that takes named streams and puts named streams back (`mixer/plugin.py`). It **declares**
+
+* `name`;
+* `inputs`: `In(stream, trigger, optional, feedback)`. A *trigger* input calls the plug-in for each of its
+  messages; the others are read inside the call (`ctx.get(stream)`: the newest message; with `frame=True`
+  only if it belongs to the same camera frame as the message being handled, so a box never pairs this frame's
+  road with the last frame's lanes);
+* `outputs`: `Out(stream, kind, time, public, doc)`;
+* `DEFAULT_CFG`: its configuration with defaults; `<config dir>/<name>.json` overrides per key.
+
+and **implements** `on_input(stream, msg, ctx)`, publishing with `ctx.emit(stream, msg)`. A stream it did not
+declare cannot be read or written (the mixer raises): the declarations are the wiring, and
+`GET /v2/mixer` shows them as they are.
+
+**Time semantics.** An output for a camera frame carries the frame's `ts_mono_ns`. Periodic outputs are paced
+on the bus clock (`ctx.now`). Nothing is delayed or smoothed on a measurement stream; display smoothing lives
+in the `view` box only.
+
+**Order.** Dispatch is synchronous and depth-first: a message goes to the output channels, then to each
+plug-in triggered by it, in order, and what a plug-in emits is dispatched before the next plug-in runs. The
+order is derived from the declarations (a producer before its consumers), stable in the order added; a loop
+is an error unless one of its inputs is declared `feedback`. A feedback input is delivered when it is
+published and read as "the newest there is" (the map match that returns to the estimator: a time-stamped
+measurement, inserted where it belongs by the estimator's out-of-sequence machinery). A plug-in is never
+re-entered: what its own output causes to come back waits until it has finished.
+
+**Health.** `health()` returns `{"state": "ok" | "idle" | "degraded" | "fault", "reason", ...}`. The mixer adds
+what it measures: calls, errors and the last error, cost per call, age of the last output, unsatisfied
+inputs. An exception inside a plug-in is caught, counted and reported as that plug-in's; the other plug-ins
+and the fan-out go on.
+
+**Life cycle.** `reset(reason)` (a new drive, a camera restart), `close()`, `state_dump()` / `state_load()`
+(what survives a restart: faults, calibration; one file per plug-in in the data directory).
+
+**Adding, ordering, enabling, replacing.** At run time: `mixer.add(plugin)`, `remove(name)`,
+`replace(name, plugin)`, `enable(name, on)`; the order is recomputed. From the configuration (`mixer.json`):
+`{"disable": [...], "plugins": [{"class": "pkg.mod:Class", "cfg": {...}} | {"remote": {...}}],
+"replace": {"lanes": {"class": ...}}}`. Removing a producer removes its streams; its consumers say
+`idle: no producer for <stream>`.
+
+**Alone.** `mixer.testing.Bench(plugin)` provides every declared input: `bench.feed(stream, msg)` returns what
+the plug-in emitted. The logic under each plug-in is also a plain class with no bus in it
+(`chris_integrator/trackers/`).
+
+**Out of process, same contract** (`mixer/remote.py`). JSON lines over a child process' pipe or a Unix socket:
+the plug-in's first line carries exactly the declarations above; the mixer sends
+`{"in": stream, "msg": ..., "n": k}`, the plug-in answers `{"out": stream, "msg": ...}` lines and
+`{"done": k, "health": ...}`. Two modes behind the same `Plugin` face: *sync* (the mixer waits for `done`, at
+most a deadline: the outputs are on the bus before the next plug-in runs, a replay stays deterministic; the
+hop is paid on every trigger) and *async* (outputs are published when they arrive; for boxes whose output is
+not tied to a frame). A plug-in that does not answer is reported `fault`, its late answers are dropped, and
+it is restarted. A plug-in written for the in-process contract runs out of process unchanged
+(`remote.serve`); one in another language only has to speak the lines.
+
+### 14.4 The boxes of the stack (`stack.py`: a configuration of the mixer)
+
+| plug-in | triggers | reads | puts back | kind |
+|---|---|---|---|---|
+| `ride_watch` | `camera` | | (resets every plug-in on a new ride) | |
+| `estimator` | `road`, and every type a registered source reads: `ego`, `vehicle`, `gnss`, `objects`, `calib`, `map` (feedback) | `governor` | `ego_state`, `tracks`, `lead` | estimate, estimate, decision |
+| `mapper` | `ego_state` | | `map` | context |
+| `lanes` | `road`, `map` | `ego_state` | `lanes` | measurement |
+| `egolane` | `lanes`, `map` | `road`, `ego_state` | `egolane` (wiring) | estimate |
+| `roadgeom` | `lanes`, `map` | `road`, `ego_state` | `roadgeom` (wiring) | estimate |
+| `ego_light` | `lights_raw`, `lanes`, `map` | `road`, `calib`, `ego_state` | `lights` | decision |
+| `sign_context` | `signs_raw` | `lead`, `lights`, `calib` | `signs` | measurement |
+| `view` | `road`, `map`, `lights`, `signs`, `display_lanes` | `ego_state`, `lead`, `lanes`, `roadgeom`, `egolane`, `tracks`, `calib`, `governor` | `view` | display |
+| `rules` | `road`, `signs`, `env`, `lights` | `ego_state`, `calib` | `speed_limit`, `rules` | decision |
+| `fused` | `road`, `map`, `env`, `signs` | `speed_limit`, `ego_state`, `lanes`, `egolane`, `lead` | `fused` | decision |
+
+The estimator box is the `Integrator` of sections 2-8, unchanged: its source registry is how a *sensor* is
+added (a source file and a configuration line, section 7), the mixer is how a *box* is added. A source added
+to the configuration adds an input to the estimator plug-in and nothing else.
+
+Services shared through the mixer (not streams): `rates` (the `rate` marker of measurement topics: measured
+rate and latency against the configured floors, with the roadsense governor's state as an input), `store`
+(carried state), `reset`.
+
+### 14.5 Output channels
+
+An output channel is a function called with every envelope of the public streams (or of the streams it
+names): the consolidated HTTP / WebSocket API (`io/http.py`; `GET /v2/<stream>` is the newest envelope, `/ws`
+the stream of lines), `integrator.sock` (JSON lines for other processes; a first line
+`{"subscribe": [...]}` narrows), the recorder (`io/recorder.py`). Any number may be attached; each sees the
+same lines.
+
+### 14.6 What the mixer costs
+
+Measured on a laptop core (lane report L39): the dispatch itself is below the measurement noise against the
+hand-wired pipeline it replaced (the same messages, byte for byte); the sync hop to an out-of-process plug-in
+is tens of microseconds to a few hundred per message, paid only by boxes configured that way.
+
+## 15. The map box (chris-mapper)
+
+Its own component (top-level `chris-mapper/`, package `chris_mapper`, its own tests, README and licence;
+nothing of chris-integrator is imported by it and nothing of it by the mixer core). Why its own directory
+rather than a plug-in package inside the integrator: it has its own data and tooling (the pack format, the
+pack builder, OpenStreetMap's licence on the data), its own heavy state (a tile cache: memory and I/O that a
+host may want in another process, on other cores), its own test world (a network, not a drive), and it is
+useful without the integrator (any pose source can drive it). The integrator keeps only the box's plug-in
+face (`plugins/mapper.py`, 50 lines).
+
+* **In**: `ego_state`. The pose with its uncertainty: `position` (lat, lon, east / north covariance, `mode`:
+  `fused` while an absolute fix is fresh, `coast` in dead reckoning; the local frame id), `heading` with std,
+  `speed`, `odometer_m`, the time of validity.
+* **Out**: `map`, every 0.45 s of input time. `match`: the matched point and the road's bearing, confidence,
+  ambiguity: *geometry of the map*, which the estimator's map source takes as a measurement (cross-track to
+  the road = 0 about a lane-offset state, heading = the road's bearing; robust rows, set aside while far off:
+  section 5). `position`: the pose that was used and its state. `road`, `speed_limit`, `ahead` (features,
+  junctions, curves, limit changes, turn lanes, `junction_view`): the map context, read by `lanes`, `egolane`,
+  `roadgeom`, `ego_light`, `view`, `fused`.
+* **It estimates no position.** No filter, no sensor input. A pose that is 30 m off the road comes out 30 m
+  off the road with a match that says so. When the estimator anchors its position anew the box starts the
+  match anew.
+
+The loop estimator -> map box -> estimator is declared (`map` is a feedback input of the estimator). It is
+not incestuous: what returns is the road's line and bearing, not the pose that went in; the pull of a wrong
+road is bounded by the robust rows, by the lane-offset state, by using only unambiguous matches and by the
+innovation monitor.
+
+In process by default; `mapper.json` `{"remote": {"cmd": ["python3", "-m", "chris_mapper", "--plugin"]}}` runs
+it as its own process behind the same contract (the outputs are the same message for message; test and lane
+report).
+
+## 16. Object classes: non-critical metadata
+
+Road users are to be distinguished (human, bike, bus, truck, car) and drawn accordingly. In the contract this
+is an attribute of a track, never a measurement:
+
+* `tracks.tracks[].class`, `lead.class`: `{"label", "confidence", "source", "age_s", "votes"}` or `null`.
+  `label` is open vocabulary, lower case, with common aliases folded (`person` -> `human`, `bicycle` -> `bike`,
+  ...). `confidence` is the decayed share of confident votes for the label; `source` the sensor that said so.
+* `view.objects[].cls` (vehicles): `{"label", "confidence", "source"}` or `null`. A consumer draws by it and
+  must draw something sensible without it.
+
+Two ways in, both an input only:
+
+* a detector that measures positions well enough to track by is a `camera_objects` source; the `class` (and
+  `class_conf` or `prob`) of its objects feeds the attribute of the track the object is associated with;
+* a detector that only says *what* is where it points is an `object_classes` source: `objects` messages of
+  `kind: "classes"` with `class`, `class_conf` and either `x_m`, `y_m` or `bearing_deg` (`range_m` optional).
+  Each object is attached to the track it points at; nothing is started, moved, confirmed or kept alive by
+  it, the lead is not chosen by it, and it does not count as an object source.
+
+By construction nothing reads the attribute: gating, association, existence, the lead selection and the ego
+estimate are the same, number for number, with and without a class detector (a test asserts exactly that).

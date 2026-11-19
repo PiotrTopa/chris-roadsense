@@ -1,33 +1,33 @@
-# roadsense api
+# roadsense api: the debug face
 
-Python fan-out and overlay layer: connects to `camerad.sock`, `modeld.sock`,
-`signd.sock`, `envd.sock`, `lightd.sock` and `mapd.sock` in the run directory, keeps the latest message per type and serves
-the endpoints listed in [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
-It never touches the camera or the models.
+One camera's raw perception for a person or a tool: connects to `camerad.sock`, `modeld.sock`, `signd.sock`,
+`envd.sock`, `lightd.sock` (and `laned.sock`) in the run directory, keeps the latest raw message per type and
+serves them with the `/preview` overlay, the frame ring's header and the load governor
+([docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), "api"). It never touches the camera or the models, and it
+tracks, fuses and decides nothing: the consolidated side (lead, lanes, lights and signs in context, rules,
+speed limit, map, `fused`, `view`, the consumer API, the recorder) is
+[chris-integrator](../chris-integrator/README.md), which reads the same sockets. The topics that moved answer
+410 here.
 
 Dependencies: Python 3.14 + `py3-aiohttp`, `py3-numpy`, `py3-pillow` (Alpine packages, no pip).
 
 ```sh
-cd api && python3 -m roadsense_api --rundir /run/roadsense --port 8080
+cd api && python3 -m roadsense_api --rundir /run/roadsense --port 8081
 ```
 
 | Option / env | Default | |
 |---|---|---|
-| `--rundir` / `ROADSENSE_RUNDIR` | `/run/roadsense` | daemon sockets and `preview.jpg` |
-| `--datadir` / `ROADSENSE_DATADIR` | `/var/lib/roadsense` | `signs.jsonl` (ended sign tracks) is appended here if the directory exists |
-| `--ring` / `ROADSENSE_RING` | `/dev/shm/roadsense-frames` | frame ring; only its header is read (intrinsics for `/v1/camera` and overlays) |
-| `--port` / `ROADSENSE_API_PORT` | `8080` | |
+| `--rundir` / `ROADSENSE_RUNDIR` | `/run/roadsense` | daemon sockets, `preview.jpg`, the governor's caps file, `api.sock` (the `governor` message for chris-integrator) |
+| `--ring` / `ROADSENSE_RING` | `/dev/shm/roadsense-frames` | frame ring; only its header is read (intrinsics for `/v2/camera` and overlays) |
+| `--port` / `ROADSENSE_API_PORT` | `8081` | 8080 is the consolidated API's default |
+| `--host` / `ROADSENSE_API_HOST` | `0.0.0.0` (the unit file: `127.0.0.1`) | |
 
-Modules: `sockets.py` (one reconnecting client per daemon, backoff 0.2-5 s),
-`state.py` (latest messages, rolling fps, live/ended sign tracks, ring header,
-CPU temperature, battery), `overlay.py` (Pillow drawing + pinhole projection),
-`server.py` (aiohttp routes), `speedlimit.py` / `rules.py` (derived topics from
-signs), `fusion.py` (derived topic `fused`: map + camera per fact), `lead.py` (derived topic `lead`:
-the lead vehicle tracked over time, with the car's own motion from mapd's `ego.sock` when a feeder sends
-it; optional constants in `<config dir>/lead.json`), `__main__.py`.
+Modules: `sockets.py` (one reconnecting client per daemon, backoff 0.2-5 s), `state.py` (latest raw messages,
+rolling fps, ring header, CPU temperature, battery), `overlay.py` (Pillow drawing + pinhole projection),
+`governor.py` (load shedding under heat), `server.py` (aiohttp routes, `api.sock`), `__main__.py`.
 
-`GET /` is a small status page: the `/preview` stream plus health, road and live
-signs polled once per second. CORS allows all origins.
+`GET /` is a small status page: the `/preview` stream plus health, the raw road message and the detectors'
+tracks polled once per second. CORS allows all origins.
 
 ## Overlay projection
 
@@ -42,11 +42,7 @@ Only lead hypothesis 0 (now) is drawn.
 ## Testing without hardware
 
 ```sh
-tools/fake_daemons.py --rundir /tmp/roadsense-fake     # synthetic camerad/modeld/signd/envd/lightd/mapd (--no-mapd: run the real mapd)
-tools/smoke_api.sh                                     # fake daemons + api, every endpoint
-OVERLAY_OUT=/tmp/overlay.jpg tools/smoke_api.sh        # also save one overlay frame
+tools/fake_daemons.py --rundir /tmp/roadsense-fake --no-mapd   # synthetic camerad/modeld/signd/envd/lightd
+python3 -m pytest -q api/tests                                 # the debug face over fake daemons, the governor
+python3 -m pytest -q chris-integrator/tests/test_api.py        # fake daemons -> chris-integrator -> every endpoint
 ```
-
-`smoke_api.sh` runs `python3 -m unittest discover -s api/tests`, which starts both
-processes on a temporary run directory and a free port (override with
-`ROADSENSE_RUNDIR`, `ROADSENSE_TEST_PORT`).

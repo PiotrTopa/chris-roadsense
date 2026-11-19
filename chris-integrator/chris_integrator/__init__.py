@@ -3,6 +3,9 @@ from .contract import LocalEgo, inputs_health, quantity, signal, usable, validit
 from .core.integrator import API, DEFAULT_CFG, Integrator
 from .core.registry import Meas, Mount, Source
 from .core.ego import AuxState
+from .core import classes as _classes
+
+_classes.register()      # the `object_classes` source kind (road-user classes as track metadata)
 
 __version__ = "0.2.0"
 API_MAJOR = 2          # the consumer contract of the consolidated API (topics, fields, HTTP paths /v2)

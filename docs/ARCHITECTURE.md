@@ -1,29 +1,44 @@
 # Architecture and inter-process contract
 
-Five core processes (camerad, modeld, envd, mapd, api) plus any number of external
-consumers such as a sign provider, all talking through two simple mechanisms: a
-shared-memory frame ring (camerad -> consumers) and newline-delimited JSON over
-Unix stream sockets (every daemon -> api / tools; and, in the other direction,
-an external position feeder -> mapd). These two mechanisms are the
-whole contract: a process that writes the ring as described below is a valid
-camerad (any camera, any device), and a process that reads the ring and serves
-`<rundir>/signd.sock` is a valid sign provider. Nothing else couples the
-processes; they share no libraries beyond the header-only `camerad/ring.h` and
-`camerad/jsonsock.h`, which exist for convenience. One optional addition, the GPU
-schedule (`<rundir>/gpu.sched`, below), lets a sign provider that runs on the same GPU
-as modeld take turns with it; every process still works alone without it.
-No message broker, no protobuf, no capnp. `nc -U /run/roadsense/modeld.sock`
-must always be a valid debugging tool.
+**roadsense analyses one camera's video.** Its processes (camerad, modeld, envd, laned, external sign and
+light providers) talk through two simple mechanisms: a shared-memory frame ring (camerad -> consumers) and
+newline-delimited JSON over Unix stream sockets (every daemon -> whoever reads). These two mechanisms are the
+whole contract: a process that writes the ring as described below is a valid camerad (any camera, any
+device), and a process that reads the ring and serves `<rundir>/signd.sock` is a valid sign provider.
+Nothing else couples the processes; they share no libraries beyond the header-only `camerad/ring.h` and
+`camerad/jsonsock.h`, which exist for convenience. One optional addition, the GPU schedule
+(`<rundir>/gpu.sched`, below), lets a sign provider that runs on the same GPU as modeld take turns with it;
+every process still works alone without it. No message broker, no protobuf, no capnp.
+`nc -U /run/roadsense/modeld.sock` must always be a valid debugging tool.
+
+**roadsense's output is one of the sources of chris-integrator** (the stack is named chris; roadsense is to
+become chris-roadsense). The integrator is a mixer: it takes each roadsense instance's sockets, the car's own
+signals, GNSS, radars and further cameras as input channels, runs the estimator, the map box, the trackers
+and the decision logic as plug-in transformers on one bus, and is what consumers talk to (the consolidated
+HTTP / WebSocket API, the recorder). Design: `chris-integrator/docs/DESIGN.md` (section 9: the cut; section
+14: the mixer). With a new camera a second roadsense instance adds inputs to the integrator; nothing here
+changes.
 
 ```
-camerad ──frame ring (shm)──┬──> modeld ─────────────────JSON──┐
-                            ├──> envd (1 fps) ─────────────JSON──┤
-                            ├──> sign provider (external) ─JSON──┼──> api ──> HTTP / WebSocket / MJPEG
-                            └──> light provider (external) ─JSON─┤
-camerad ──JSON (frame meta)──────────────────────────────────────┤
-position feeder (external) ──JSON (gnss, motion)──> mapd ──JSON──┘      (mapd: no camera; map pack on disk)
-                                                     └──JSON (ego: the car's own motion, as fed)──> api (lead tracker)
+ roadsense (per camera)                                                    chris-integrator (the mixer)
+ camerad ──frame ring (shm)──┬──> modeld ───────── road, calib ──┐
+                             ├──> envd (1 fps) ─── env ──────────┤         input channels ─> bus ─> plug-ins:
+                             ├──> sign provider ── signs ────────┼──────>  estimator, map box (chris-mapper),
+                             ├──> light provider ─ lights ───────┤         lanes, ego light, sign context, rules,
+                             └──> laned (optional) display_lanes ┤         fused, view ─> output channels:
+ camerad ─────────────────────────────────────── camera ─────────┤         HTTP /v2 + /ws, integrator.sock, recorder
+ api (debug face): /preview, raw topics, governor ─ governor ────┘                ▲
+                                                                                  │ feed.sock (vehicle input API)
+ the car (CAN, head unit): motion, gnss, controls, body, objects ────────────────┘
 ```
+
+What stays in roadsense: everything that needs one camera's pixels or one camera's model output and nothing
+else, the load governor (it sheds this device's perception load by its heat), and a thin debug face (`api/`:
+raw topics, `/preview` with overlays, the frame ring's header). What is in chris-integrator: everything that
+combines sources, needs the car's motion or position, carries state across the gaps of a source, takes a
+decision a consumer acts on, or is the consumer's interface. The sections "consolidated topic" below
+describe the messages chris-integrator serves; they are kept here until that component has its own
+reference, and their logic lives in `chris-integrator/chris_integrator/` (`trackers/`, `plugins/`, `io/`).
 
 ## Frame ring (`/dev/shm/roadsense-frames`)
 
@@ -421,7 +436,7 @@ still report it, flagged, so the reason stays inspectable: `"suppressed": true, 
 (most of the track's detections look like a lamp: blown-out core fading into bright pink-red; only while
 the verifier is unsure too, since sunlit real signs glow as well) and, for any class, `score` (best
 detector score below a per-class minimum, e.g. `no-entry` 0.71). A classifier with a "not a sign" class (L12) flags tracks voted `background` with `not_a_sign`; its `other-sign` class (a real sign outside the known classes) is reported unflagged and matches no rule. It also reports `glow` (that share, 0..1) and `verify` (the verifier mean) on round red tracks.
-The api adds its own context checks (`api/roadsense_api/signctx.py`): a round red track whose box centre
+The api adds its own context checks (`chris-integrator/chris_integrator/trackers/signctx.py`): a round red track whose box centre
 sits inside a traffic light box (`lights` topic) or inside the lead vehicle's rear (modeld `leads[0]`
 projected, 2.6 m x 0-2 m) for >= half of its detections gets `"context": {"traffic_light": share,
 "lead_vehicle": share}` and is flagged (`reason` `traffic_light` / `lead_vehicle`) unless the provider's
@@ -495,7 +510,7 @@ which one a message used) and can let boxes below the detection threshold contin
 lights five times a second since lane L21 (three before; `docs/lanes/L21-budget-and-models.md`). `red_yellow` is inferred from
 the sequence (a yellow observation straight after red; the Vienna-convention phase before green), `off`
 covers dark housings and side or back views. The api annotates every `lights` message before storing and
-forwarding it (`api/roadsense_api/lights.py`): per light `dist_m` (from the housing size, rough),
+forwarding it (`chris-integrator/chris_integrator/trackers/lights.py`): per light `dist_m` (from the housing size, rough),
 `lateral_m` (offset from modeld's planned path at that distance), `relevance` 0..1 and `ego`, and a
 message-level `ego` for the light that applies to the ego lane:
 
@@ -546,6 +561,22 @@ becomes the ego light from relevance 0.10 instead of 0.15 and the hold is 2 s. W
 and the camera has none". Not exercised on the car yet (no live GNSS fix).
 
 ### mapd: `{"type":"map", ...}` on `<rundir>/mapd.sock`, `{"type":"ego", ...}` on `<rundir>/ego.sock`, `{"type":"vehicle", ...}` and `{"type":"objects", ...}` on `<rundir>/vehicle.sock`, vehicle input on `<rundir>/position.sock`
+**Legacy since lane L39.** In the chris stack the position is estimated once, by chris-integrator's
+estimator, the car feeds the integrator directly (`<chris run dir>/feed.sock`, the same vehicle input API;
+also served under the name `position.sock`), and the map is the box **chris-mapper** (top-level
+`chris-mapper/`, package `chris_mapper`: pack format `rsmap.py`, `matcher.py`, `context.py`, `limits/`,
+`box.py`): in = the integrator's `ego_state` (pose with uncertainty and time), out = the `map` message
+described below, whose `match` goes back to the estimator as a measurement and whose `road`, `speed_limit`
+and `ahead` are the map context. `map.position` then repeats the pose the box was given
+(`motion_source: "integrator"`, `input.pose: "ego_state"`); `state` is `good` while the estimator has an
+absolute fix within its freshness window, `dead_reckoning` while it coasts, `unknown` when its dead reckoning
+ran out, `no_source` before any fix. The fields of `match`, `road`, `speed_limit`, `ahead` are unchanged.
+The map pack format and `scripts/roadsense-maps` are unchanged (the builder imports `chris_mapper.rsmap`).
+`mapd/roadsense_mapd` remains as the daemon described in this section (its own position filter, the vehicle
+input store, the `ego` / `vehicle` / `objects` relays) for a host whose car backend still feeds roadsense's
+`position.sock`; it uses chris_mapper for the map. Do not run it together with the map box: the position
+would be estimated twice.
+
 `mapd/roadsense_mapd` (Python, numpy; `python3 -m roadsense_mapd`) is where everything a host knows about
 the car comes in, and it owns everything that has to do with where the car is: it takes raw GNSS fixes,
 vehicle motion, driver controls, body signals and range-sensor object lists from external feeders, filters
@@ -886,7 +917,28 @@ ROADSENSE_CONFIG_DIR=/tmp/roadsense PYTHONPATH=mapd python3 -m roadsense_mapd --
 tools/synth_drive.py --pack $PACK --demo warsaw-s2-tunnel --rundir /tmp/roadsense     # then open http://localhost:8080/
 ```
 
-## api (Python, aiohttp, port 8080)
+## api: the debug face (Python, aiohttp, port 8081) and the consolidated API (chris-integrator, port 8080)
+
+Since lane L39 `api/roadsense_api` is the **debug face of one camera** (api 3; default port 8081, loopback):
+
+| Endpoint | Content |
+|---|---|
+| `GET /v2/road`, `/v2/signs`, `/v2/env`, `/v2/lights`, `/v2/calib` | the latest raw message of that daemon (`signs` with the detector's own live tracks); nothing is tracked, annotated or fused here |
+| `GET /v2/camera` | latest `camera` message + ring header fields |
+| `GET /v2/frame.jpg`, `GET /preview` | the current preview JPEG; the MJPEG stream with the raw model output drawn on top (lane lines, path, leads, sign boxes, lights) |
+| `GET /v2/governor`, `POST /v2/governor` | the load governor ("Load governor" below) |
+| `GET /v2/health` | this instance's daemons (connected, last message age), raw topic rates, `model_ms`, `road_model`, the raw `calib`, the governor, temperature, battery |
+| `GET /ws?topics=...` | the raw messages as they arrive |
+| `GET /v2/<consolidated topic>` (`lead`, `lanes`, `view`, `fused`, `rules`, `speed_limit`, `map`, `ego_state`, `tracks`, `vehicle`, `signs/history`) | 410 with a pointer: served by chris-integrator |
+| `<rundir>/api.sock` | JSON lines: the `governor` message (`level`, `levels`, `shed`, `caps`, `limited`, `limiter`, `forced`, `headroom_k`) on every governor step; chris-integrator reads it as an input and marks the measurement topics (`rate.degraded`, `why`) with it |
+
+The **consolidated API** is chris-integrator's output channel (`chris-integrator/chris_integrator/io/http.py`;
+default port 8080, the port roadsense's api had). The table below is that API: the paths, topic names and
+message shapes are those of roadsense api 2, so a consumer of api 2 only points at the integrator. Additions:
+`GET /v2/mixer` (the wiring: channels, streams, plug-ins in running order with health and cost), `GET
+/v2/calib`, `GET /v2/gnss`, `health.mixer`, `tracks[].class` / `lead.class` / `view.objects[].cls` (object
+class as non-critical metadata). `/preview`, `/v2/frame.jpg`, `/v2/camera` and `/v2/governor` are forwarded
+to the debug face (`--roadsense-http`). `POST /v2/vehicle` goes to the integrator's feed channel.
 
 | Endpoint | Content |
 |---|---|
@@ -933,12 +985,12 @@ lag are accepted), and no CPU or bandwidth is spent to cut display latency. Disp
 holding a picture over a drop-out, fades, the "approximate" mark, which lane is lit) lives in `view` only; a
 consumer that draws needs no thresholds of its own, and a consumer that decides must not read `view`.
 
-### api-derived topic: `{"type":"speed_limit", ...}`
-`api/roadsense_api/speedlimit.py` turns the documented `signs` contract (only `detections[]`
+### consolidated topic (chris-integrator): `{"type":"speed_limit", ...}`
+`chris-integrator/chris_integrator/trackers/speedlimit.py` turns the documented `signs` contract (only `detections[]`
 track_id/cls/score/box/hits and `tracks_ended[]` track_id), `road` (`v_ego`, `pose.yaw_rate`,
 `ts_mono_ns`) and `env` (`place` label) into the limit that applies to the car. Sent on `/ws` on
 every change and at least once a second; `/v1/speed_limit` adds `recent_changes` and `ignored`.
-Rules are data: `api/roadsense_api/rules/<country>.json` (`--rules`, env `ROADSENSE_RULES`, default
+Rules are data: `chris-integrator/chris_integrator/trackers/rules/<country>.json` (the `rules` plug-in's `rules` key, default
 `pl`). Design, Polish sources and limits: `docs/lanes/L6-speed-limit.md`.
 
 ```
@@ -958,8 +1010,8 @@ Rules are data: `api/roadsense_api/rules/<country>.json` (`--rules`, env `ROADSE
               "quality":0.6,"lateral_m":3.2} ],   // live tracks not yet confirmed
 "v_ego_kmh": 48.2, "odometer_m": 3837.0, "rules": "PL"
 ```
-### api-derived topic: `{"type":"rules", ...}`
-`api/roadsense_api/rules.py` (lane L11) generalises the speed-limit engine: it owns the `SpeedLimit` above,
+### consolidated topic (chris-integrator): `{"type":"rules", ...}`
+`chris-integrator/chris_integrator/trackers/rules.py` (lane L11) generalises the speed-limit engine: it owns the `SpeedLimit` above,
 feeds it every `road` / `signs` / `env` message and also takes `lights`, and judges every other sign class of
 the rule table `rules/<country>.json` -> `effects` (category, how it ends, side, legal source, guesses marked)
 with the same track confirmation, lateral-position and plate code. Sent on `/ws` on every change and at least
@@ -994,8 +1046,8 @@ and the offline evaluation: `docs/lanes/L11-signs-in-effect.md`; offline runner 
 "recent": ["B-2 no entry"], "ahead": ["A-8 roundabout ahead ~60 m"]}` (a trailing `?` marks an uncertain entry).
 A ride change or camera restart replaces the engine (L10), like the speed limit.
 
-### api-derived topic: `{"type":"fused", ...}`
-`api/roadsense_api/fusion.py` combines the map layer (`map`) with the camera perception (`speed_limit`,
+### consolidated topic (chris-integrator): `{"type":"fused", ...}`
+`chris-integrator/chris_integrator/trackers/fusion.py` combines the map layer (`map`) with the camera perception (`speed_limit`,
 `env`, `road`), one fact at a time; every fact names its `source` and carries the unfused inputs
 (`vision`, `map`) next to the result. The vision topics are not modified. About 2 per second on `/ws`;
 `/v1/fused`. The map is used only when the `map` message is younger than 3 s, `available`, and
@@ -1083,14 +1135,13 @@ Rules:
 
 ### The data integrator (chris-integrator): topics `ego_state`, `tracks`, and the source of `lead`
 
-Since lane L38 the integrator is a component of its own, `chris-integrator/` (design:
-`chris-integrator/docs/DESIGN.md`; README there for the contracts): every input enters it, and the trackers of
-the api read only its outputs. It runs in-process (the default: `Integrator.frame(road)` per road message) or as
-the daemon `chris-integrator` (the api then reads `<its run dir>/integrator.sock`; set
-`CHRIS_INTEGRATOR_SOCK`; a frame whose outputs do not arrive within 80 ms goes out with `lead.valid: false`,
-reason `integrator_timeout`, never from raw inputs). Configuration: `<config dir>/integrator.json`
+The integrator is a component of its own, `chris-integrator/` (design: `chris-integrator/docs/DESIGN.md`; README
+there for the contracts). Since lane L39 it is the mixer that hosts every box of the consolidated side; the
+estimator box (source registry, EKF, monitors, object layer) puts out the three topics of this section per
+road frame (per vehicle sample while no camera frames arrive). Configuration: `<chris config dir>/integrator.json`
 (`chris_integrator.DEFAULT_CFG` keys; `sources`: extra sensors, e.g. `[{"kind": "radar", "id": "*"}]`, the
-api's default); `lead.json` keys go to the camera-lead source.
+default); `lead.json` keys go to the camera-lead source. A frame the estimator cannot answer goes out with
+`lead.valid: false`, reason `integrator_timeout`, never from raw inputs.
 
 `ego_state` (api 3, a superset of the 2.1 message; `GET /v2/ego_state`), one per road frame, stamped with the
 frame's time of validity:
@@ -1110,15 +1161,16 @@ frame's time of validity:
 `tracks` (new; `GET /v2/tracks`), one per road frame: `frame: "car"` (x forward, y **left**, origin the
 reference camera), `tracks[]` each `{id, state: tentative / confirmed / coast, exist, x_m, y_m, vx_mps, vy_mps
 (over ground), ax_mps2, std[5], v_rel_mps, age_s, meas_age_s, sources[], seen{source: age_s}, hits, flags
-(designated, standing, ghost, stationary, on_path, merged), path_offset_m, attrs}`, `sensors{}` (per object
+(designated, standing, ghost, stationary, on_path, merged), path_offset_m, class, attrs}` (`class`: what kind of
+road user, `{label, confidence, source, age_s, votes}` or null; non-critical metadata, never a gate), `sensors{}` (per object
 source: scans, detections, assigned, started, late, dropped, `nis`, `age_s`, `kind`), `path` (`plan` or null),
 `valid`, `reason`.
 
 `lead` keeps its fields (next section) and gains `exist`, `sources[]`, `on_path`, `path_offset_m`,
 `lateral_std_m`; `source` names sensor kinds (`radar+vision+ego`), `radar.sensor` the sensor.
 
-### api-derived topic: `{"type":"lead", ...}`
-`api/roadsense_api/lead.py` tracks the lead vehicle over time: one message per `road` message (so at the
+### consolidated topic (chris-integrator): `{"type":"lead", ...}`
+`chris-integrator/chris_integrator/trackers/lead.py` tracks the lead vehicle over time: one message per `road` message (so at the
 model's rate, 10-14 per second on the reference phone), about 0.7 kB; `/v1/lead`. `road.leads[]` is not
 modified and stays the network's frame-by-frame output; `lead` is what a consumer should draw or act on
 (added 2026-11-15, docs/lanes/L14-lead.md).
@@ -1245,8 +1297,8 @@ without (laptop).
 Replay and measurement on recorded `road` lines: `tools/lead_replay.py ROAD.jsonl[.gz] [--ego surrogate]
 [--every N] [--csv OUT]`.
 
-### api-derived topic: `{"type":"lanes", ...}`
-`api/roadsense_api/lanes.py` tracks the road geometry over time: one message per `road` message (10-14 per
+### consolidated topic (chris-integrator): `{"type":"lanes", ...}`
+`chris-integrator/chris_integrator/trackers/lanes.py` tracks the road geometry over time: one message per `road` message (10-14 per
 second on the reference phone), about 2.5 kB; `/v1/lanes`. `road.lane_lines[]` / `road.road_edges[]` are not
 modified and stay the network's frame-by-frame output; `lanes` is what a consumer should draw (added
 2026-11-16, docs/lanes/L15-stability.md).
@@ -1300,7 +1352,7 @@ Constants: `DEFAULT_CFG` in `lanes.py`, overridable per key in `<config dir>/lan
 measurement on recorded `road` lines: `tools/lanes_replay.py ROAD.jsonl[.gz] [--every N] [--lanes-total N
 --lanes-forward N] [--out LANES.jsonl]`.
 
-### Ego lane (`api/roadsense_api/egolane.py`, lanes L20 and L22; inside `fused.lanes`)
+### Ego lane (`chris-integrator/chris_integrator/trackers/egolane.py`, lanes L20 and L22; inside `fused.lanes`)
 A discrete Bayes filter (an HMM) over k, the number of own-direction lanes to the right of the car, run on
 every `lanes` message (10-14 per second). Index from the left is `forward - 1 - k` once the map gives the own
 lane count. Evidence per frame, read at 8-20 m:
@@ -1337,7 +1389,7 @@ L20 / L22): night motorway 1.4 / 0.9 / 0.3 %, night expressway with tunnels 1.5 
 19.1 / 7.7 / 4.6 %, the car's camera (6 sessions) 21.4 / 11.1 / 5.3 %; right share of all frames on the car's
 camera 72.6 / 78.2 / 79.7 % (docs/lanes/L20-ego-lane-junctions.md, docs/lanes/L22-v2-integration.md).
 
-### Road geometry (`api/roadsense_api/roadgeom.py`; the geometry fields of `view.road`)
+### Road geometry (`chris-integrator/chris_integrator/trackers/roadgeom.py`; the geometry fields of `view.road`)
 Until roadsense 2.0 this was a topic of its own (`roadgeom`, `/v1/roadgeom`). It is display content (the
 camera and the map joined by a low-passed fit, shown after a second of agreement), so since 2.0 it exists only
 inside the display channel: the fields below are fields of `view.road` (next section), computed per road frame.
@@ -1410,8 +1462,8 @@ tracker and the fusion), `tools/roadgeom_drive.py --network tour [--turn T0:T1:l
 synthetic drive over a made-up network or a pack with a synthetic camera, compared with the truth; the
 recording carries `view` messages).
 
-### api-derived topic: `{"type":"view", ...}` (display channel, roadsense 2.0)
-`api/roadsense_api/view.py` (objects, lines) and `roadview.py` (`road`): one message per road frame (10-14 per
+### consolidated topic (chris-integrator): `{"type":"view", ...}` (display channel, roadsense 2.0)
+`chris-integrator/chris_integrator/trackers/view.py` (objects, lines) and `roadview.py` (`road`): one message per road frame (10-14 per
 second), after `lead` and `lanes` of that frame; 1.5 kB without a map, 3-4 kB with the road picture; `/v2/view`.
 Added 2026-11-18 (docs/lanes/L19-view-channel.md; `road`: docs/lanes/L22-v2-integration.md). For any consumer
 that draws (a car display, a HUD, a dashboard): objects that keep their identity, move smoothly between two
@@ -1465,7 +1517,7 @@ a lane line's step per frame at 30 m 0.089 -> 0.068 m rms, steps over 0.3 m 119 
 which moves the lines with their own rate between two messages, draws 6 such steps on that drive).
 Cost: 0.15-0.18 ms per frame on the laptop without the road picture.
 
-**`view.road`: the road as one picture** (`api/roadsense_api/roadview.py`). Everything a consumer needs to
+**`view.road`: the road as one picture** (`chris-integrator/chris_integrator/trackers/roadview.py`). Everything a consumer needs to
 draw the road and what lies ahead on it, from one message of one frame; each part says where it comes from
 (`provenance`, `source`, `centre.src`), how sure it is, and whether it rests on a weak position
 (`approximate`). Until 2.0 a consumer combined `roadgeom` (geometry), `map.ahead.junction_view` (junction) and
@@ -1532,7 +1584,7 @@ The lane lines of the measurement topics (`road.lane_lines`, `lanes`, `fused.lan
 geometry in `view.road`) are the road model's, with the model's own confidence, whatever their quality. The
 lines a consumer **draws** (`view.lines`) may be refined by another source: a separate, cheap lane-line analysis
 whose only job is a good picture. There is one place where that is decided, `ViewBuilder._display_lanes()` in
-`api/roadsense_api/view.py`, and one message that feeds it:
+`chris-integrator/chris_integrator/trackers/view.py`, and one message that feeds it:
 
 ```
 {"type":"display_lanes","seq":..,"ts_mono_ns":..,"source":"laned",   // CLOCK_MONOTONIC of the frame the lines belong to
@@ -1747,8 +1799,8 @@ car's display, `cyberpunk_computer`) draws its whole road scene from `view` and 
 measurement topics.
 
 ### Drive recorder (optional)
-`api/roadsense_api/recorder.py`, off unless `<config dir>/recorder.json` names a directory
-(`{"dir": "/var/lib/roadsense/rec", "max_mb": 4000}`). Every api start opens a session
+`chris-integrator/chris_integrator/io/recorder.py`, an output channel of chris-integrator since lane L39; off unless `<chris config dir>/recorder.json` names a directory
+(`{"dir": "/var/lib/chris/rec", "max_mb": 4000}`). Every start of the integrator opens a session
 `<dir>/<YYYYmmdd-HHMMSS>/` with `messages.jsonl.gz` (the topics as they went out: `road` reduced to lane
 lines, road edges, `leads[0]`, plan x / y / z, speed and pose; `lights`, `signs`, `env`, `speed_limit`,
 `rules`, `fused`, `map`, `ego` as relayed (cap 25 Hz), raw `gnss`, `ego_state` at 2 Hz (the record of what was
@@ -1867,13 +1919,13 @@ with this stack is exactly:
   roadsense.target`, `systemctl is-active <unit>...`; nothing is imported or
   linked (the sign provider is AGPL, this repo is MIT, the car computer is its
   own project);
-* **health**: `GET /v1/health` on `ROADSENSE_API_PORT` (8090 on that machine,
-  because the car backend serves 8080); a silent API is restarted by the host
-  after a timeout;
-* **API front**: on that machine the API listens on `127.0.0.1` only
-  (`ROADSENSE_API_HOST`); the car backend re-publishes the HTTP/WS endpoints
-  to its own clients (`/api/v1/roadsense/...`), over HTTP, without importing
-  any roadsense code;
+* **health**: `GET /v1/health` of the consolidated API (chris-integrator, `CHRIS_API_PORT`: 8090 on that
+  machine, because the car backend serves 8080; the same fields as before, `daemons` lists this instance's
+  daemons and the map box); a silent API is restarted by the host after a timeout. The debug face has its own
+  `/v2/health` on `ROADSENSE_API_PORT` (8081);
+* **API front**: on that machine the consolidated API listens on `127.0.0.1` only (`CHRIS_API_HOST`); the car
+  backend re-publishes its HTTP/WS endpoints to its own clients (`/api/v1/roadsense/...`), over HTTP, without
+  importing any code of the stack;
 * **cores**: the host reserves cpu3 for its backend with a
   `roadsense.slice.d` drop-in (`AllowedCPUs=0-2,4-7`); `--prep-cpus 0-3` /
   `--cpus 4-7` masks are intersected with that set by the kernel. What runs
@@ -1901,9 +1953,9 @@ with this stack is exactly:
 * **CPU profile**: the host keeps the Gold cluster online while any unit runs
   (modeld/signd/envd pin cpu4-7) and applies its idle profile only afterwards.
 
-* **position** (optional): the host may feed GNSS fixes and vehicle motion to
-  `<rundir>/position.sock` (position input API v1, "mapd" above); roadsense does
-  all filtering and map matching. Without a feeder the map layer reports
+* **position** (optional): the host may feed GNSS fixes and vehicle motion to chris-integrator's
+  `<chris run dir>/feed.sock` (the vehicle input API of `docs/VEHICLE_API.md`; also under the name
+  `position.sock`); the integrator does all filtering, the map box the map matching. Without a feeder the map layer reports
   `unavailable` and the stack runs on vision only: there is no waiting for a
   fix anywhere (every vision topic is served from the first camera frame, the
   map facts join when a fix arrives and leave when the position runs out). The same `motion` messages
