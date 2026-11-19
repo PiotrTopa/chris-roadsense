@@ -1495,22 +1495,29 @@ draw the road and what lies ahead on it, from one message of one frame; each par
             "likely_index": null,        // with ego_index null: the most likely lane when it holds 0.45
             "ego_from_right": 1, "probs": [0.05, 0.9, 0.05], "probs_from": "left|right", "confidence": 0.9,
             "oncoming_left": false, "provenance": ["vision", "map:tagged", "lane_change"], "approximate": false,
+            "count_held": false,         // L36: the map counts other lanes now; the old count (and its lit lane) is shown until the new one held 2 s
             "turn": {"lanes": [["left"], ["through"], ["through","right"]],   // painted arrows (map.ahead.turn_lanes)
                      "arrows": ["l", "t", "tr"],     // the same as letters per lane: l left, t through, r right, u turn back, m merge
-                     "count": 3, "dist_m": 0.0, "junction_m": 60.0,
+                     "count": 3,                     // always = forward above (L36): arrows for other lanes are not given
+                     "dist_m": 0.0, "junction_m": 60.0,   // never grow while it is the same stretch (L36)
                      "path": [false, true, true],    // lanes that lead where the most likely path goes; null = not known
-                     "here": true,                   // the car is on the stretch and the arrows are for the lanes counted above
-                     "provenance": "map:turn_lanes", "confidence": 0.62} | null}}
+                     "path_source": "map",           // L36: the map's most likely path, not a route
+                     "here": true,                   // the car is on the stretch
+                     "held": false,                  // L36: mapd does not announce it this frame; kept (up to 2 s), carried by the distance driven
+                     "provenance": "map:turn_lanes", "confidence": 0.62} | null},
+  "route": null}                 // L36: a navigation route being followed; null: no route source exists (yet). A future
+                                 // route feed gives {"active": true, ...}; consumers draw the turn arrows only then
 ```
 
 | part | where it comes from | display policy applied here |
 |---|---|---|
-| `position.trusted` | `map.match.confidence`, `map.available` | a `map` message is usable when available with a match confidence of at least 0.5 (the rule of `fused`); the confidence of the usable ones is low-passed over about 2 s and the layer is trusted from 0.55 (`trust_on`). A message that is not usable (the confidence dips where a side road branches off; off the road for a moment) is skipped and the last trusted one is held for 2.5 s (`held`, distances carried on; `approximate` after 1 s); after 2.5 s without a usable message the layer is gone and trust is earned again |
+| `position.trusted` | `map.match.confidence`, `map.available` | a `map` message is usable when available with a match confidence of at least 0.5 (the rule of `fused`); the confidence of the usable ones is low-passed over about 2 s and the layer is trusted from 0.55 (`trust_on`). A message that is not usable (the confidence dips where a side road branches off; off the road for a moment) is skipped and the last trusted one is held for 2.5 s (`held`, distances carried on; `approximate` after 1 s); after 2.5 s without a usable message the layer is gone and trust is earned again. A gap in the camera frames (over 1 s) keeps a `map` message of the last second, re-based by the speed (L36; until then the layer was gone for up to 0.5 s after every frame gap) |
 | `centre`, `branches`, `ring`, `way` | camera lines / planned path, `map.ahead.geometry` | the join of the previous section (fit, 1 s of agreement, withheld on disagreement); branches and ring carry `approximate` from the position |
-| `junction` | `map.ahead.junction_view` | given when the path up to it is likely (0.5; always on a ring) and the position error allows it: `hacc_m` within 20 m, or within 40 % of the distance. `approximate` when dead-reckoned, held for more than 1 s, `hacc_m` over 20 m, or over 15 % of the distance: draw it as "about there", without an exact distance. The distance is carried by the distance driven between two `map` messages |
-| `lanes` count | `map.road.lanes` of the trusted match | none; `count_source` says tagged or assumed |
+| `junction` | `map.ahead.junction_view` | given when the path up to it is likely (0.5; always on a ring) and the position error allows it: `hacc_m` within 20 m, or within 40 % of the distance. `approximate` when dead-reckoned, held for more than 1 s, `hacc_m` over 20 m, or over 15 % of the distance: draw it as "about there", without an exact distance. The distance is carried by the distance driven between two `map` messages; a frame older than the newest `map` message (the camera frame lags it by the model's latency) uses that message as it is (until L36 such frames had no junction and no turn arrows: one or two blank frames per map message) |
+| `lanes` count | `map.road.lanes` of the trusted match | a new count is shown after it held 2 s (`count_settle_s`; L36: short segments tagged with another count, a match hopping between parallel edges); meanwhile the old count, its lit lane and probabilities stay and `count_held` is true. `count_source` says tagged or assumed |
 | `lanes.ego_index` | the ego-lane filter (`fused.lanes`, measurement) | the committed lane stays lit until another lane is committed or its own probability falls under 0.6 (`lane_release_p`): no flicker at the commit threshold. `likely_index` from 0.45 |
-| `lanes.turn` | `map.ahead.turn_lanes` | carried by the distance driven; `here` when the boxes and the arrows count the same lanes |
+| `lanes.turn` | `map.ahead.turn_lanes` | carried by the distance driven; given only for as many lanes as `forward` (L36); a new stretch after 0.3 s of sightings (`turn_on_s`, timed also while the count still settles), kept through a drop-out of 2 s (`turn_hold_s`, `held: true`), its distances never growing while it is the same stretch (same arrows, junction within 25 m), the next stretch replacing it without a blank. `path` is the map's guess (`path_source: "map"`) |
+| `route` | none yet | null: no navigation source. Reserved for a route feed (`{"active": true, ...}`); the reference consumer draws turn arrows only while it is active (owner's ruling 2026-11-19) |
 
 Without mapd, without a pack or without a position `road` still carries the camera's part (`source: "vision"`,
 `position` null or untrusted, `junction` null, lane counts null, the filter's `probs` from the right).

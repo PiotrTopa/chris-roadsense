@@ -27,9 +27,18 @@ Display rules applied here (they are display policy and live only in `view`):
   `approximate` when the position is dead-reckoned, weaker than `max_hacc_m`, or its error exceeds
   `approx_share` of the distance: a consumer then draws it as "about there", without an exact distance;
 * distances are carried between two map messages by the distance driven and never grow without a new message;
+  a map message that left mapd after the frame was taken (the camera frame is older than the message by the
+  model's latency) is used as it is, not dropped (lane L36);
 * the lane that is lit (`ego_index`) is the ego-lane filter's committed lane and stays until another lane is
   committed or its own probability falls under `lane_release_p` (no flicker at the commit threshold);
-  `likely_index` is the most likely lane when none is committed and one holds `lane_likely_p`.
+  `likely_index` is the most likely lane when none is committed and one holds `lane_likely_p`;
+* the lane count shown changes only after the map's new count has held for `count_settle_s` (a short segment
+  tagged with another count, a match that hops between two parallel edges); meanwhile the old count and its
+  lit lane stay, marked `count_held` (lane L36);
+* painted turn arrows (`lanes.turn`) are given only for as many lanes as the boxes count; a stretch appears
+  after `turn_on_s` of being seen, stays through a drop-out of up to `turn_hold_s` (carried by the distance
+  driven, marked `held`), and its distance never grows while it is the same stretch (lane L36). `turn.path` is
+  the map's most likely path, not a route: `route` is null until a navigation source feeds one.
 
 No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC ns).
 """
@@ -51,6 +60,11 @@ DEFAULT_CFG = dict(
     turn_lanes_max_m=400.0,
     advance_max_m=60.0,          # a map message is not carried further than this
     lane_release_p=0.6, lane_likely_p=0.45,
+    count_settle_s=2.0,          # a new lane count is shown after it held this long (L36)
+    turn_on_s=0.3,               # a stretch of turn arrows is shown after it was seen this long (L36) ...
+    turn_hold_s=2.0,             # ... and stays this long when it drops out (held, carried by the distance driven)
+    turn_same_m=25.0,            # two sightings of the same arrows whose junction lies this close are one stretch
+    gap_keep_s=1.0,              # a map message no older than this survives a gap in the frames (re-based)
 )
 
 ARROW = {"left": "l", "slight_left": "l", "sharp_left": "l", "through": "t", "right": "r", "slight_right": "r",
@@ -82,6 +96,11 @@ class RoadView:
         self.conf = None             # low-passed match confidence
         self.trusted = False
         self.lit = None              # (forward, ego index) of the lane shown as the ego lane
+        self.last_lit = None         # (forward, {ego_index, likely_index, probs, probs_from, confidence}) last shown
+        self.lanes_shown = None      # map.road.lanes whose count is shown
+        self.lanes_pend = None       # (forward, since s, lanes) a new count waiting for count_settle_s
+        self.tn = None               # the turn-arrow stretch shown: dict (raw turn, start/end on the odometer, seen)
+        self.tn_cand = None          # (key, since s, reference odometer) a new stretch waiting for turn_on_s
 
     def on_map(self, msg):
         if not isinstance(msg, dict) or not _fin(msg.get("ts_mono_ns")):
@@ -109,11 +128,18 @@ class RoadView:
         c = self.cfg
         ts = ts_ns / NS
         dt = 0.0 if self.ts is None else ts - self.ts
-        if dt < 0.0 or dt > 1.0:                        # a gap in the frames: distances are not carried across it
-            self.map = self.good = self.lit = None
+        self.v = max(0.0, speed_mps or 0.0)
+        if dt < 0.0 or dt > 1.0:
+            # a gap in the frames: distances are not carried across it. A map message from the last
+            # gap_keep_s is kept, re-based to where the car is now (it was measured that long ago)
+            def keep(m):
+                if m is None or not 0.0 <= ts - m[2] <= c["gap_keep_s"]:
+                    return None
+                return (m[0], self.odo - self.v * (ts - m[2]), m[2], m[3])
+            self.map, self.good = keep(self.map), keep(self.good)
+            self.lit = self.tn = self.tn_cand = None
             dt = 0.0
         self.ts = ts
-        self.v = max(0.0, speed_mps or 0.0)
         self.odo += self.v * dt
 
         cur = self.map if (self.map is not None and ts - self.map[2] <= c["map_max_age_s"]) else None
@@ -133,7 +159,8 @@ class RoadView:
                "map": g.get("map") or {"used": False, "why": "no_map"},
                "centre": g.get("centre"), "branches": g.get("branches") or [], "ring": g.get("ring"),
                "way": g.get("way"), "intent": g.get("intent"),
-               "junction": None, "lanes": self._lanes(use, egolane, position)}
+               "junction": None, "lanes": self._lanes(use, egolane, position, ts),
+               "route": None}           # no navigation source feeds a route (yet): see the module docstring
         approx = bool(position and position["approximate"])
         if out["map"].get("used"):
             # the geometry was joined to the camera frame by frame; what a weak position leaves open is where
@@ -142,11 +169,16 @@ class RoadView:
                 b["approximate"] = approx
             if out["ring"] is not None:
                 out["ring"]["approximate"] = approx
+        raw_turn = None
         if use is not None:
             adv = self.odo - use[1]
-            if 0.0 <= adv <= c["advance_max_m"]:
+            if -c["advance_max_m"] <= adv <= c["advance_max_m"]:
+                # adv < 0: the map message left mapd after this frame was taken (the frame is older by the
+                # model's latency); its distances are used as they are (until L36 the frame had no junction)
+                adv = max(0.0, adv)
                 out["junction"] = self._junction(use[0], adv, position)
-                out["lanes"]["turn"] = self._turn(use[0], adv, out["lanes"])
+                raw_turn = self._turn(use[0], adv, out["lanes"])
+        out["lanes"]["turn"] = self._turn_shown(raw_turn, ts, out["lanes"], use is not None)
         return out
 
     # ---- parts -----------------------------------------------------------------------------------
@@ -197,11 +229,29 @@ class RoadView:
             out["ring"] = dict(ring, exit_dist_m=round(max(0.0, ring["exit_dist_m"] - adv), 1))
         return out
 
-    def _lanes(self, use, ego, position):
+    def _count(self, ln, ts):
+        """The map's lane object whose count is shown: a new count after count_settle_s. (lanes, held)."""
+        fwd = int(ln["forward"]) if _fin(ln.get("forward")) else None
+        shown = self.lanes_shown
+        if fwd is None:
+            self.lanes_shown = self.lanes_pend = None
+            return ln, False
+        if shown is None or int(shown["forward"]) == fwd:
+            self.lanes_shown, self.lanes_pend = ln, None
+            return ln, False
+        if self.lanes_pend is None or self.lanes_pend[0] != fwd:
+            self.lanes_pend = (fwd, ts)
+        if ts - self.lanes_pend[1] >= self.cfg["count_settle_s"]:
+            self.lanes_shown, self.lanes_pend = ln, None
+            return ln, False
+        return shown, True
+
+    def _lanes(self, use, ego, position, ts):
         """Lane count (the map's, of the trusted match), the ego lane (the filter's) and what a consumer lights."""
         c = self.cfg
         ego = ego if isinstance(ego, dict) else {}
         ln = ((use[0].get("road") or {}).get("lanes") if use is not None else None) or {}
+        ln, count_held = self._count(ln, ts)
         fwd = int(ln["forward"]) if _fin(ln.get("forward")) else None
         probs, frm = ego.get("probs"), ego.get("probs_from")
         prov = list(ego.get("provenance") or ())
@@ -210,14 +260,16 @@ class RoadView:
                "ego_index": None, "likely_index": None, "ego_from_right": ego.get("ego_from_right"),
                "probs": None, "probs_from": frm if probs else None, "confidence": 0.0,
                "oncoming_left": None, "provenance": prov, "approximate": bool(position and position["approximate"]),
-               "turn": None}
+               "count_held": count_held, "turn": None}
         if probs:
             out["probs"] = probs
         if fwd is None:
             self.lit = None
             return out
+        keys = ("ego_index", "likely_index", "probs", "probs_from", "confidence")
         if fwd == 1:
             out.update(ego_index=0, confidence=1.0, probs=[1.0], probs_from="left")
+            self.last_lit = (fwd, {k: out[k] for k in keys})
         elif probs and frm == "left" and len(probs) == fwd:
             e = ego.get("ego_index")
             if e is None and self.lit is not None and self.lit[0] == fwd and probs[self.lit[1]] >= c["lane_release_p"]:
@@ -230,8 +282,12 @@ class RoadView:
                 k = max(range(fwd), key=lambda i: probs[i])
                 if probs[k] >= c["lane_likely_p"]:
                     out["likely_index"] = k
+            self.last_lit = (fwd, {k: out[k] for k in keys})
+        elif count_held and self.last_lit is not None and self.last_lit[0] == fwd:
+            # the old count is still shown (the filter already counts the new one): what was lit stays with it
+            out.update(self.last_lit[1])
         else:
-            self.lit = None
+            self.lit = self.last_lit = None
             out["probs"], out["probs_from"] = None, None
         if ln.get("backward") == 0:
             out["oncoming_left"] = False
@@ -254,5 +310,55 @@ class RoadView:
         path = tl.get("path") if isinstance(tl.get("path"), list) and len(tl["path"]) == len(tl["lanes"]) else None
         return {"lanes": tl["lanes"], "arrows": [arrows(a) for a in tl["lanes"]], "count": len(tl["lanes"]),
                 "dist_m": round(start, 1), "junction_m": None if end is None else round(end, 1),
-                "path": path, "here": start <= 0.0 and len(tl["lanes"]) == lanes.get("forward"),
+                "path": path, "path_source": "map",
+                "here": start <= 0.0 and len(tl["lanes"]) == lanes.get("forward"),
                 "provenance": "map:turn_lanes", "confidence": tl.get("confidence")}
+
+    def _turn_shown(self, raw, ts, lanes, have_map):
+        """The turn arrows as given (L36): only for as many lanes as the boxes count; a new stretch after
+        turn_on_s of being seen, kept through a drop-out of turn_hold_s (held), its distance never growing."""
+        c = self.cfg
+        fwd = lanes.get("forward")
+        if not have_map or fwd is None:
+            self.tn = self.tn_cand = None                # no trusted map: nothing to hold on to
+            return None
+        sh = self.tn
+        if sh is not None and sh["raw"]["count"] != fwd:
+            self.tn = sh = None                          # the boxes count other lanes now
+        if raw is None:
+            self.tn_cand = None
+        else:
+            key = tuple(raw["arrows"]) + (raw["count"],)
+            start = self.odo + raw["dist_m"]
+            end = None if raw["junction_m"] is None else self.odo + raw["junction_m"]
+            ref = end if end is not None else start
+            fits = raw["count"] == fwd                   # arrows for other lanes than the boxes show are not given
+            if sh is not None and sh["key"] == key and abs(ref - sh["ref"]) <= c["turn_same_m"]:
+                # the same stretch: the distance only falls (a step back of the match is not shown)
+                sh.update(raw=raw, seen=ts, ref=ref, start=min(start, sh["start"]),
+                          end=end if sh["end"] is None or end is None else min(end, sh["end"]))
+                self.tn_cand = None
+            else:
+                # a new stretch is timed from its first sighting, also while the boxes still count other lanes
+                # (the count settles after count_settle_s; the arrows then come with it)
+                cand = self.tn_cand
+                if cand is None or cand[0] != key or abs(ref - cand[2]) > c["turn_same_m"]:
+                    cand = self.tn_cand = (key, ts, ref)
+                if fits and ts - cand[1] >= c["turn_on_s"]:
+                    self.tn = sh = {"key": key, "raw": raw, "seen": ts, "start": start, "end": end, "ref": ref}
+                    self.tn_cand = None
+        if sh is not None:
+            # the map no longer reports it and the junction is behind the car by the distance driven (while the
+            # map still reports it the car is taken to be before it: odometry runs ahead of the match). The next
+            # stretch waiting for turn_on_s takes its place without a blank in between
+            gone = (sh["seen"] != ts and self.tn_cand is None and sh["end"] is not None
+                    and sh["end"] - self.odo < -5.0)
+            hold = c["turn_hold_s"] + (c["count_settle_s"] if self.tn_cand is not None else 0.0)
+            if gone or ts - sh["seen"] > hold:
+                self.tn = sh = None
+        if sh is None:
+            return None
+        start = max(0.0, sh["start"] - self.odo)
+        end = None if sh["end"] is None else max(0.0, sh["end"] - self.odo)
+        return dict(sh["raw"], dist_m=round(start, 1), junction_m=None if end is None else round(end, 1),
+                    here=start <= 0.0, held=sh["seen"] != ts)
