@@ -37,8 +37,8 @@ RestartSec=2
 # each other; a CPUWeight= here would switch the controller on and re-weight every sibling. CPU placement is
 # per host: install.sh CPUS=... writes a drop-in with CPUAffinity=.
 Nice=-2
-# A backstop against a leak, not a throttle: no MemoryHigh. About 120 MB resident with the map box on a
-# 15 minute replay (docs/INSTALL.md); no watchdog and no start timeout that a hot, throttled CPU could trip.
+# A backstop against a leak, not a throttle: no MemoryHigh. About 70 MB resident with the map box in a real-pace
+# replay on a laptop (docs/INSTALL.md); no watchdog and no start timeout that a hot, throttled CPU could trip.
 MemoryMax=768M
 
 [Install]

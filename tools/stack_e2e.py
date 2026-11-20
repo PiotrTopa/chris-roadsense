@@ -2,6 +2,7 @@
 """Lane L39: the whole stack end to end on a laptop, from a recording.
 
     tools/stack_e2e.py SESSION --pos POS [--start S] [--seconds N] [--car-repo DIR] [--pack PACK] [--remote-mapper]
+                       [--installed PREFIX [--install]]
 
     a roadsense instance replaying the session    its daemons' recorded messages on real Unix sockets, at the
                                                   recorded pace: camerad.sock, modeld.sock (road, calib), signd.sock,
@@ -9,8 +10,14 @@
     the car                                       the recorded vehicle motion, controls and fixes as a feeder
                                                   would send them: vehicle input API on chris-integrator's feed.sock
     chris-integrator (a real process)             python3 -m chris_integrator --roadsense <run dir> --http-port P
+                                                  from this tree; or, with --installed PREFIX, the daemon AS INSTALLED
+                                                  by chris-integrator/scripts/install.sh with DESTDIR=PREFIX: started
+                                                  by PREFIX/run.sh with the prefix's integrator.env (port 8090), run
+                                                  dir PREFIX/run/chris; the car feed then goes to position.sock, the
+                                                  name the car backend opens (--install first (re)installs this tree
+                                                  into PREFIX; PREFIX must be short: Unix socket paths)
     a consumer                                    the car computer's own scene feed (its RoadsenseSceneFeed, read
-                                                  from --car-repo, unmodified) on ws://127.0.0.1:P/ws, as the MFD's
+                                                  from --car-repo or $CHRIS_TEST_CAR_REPO, read-only and unmodified) on ws://127.0.0.1:P/ws, as the MFD's
                                                   backend connects; plus a plain WebSocket reader that times the hop
 
 Printed: what the consumer got (scenes per second, with a lead / lane lines / a limit / the road picture), the
@@ -70,7 +77,7 @@ def pct(v, p):
     return v[min(len(v) - 1, int(p / 100.0 * len(v)))] if v else float("nan")
 
 
-async def play(a, rundir, chris_run, sent, at_end=None):
+async def play(a, rundir, chris_run, sent, at_end=None, feed_name="feed.sock"):
     """The session at its own pace: daemon messages on the roadsense sockets, the car's on feed.sock."""
     pubs = {d: Pub(os.path.join(rundir, d + ".sock")) for d in set(SOCK.values())}
     for p in pubs.values():
@@ -78,7 +85,7 @@ async def play(a, rundir, chris_run, sent, at_end=None):
     feed = None
     for _ in range(100):
         try:
-            _, feed = await asyncio.open_unix_connection(os.path.join(chris_run, "feed.sock"))
+            _, feed = await asyncio.open_unix_connection(os.path.join(chris_run, feed_name))
             break
         except OSError:
             await asyncio.sleep(0.1)
@@ -145,8 +152,11 @@ def main():
     ap.add_argument("--pos")
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--seconds", type=float, default=120.0)
-    ap.add_argument("--car-repo", default=os.path.expanduser("~/projects/cyberpank-prius-gen2-computer"))
-    ap.add_argument("--pack", default=os.path.expanduser("~/roadsense-maps/packs/poland-20261114.rsmap"))
+    ap.add_argument("--car-repo", default=os.environ.get("CHRIS_TEST_CAR_REPO") or os.path.expanduser("~/projects/cyberpank-prius-gen2-computer"),
+                    help="the car computer's repository, imported read-only (default $CHRIS_TEST_CAR_REPO, else the owner's checkout)")
+    ap.add_argument("--pack", default=None, help="the map pack (default: the f2 Poland pack; with --installed: the prefix's own link)")
+    ap.add_argument("--installed", metavar="PREFIX", help="run chris-integrator as installed into PREFIX by install.sh (DESTDIR=PREFIX)")
+    ap.add_argument("--install", action="store_true", help="with --installed: first run chris-integrator/scripts/install.sh into PREFIX")
     ap.add_argument("--python", default=os.environ.get("PYTHON", sys.executable),
                     help="interpreter for the chris-integrator process (it needs numpy and aiohttp)")
     ap.add_argument("--remote-mapper", action="store_true", help="run the map box as its own process (mapper.json remote)")
@@ -155,22 +165,70 @@ def main():
     rundir, chris_run, etc = os.path.join(tmp, "roadsense"), os.path.join(tmp, "chris"), os.path.join(tmp, "etc")
     for d in (rundir, chris_run, etc):
         os.makedirs(d)
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join([os.path.join(HERE, "chris-integrator"), os.path.join(HERE, "chris-mapper")]),
-               CHRIS_MAP_PACK=a.pack)
-    if a.remote_mapper:
-        with open(os.path.join(etc, "mapper.json"), "w") as f:
-            json.dump({"remote": {"cmd": [a.python, "-m", "chris_mapper", "--plugin", "--pack", a.pack], "timeout_s": 0.25}}, f)
-    port = free_port()
-    proc = subprocess.Popen([a.python, "-m", "chris_integrator", "--rundir", chris_run, "--datadir", tmp, "--config-dir", etc,
-                             "--roadsense", rundir, "--host", "127.0.0.1", "--http-port", str(port)], env=env,
-                            stderr=open(os.path.join(tmp, "integrator.log"), "w"))
+    feed_name = "feed.sock"
+    if a.installed:
+        prefix = os.path.abspath(os.path.expanduser(a.installed))
+        if a.install:
+            ienv = dict(os.environ, DESTDIR=prefix, PYTHON=a.python)
+            if a.pack:
+                ienv["MAP_PACK"] = os.path.expanduser(a.pack)
+            r = subprocess.run(["sh", os.path.join(HERE, "chris-integrator", "scripts", "install.sh")], env=ienv,
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                sys.exit("install.sh into %s failed:\n%s%s" % (prefix, r.stdout, r.stderr))
+            print("installed into %s (install.sh, DESTDIR)" % prefix)
+        run_sh = os.path.join(prefix, "run.sh")
+        if not os.path.exists(run_sh):
+            sys.exit("no %s: install first (DESTDIR=%s sh chris-integrator/scripts/install.sh, or --install)" % (run_sh, prefix))
+        chris_run = os.path.join(prefix, "run", "chris")
+        if len(os.path.join(chris_run, "integrator.sock")) > 107:
+            sys.exit("%s is too long for Unix socket paths: use a shorter prefix (or a short symlink to it)" % chris_run)
+        ivars = {}
+        with open(os.path.join(prefix, "etc", "chris", "integrator.env")) as f:
+            for ln in f:
+                k, _, v = ln.strip().partition("=")
+                if k and not k.startswith("#"):
+                    ivars[k] = v
+        port = int(ivars.get("CHRIS_API_PORT", "8090"))
+        with socket.socket() as s_:
+            if s_.connect_ex(("127.0.0.1", port)) == 0:
+                sys.exit("port %d is in use on this machine: the installed daemon could not bind it" % port)
+        env = dict(os.environ, CHRIS_ROADSENSE_RUNDIR=rundir, PYTHON=a.python)
+        if a.pack and not a.install:
+            env["CHRIS_MAP_PACK"] = os.path.expanduser(a.pack)
+        for k in ("PYTHONPATH", "CHRIS_RUNDIR", "CHRIS_DATADIR", "CHRIS_CONFIG_DIR", "CHRIS_API_PORT", "CHRIS_API_HOST"):
+            env.pop(k, None)
+        for stale in ("feed.sock", "position.sock", "integrator.sock"):
+            try:
+                os.unlink(os.path.join(chris_run, stale))
+            except OSError:
+                pass
+        cmd = ["sh", run_sh]
+        feed_name = "position.sock"
+        print("chris-integrator as installed: %s (port %d, run dir %s, config %s/etc/chris)" % (run_sh, port, chris_run, prefix))
+    else:
+        a.pack = os.path.expanduser(a.pack or "~/roadsense-maps/packs/poland-20261114-f2.rsmap")
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([os.path.join(HERE, "chris-integrator"), os.path.join(HERE, "chris-mapper")]),
+                   CHRIS_MAP_PACK=a.pack)
+        if a.remote_mapper:
+            with open(os.path.join(etc, "mapper.json"), "w") as f:
+                json.dump({"remote": {"cmd": [a.python, "-m", "chris_mapper", "--plugin", "--pack", a.pack], "timeout_s": 0.25}}, f)
+        port = free_port()
+        cmd = [a.python, "-m", "chris_integrator", "--rundir", chris_run, "--datadir", tmp, "--config-dir", etc,
+               "--roadsense", rundir, "--host", "127.0.0.1", "--http-port", str(port)]
+    proc = subprocess.Popen(cmd, env=env, stderr=open(os.path.join(tmp, "integrator.log"), "w"))
     base = "http://127.0.0.1:%d" % port
-    for _ in range(100):
+    for _ in range(300):
         try:
             urllib.request.urlopen(base + "/v2/version", timeout=1).read()
             break
         except OSError:
+            if proc.poll() is not None:
+                sys.exit("chris-integrator exited (%s); log: %s" % (proc.returncode, os.path.join(tmp, "integrator.log")))
             time.sleep(0.1)
+    if a.installed:
+        missing = [n for n in ("position.sock", "feed.sock", "integrator.sock") if not os.path.exists(os.path.join(chris_run, n))]
+        print("run dir %s: %s" % (chris_run, "position.sock, feed.sock, integrator.sock present" if not missing else "MISSING " + ", ".join(missing)))
     # consumer 1: the car computer's scene feed, as its backend runs it
     # the one module, loaded from its file (the package pulls in the whole backend); nothing is written there
     import importlib.util
@@ -217,7 +275,7 @@ def main():
         def at_end():
             got["health"] = json.loads(urllib.request.urlopen(base + "/v2/health", timeout=3).read())
             got["mixer"] = json.loads(urllib.request.urlopen(base + "/v2/mixer", timeout=3).read())
-        frames = asyncio.run(play(a, rundir, chris_run, sent, at_end))
+        frames = asyncio.run(play(a, rundir, chris_run, sent, at_end, feed_name))
         dur = time.monotonic() - t_start
         with open("/proc/%d/stat" % proc.pid) as f:
             st = f.read().split()
@@ -229,7 +287,11 @@ def main():
         stop.set()
         feed.stop()
         proc.terminate()
-        proc.wait(10)
+        try:
+            proc.wait(15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            print("chris-integrator did not stop within 15 s of SIGTERM: killed")
     th.join(2)
     n = seen.pop("_n", {})
     lat = [1e3 * (seen[s] - sent[s]) for s in seen if s in sent]
@@ -252,7 +314,7 @@ def main():
         n.get("view", 0), n.get("lead", 0), n.get("bytes", 0) / 1e3 / max(dur, 1e-9), pct(lat, 50), pct(lat, 90), pct(lat, 99), len(lat)))
     print("daemon: cpu %.1f s = %.1f %% of one core (%.2f ms per road frame, all inputs and outputs included); resident memory %.0f MB" % (
         cpu, 100.0 * cpu / dur, 1e3 * cpu / max(frames, 1), rss))
-    print("health: daemons %s; integrator sources %s; map %s" % (
+    print("health: api %s; daemons %s; integrator sources %s; map %s" % (health.get("api"),
         {k: v["connected"] for k, v in health["daemons"].items()},
         {k: v["state"] for k, v in (health["integrator"] or {}).get("sources", {}).items()},
         {k: (health["map"] or {}).get(k) for k in ("state", "available", "road", "limit_kmh", "motion_source")}))
@@ -263,6 +325,9 @@ def main():
             "  remote %s" % p["health"].get("transport") if p["remote"] else ""))
     print("  inputs: %s" % {k: v["messages"] for k, v in mixer["inputs"].items()})
     print("  outputs: %s" % list(mixer["outputs"]))
+    print("  recorder: %s" % {k: (health.get("recorder") or {}).get(k) for k in ("dir", "failed", "messages")})
+    print("chris-integrator stopped with %s (0: clean stop on SIGTERM, carried state saved); log %s" % (
+        proc.returncode, os.path.join(tmp, "integrator.log")))
 
 
 if __name__ == "__main__":
