@@ -32,21 +32,6 @@ def _slow(values, digits):
     return [v if v is None else round(v, d) for v, d in zip(values, digits)]
 
 
-_WORK = {}                      # n -> work arrays of that length
-
-
-def _work(n):
-    """Work arrays for lists of n numbers, kept between calls: numpy hands out small arrays from a cache of its
-    own, but not ones of a few kB, and the C library of a phone's Alpine-based system (musl) gives memory of
-    that size back to the kernel at once: a dozen temporaries a frame showed as system time."""
-    w = _WORK.get(n)
-    if w is None:
-        if len(_WORK) > 32:
-            _WORK.clear()
-        w = _WORK[n] = (np.empty(n), np.empty(n), np.empty(n), np.empty(n, dtype=np.int64), np.empty(n, dtype=object))
-    return w
-
-
 def round_flat(values, scale, digits):
     """[round(v, d) for v, d in zip(values, digits)] where scale[i] == 10.0 ** digits[i] (a float array of the
     same length as `values`, made once by `scales`)."""
@@ -56,21 +41,13 @@ def round_flat(values, scale, digits):
         return _slow(values, digits)
     if a.shape != scale.shape:
         return _slow(values, digits)
-    y, r, t, _, _ = _work(a.size)
     with np.errstate(invalid="ignore", over="ignore"):
-        np.multiply(a, scale, out=y)
-        np.rint(y, out=r)
-        np.subtract(y, r, out=t)
-        np.abs(t, out=t)
-        ok = t < 0.5 - _TIE
-        np.abs(y, out=t)
-        ok &= t < _BIG
-        np.fmod(y, scale, out=t)
+        y = a * scale
+        r = np.rint(y)
+        d = np.abs(y - r)
         # not (...) so that NaN (None, nan, inf - inf) lands in the repair set; whole numbers: see the module text
-        bad = ~ok
-        bad |= t == 0.0
-        np.divide(r, scale, out=t)
-        out = t.tolist()
+        bad = ~((d < 0.5 - _TIE) & (np.abs(y) < _BIG)) | (np.fmod(y, scale) == 0.0)
+        out = (r / scale).tolist()
     if bad.any():
         for i in np.flatnonzero(bad).tolist():
             v = values[i]
@@ -119,33 +96,22 @@ def _num(v, _isfinite=math.isfinite, _repr_f=float.__repr__):
 def text_flat(values, scale, digits, table, base):
     """[json text of round(v, d) for v, d in zip(values, digits)]: the strings json.dumps would write for the
     rounded numbers. `table`: the texts of every digit count in use, one after the other (`Layout`); `base`:
-    per element the index of its digit count's k = 0 in `table` (a float array)."""
+    per element the index of its digit count's k = 0 in `table`."""
     try:
         a = np.array(values, dtype=float)
     except (TypeError, ValueError):
         return [_num(v if v is None else round(v, d)) for v, d in zip(values, digits)]
     if a.shape != scale.shape:
         return [_num(v if v is None else round(v, d)) for v, d in zip(values, digits)]
-    y, r, t, ki, ko = _work(a.size)
     with np.errstate(invalid="ignore", over="ignore"):
-        np.multiply(a, scale, out=y)
-        np.rint(y, out=r)
-        np.subtract(y, r, out=t)
-        np.abs(t, out=t)
-        ok = t < 0.5 - _TIE
-        np.abs(y, out=t)
-        ok &= t < _OFF - 1
-        np.fmod(y, scale, out=t)
+        y = a * scale
+        r = np.rint(y)
+        d = np.abs(y - r)
         # repaired one by one: near a tie, outside the table, not finite; whole numbers (an int stays an int);
         # a negative number that rounds to zero ("-0.0")
-        bad = ~ok
-        bad |= t == 0.0
-        bad |= (r == 0.0) & (y < 0.0)
+        bad = ~((d < 0.5 - _TIE) & (np.abs(y) < _OFF - 1)) | (np.fmod(y, scale) == 0.0) | ((r == 0.0) & (y < 0.0))
         r[bad] = 0.0
-        r += base
-        np.copyto(ki, r, casting="unsafe")
-        np.take(table, ki, out=ko, mode="clip")
-        out = ko.tolist()
+        out = table[r.astype(np.int64) + base].tolist()
     if bad.any():
         for i in np.flatnonzero(bad).tolist():
             v = values[i]
@@ -160,17 +126,6 @@ class Layout:
     def __init__(self):
         self._cache = {}
 
-    @staticmethod
-    def _fill(flat, parts):
-        """The parts one after the other in the layout's own list (refilled in place: no list of a few kB is
-        allocated per call)."""
-        i = 0
-        for p in parts:
-            n = len(p)
-            flat[i:i + n] = p
-            i += n
-        return flat
-
     def round_parts(self, parts, digits):
         """parts: lists of numbers; digits: the digit count of each part. Returns the rounded lists."""
         key = tuple(len(p) for p in parts) + tuple(digits)
@@ -179,8 +134,10 @@ class Layout:
             if len(self._cache) > 64:
                 self._cache.clear()
             dg = [d for p, d in zip(parts, digits) for _ in p]
-            ent = self._cache[key] = (scales(dg), dg, None, None, [0.0] * len(dg))
-        flat = self._fill(ent[4], parts)
+            ent = self._cache[key] = (scales(dg), dg, None, None)
+        flat = []
+        for p in parts:
+            flat += p
         out = round_flat(flat, ent[0], ent[1])
         res, i = [], 0
         for p in parts:
@@ -201,8 +158,10 @@ class Layout:
             used = sorted(set(digits))
             first = {d: i * 2 * _OFF + _OFF for i, d in enumerate(used)}
             table = np.concatenate([_table(d) for d in used]) if used else np.zeros(0, dtype=object)
-            ent = self._cache[key] = (scales(dg), dg, table, np.array([float(first[d]) for d in dg]), [0.0] * len(dg))
-        flat = self._fill(ent[4], parts)
+            ent = self._cache[key] = (scales(dg), dg, table, np.array([first[d] for d in dg], dtype=np.int64))
+        flat = []
+        for p in parts:
+            flat += p
         out = text_flat(flat, ent[0], ent[1], ent[2], ent[3])
         res, i = [], 0
         for p in parts:
