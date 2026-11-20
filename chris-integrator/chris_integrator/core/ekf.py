@@ -357,9 +357,17 @@ class Filter:
         """(age_s of the nearest applied row of `kinds` within reach_s, sorted source ids applied within the
         window)."""
         reach = max(window_s, reach_s)
-        lo, hi = bisect.bisect_left(self.times, T - reach), bisect.bisect_right(self.times, T + reach)
+        times, entries = self.times, self.entries
+        lo, hi = bisect.bisect_left(times, T - reach), bisect.bisect_right(times, T + reach)
+        # The entries about the window first: they give the sources, and the nearest row if there is one (every
+        # entry outside is further away). Only when nothing was applied there is the rest of the reach walked,
+        # outwards, to the first applied row on either side. (The reach of a position is the whole buffer: this
+        # was a walk over every row of ten seconds, several times a frame.) Membership of the window is decided
+        # by `d <= window_s` as before; the slice is a hair wider than it.
+        wl = max(lo, bisect.bisect_left(times, T - window_s - 1e-6))
+        wh = min(hi, bisect.bisect_right(times, T + window_s + 1e-6))
         age, srcs = None, set()
-        for e in self.entries[lo:hi]:          # (`usedq`: the rows the last pass applied, kept per entry by `_run`)
+        for e in entries[wl:wh]:               # (`usedq`: the rows the last pass applied, kept per entry by `_run`)
             u = e.usedq
             if not u:
                 continue
@@ -370,6 +378,19 @@ class Filter:
                         srcs.add(src)
                     if age is None or d < age:
                         age = d
+        if age is None:
+            for k in range(wl - 1, lo - 1, -1):
+                u = entries[k].usedq
+                if u and (kinds is None or any(q in kinds for q, _ in u)):
+                    age = abs(entries[k].t - T)
+                    break
+            for k in range(wh, hi):
+                u = entries[k].usedq
+                if u and (kinds is None or any(q in kinds for q, _ in u)):
+                    d = abs(entries[k].t - T)
+                    if age is None or d < age:
+                        age = d
+                    break
         for tt, q, src in getattr(self, "carry", ()):      # measured before the buffer was restarted
             d = abs(tt - T)
             if d <= reach and (kinds is None or q in kinds) and q != "pos":

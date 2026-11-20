@@ -286,7 +286,7 @@ static int put_rounded(Buf *b, PyObject *o, int depth)
     if (buf_ch(b, '[') < 0)
         return -1;
     for (Py_ssize_t i = 0; i < len; i++) {
-        PyObject *v = PyList_GetItem(vals, i);          /* borrowed; nothing runs Python code before its use */
+        PyObject *v = PyList_GetItem(vals, i);          /* borrowed; no Python code runs while it is in use */
         if (v == NULL)
             return -1;
         if (i && buf_ch(b, ',') < 0)
@@ -308,13 +308,18 @@ static int put_rounded(Buf *b, PyObject *o, int depth)
                 return -1;
             continue;
         }
-        Py_INCREF(v);
+        if (!PyFloat_CheckExact(v)) {                   /* any other type: the caller's pure path (its __round__ */
+            PyErr_SetNone(Fallback);                    /* would run Python code in the middle of this walk) */
+            return -1;
+        }
+        /* a float next to a decimal tie: float.__round__ itself (C code, no callbacks) */
         PyObject *r = PyObject_CallFunction(builtin_round, "Ol", v, n);
-        Py_DECREF(v);
         if (r == NULL)
             return -1;
-        int rc = put_value(b, r, depth + 1);
+        int rc = PyFloat_CheckExact(r) ? put_double(b, PyFloat_AsDouble(r)) : -2;
         Py_DECREF(r);
+        if (rc == -2)
+            PyErr_SetNone(Fallback);
         if (rc < 0)
             return -1;
     }

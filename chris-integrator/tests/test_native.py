@@ -212,6 +212,10 @@ def test_dumps_rounded_lists():
                 vals.append(_rand_double(rng))
         vals = [v for v in vals if not (isinstance(v, float) and not math.isfinite(v))]
         ref = _ref_dumps({"a": [v if v is None else round(v, nd) for v in vals], "b": 1})
+        if any(isinstance(v, bool) for v in vals):       # anything but float, int, None: left to the pure path
+            with pytest.raises(C.Fallback):
+                C.dumps({"a": N.Rounded((vals, nd)), "b": 1})
+            continue
         assert C.dumps({"a": N.Rounded((vals, nd)), "b": 1}) == ref
 
 
