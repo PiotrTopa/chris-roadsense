@@ -126,7 +126,8 @@ if [ -n "$NAT_SRC" ]; then
 fi
 if ls "$NAT_DIR"/_chris_native*.so >/dev/null 2>&1; then
     # the self-test: the module must load with this interpreter and give the reference's results on this machine
-    if NAT_OUT=$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$LIB" CHRIS_NATIVE=1 "$PYTHON" -m chris_integrator.native 2>&1); then
+    # (run from the installed directory: `-m` looks in the working directory first, which may be the source tree)
+    if NAT_OUT=$(cd "$LIB" && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$LIB${PYTHONPATH:+:$PYTHONPATH}" CHRIS_NATIVE=1 "$PYTHON" -m chris_integrator.native 2>&1); then
         NAT_SUM=$(sha256sum "$NAT_DIR"/_chris_native*.so | cut -c1-16)
         note "native core: IN USE ($NAT_TAG, sha256 $NAT_SUM..., from ${NAT_SRC:-the source tree}; self-test ok)"
     else
