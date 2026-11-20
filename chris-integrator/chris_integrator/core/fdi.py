@@ -62,6 +62,7 @@ class Stream:
         self.k = 0
         self.held = []
         self.h_n, self.h_rep = 0, 0.0
+        self.peak = {}                     # per kind: the largest statistic over its fault level (1 = a fault)
 
     def offer(self, t, v, s):
         """-> [(kind, level, text)] conditions that hold now."""
@@ -86,6 +87,8 @@ class Stream:
         if not varies:
             return out
         # (a value within its own noise of zero may well stay where it is: a standing car)
+        if abs(v) > 4.0 * s > 0.0 and self.run_n >= c["stuck_n"]:
+            self.peak["stuck"] = max(self.peak.get("stuck", 0.0), (t - self.run_t) / c["stuck_fault_s"])
         if abs(v) > 4.0 * s > 0.0 and self.run_n >= c["stuck_n"] and t - self.run_t >= c["stuck_s"]:
             out.append(("stuck", "fault" if t - self.run_t >= c["stuck_fault_s"] else "warn",
                         "value frozen at %.4g for %.1f s (%d samples)" % (v, t - self.run_t, self.run_n)))
@@ -109,6 +112,7 @@ class Stream:
                 if len(d2) >= 10:
                     ratio = 1.4826 * statistics.median(d2) / sig
                     self.noise_ratio = ratio
+                    self.peak["noise"] = max(self.peak.get("noise", 0.0), ratio / c["noise_fault_ratio"])
                     if ratio >= c["noise_ratio"]:
                         out.append(("noise", "fault" if ratio >= c["noise_fault_ratio"] else "warn",
                                     "noise %.1fx the characterised level" % ratio))
@@ -242,6 +246,7 @@ class Diagnostics:
         self.now = 0.0
         self.events = collections.deque(maxlen=16)      # one-off reports (a mount step, an epoch)
         self.qfaults = None                # the integrator's quantity-level isolation, for the report
+        self.reported = {}                 # verdicts of detectors in `report` mode: (source, quantity, detector) -> {"since", "text"}
 
     # ---- inputs ----------------------------------------------------------------------------------------
     def raw(self, group, quantity, t, v, s):
@@ -311,8 +316,8 @@ class Diagnostics:
 
     # ---- queries ---------------------------------------------------------------------------------------
     def self_evident(self, group):
-        """Fault-level findings a source shows by itself: [(quantity, text)]."""
-        return [(f.quantity, "%s: %s" % (f.kind, f.text)) for f in self.findings.values() if f.source == group and f.level == "fault"]
+        """Fault-level findings a source shows by itself: [(quantity, kind, text)]."""
+        return [(f.quantity, f.kind, "%s: %s" % (f.kind, f.text)) for f in self.findings.values() if f.source == group and f.level == "fault"]
 
     def noise_scale(self, group, quantity):
         """Factor on a stream's stated sigma while its measured noise is above the characterised level: the
@@ -330,6 +335,10 @@ class Diagnostics:
         out = [f.as_dict(now) for f in self.findings.values()]
         out += [{"source": g, "quantity": q, "kind": "isolated", "level": "fault", "since_s": round(max(0.0, now - f["since"]), 1),
                  "text": "%s of %s set aside (%s): %s" % (q, g, f["rule"], f["reason"])} for (g, q), f in (self.qfaults or {}).items()]
+        out += [{"source": g, "quantity": q, "kind": "reported", "detector": det, "level": "warn", "mode": "report",
+                 "since_s": round(max(0.0, now - r["since"]), 1),
+                 "text": "%s (detector %s runs in report mode: nothing is set aside)" % (r["text"], det)}
+                for (g, q, det), r in self.reported.items()]
         for e in self.events:
             if e["t"] is None:
                 e["t"] = now                              # reported for the first time

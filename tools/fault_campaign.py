@@ -31,6 +31,12 @@ TOL = {"speed": 0.5, "yaw_rate": 0.02, "position": 15.0, "heading": 6.0, "lead":
 ALARM = ("fault", "suspect", "stale", "absent")
 
 
+def _extra_cfg():
+    """`--cfg JSON` / `--gate-all`: integrator configuration on top of the run's own (through the environment, so
+    the pool's workers see it)."""
+    return json.loads(os.environ.get("CHRIS_EVAL_CFG") or "{}")
+
+
 def _faults_mod():
     spec = importlib.util.spec_from_file_location("l41_faults", os.path.join(ROOT, "chris-integrator", "chris_integrator", "sim", "faults.py"))
     mod = importlib.util.module_from_spec(spec)
@@ -159,7 +165,8 @@ def _frame_row(t, es, ld):
         return (d["value"], d["std"]) if d.get("valid") else None
     pos = es["position"]
     return {"t": t, "al": _alarms(es), "bl": _blamed(es), "speed": q(es["speed"]), "yaw_rate": q(es["yaw_rate"]),
-            "pos": (pos["local"]["e_m"], pos["local"]["n_m"], pos["hacc_m"], pos["local"]["frame"]) if pos.get("valid") else None,
+            "pos": (pos["local"]["e_m"], pos["local"]["n_m"], pos["hacc_m"], pos["local"]["frame"],
+                    tuple((pos.get("origin") or {}).values())) if pos.get("valid") else None,
             "head": q(es["heading"]), "lead": (ld["dist_m"], ld.get("dist_std_m") or 0.0) if ld and ld.get("present") and ld.get("valid", True) else None,
             "lead_valid": bool(ld and ld.get("valid", True)), "mount": ((es.get("calibration") or {}).get("vision") or {}).get("state"),
             "events": [d for d in es.get("diagnostics") or () if d.get("kind") in ("mount_step",)]}
@@ -259,7 +266,7 @@ def _run_sim(job):
     FM = _faults_mod()
     w, msgs = _sim_stream(seed, scenario, radar)
     faults = [FM.Fault(s[0], s[1], s[2], s[3], **s[4]) for s in specs]
-    cfg = {"gnss_absolute": True}
+    cfg = dict({"gnss_absolute": True}, **_extra_cfg())
     if radar:
         cfg["sources"] = [{"kind": "radar", "id": "*"}]
     I = Integrator(cfg)
@@ -342,7 +349,7 @@ def _healthy(job):
     sys.path.insert(0, os.path.join(tree or ROOT, "chris-integrator"))
     from chris_integrator import Integrator
     w, msgs = _sim_stream(seed, scenario, radar)
-    cfg = {"gnss_absolute": True}
+    cfg = dict({"gnss_absolute": True}, **_extra_cfg())
     if radar:
         cfg["sources"] = [{"kind": "radar", "id": "*"}]
     I = Integrator(cfg)
@@ -403,7 +410,7 @@ def _run_real(job):
     msgs = [m for m in msgs if t_from <= m["ts_mono_ns"] / NS - ts0 < t_to]
 
     def run(faults):
-        I = Integrator()
+        I = Integrator(_extra_cfg() or None)
         rows = []
         for m in FM.apply(msgs, faults):
             if m["type"] != "road":
@@ -424,7 +431,10 @@ def _run_real(job):
             for q in ("speed", "yaw_rate"):
                 if r[q] and o[q]:
                     err[q] = (r[q][0] - o[q][0], r[q][1])
-            if r["pos"] and o["pos"] and r["pos"][3] == o["pos"][3]:
+            # (compared whenever both are in the same local coordinates, i.e. the same origin. Until L43 this asked
+            # for the same *frame id*: a run that re-anchored once more than its reference was then never scored
+            # again, and "0 s wrong" was reported for positions 30-50 m off)
+            if r["pos"] and o["pos"] and r["pos"][4] == o["pos"][4]:
                 err["position"] = (math.hypot(r["pos"][0] - o["pos"][0], r["pos"][1] - o["pos"][1]), r["pos"][2])
             if r["head"] and o["head"]:
                 err["heading"] = ((r["head"][0] - o["head"][0] + 180.0) % 360.0 - 180.0, r["head"][1])
@@ -528,6 +538,8 @@ def main():
         p.add_argument("-j", "--jobs", type=int, default=6)
         p.add_argument("--radar", action="store_true")
         p.add_argument("--only")
+        p.add_argument("--cfg", help="integrator configuration overrides, JSON")
+        p.add_argument("--gate-all", action="store_true", help="every detector in gate mode (default: the shipped modes)")
         if name == "sim":
             p.add_argument("--seeds", type=int, nargs="+", default=[1])
             p.add_argument("--scenario", default="town")
@@ -545,6 +557,13 @@ def main():
     p.add_argument("table")
     p.add_argument("other", nargs="?")
     a = ap.parse_args()
+    cfg = json.loads(getattr(a, "cfg", None) or "{}")
+    if getattr(a, "gate_all", False):
+        sys.path.insert(0, os.path.join(ROOT, "chris-integrator"))
+        from chris_integrator.core.integrator import GATE_ALL
+        cfg["detectors"] = dict(GATE_ALL, **cfg.get("detectors", {}))
+    if cfg and not getattr(a, "tree", None):
+        os.environ["CHRIS_EVAL_CFG"] = json.dumps(cfg)
     globals()["cmd_" + a.cmd](a)
 
 

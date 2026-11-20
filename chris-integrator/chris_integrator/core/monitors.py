@@ -89,6 +89,14 @@ class Pair:
         self.n_ok = self.n_mean = 0
         self.recent = collections.deque(maxlen=8 if cfg["mode"] == "mean" else 24)
         self.cusum_on = self.by_cusum = False
+        self.sample_t = None                   # stamp of the newest paired sample
+        # the largest value each test statistic reached, as a fraction of its firing level (1 = fired): how near
+        # a healthy pair came to an alarm, and what a limit's margin is on a drive
+        self.peak = {}
+
+    def _peak(self, name, value):
+        if value > self.peak.get(name, 0.0):
+            self.peak[name] = value
 
     def offer(self, t, v, s, ref_series, now):
         """A measurement of the tested group; paired at once when the reference brackets its time, else later."""
@@ -123,9 +131,13 @@ class Pair:
             g = max(self.gp, self.gn)
             if g >= c["cusum_h"]:
                 md = abs(statistics.fmean(d for d, _ in self.recent))
-                self.cusum_on = md > max(c["abs_delta"], c["min_delta"] * statistics.median(r for _, r in self.recent))
+                lim = max(c["abs_delta"], c["min_delta"] * statistics.median(r for _, r in self.recent))
+                self.cusum_on = md > lim
+                self.cusum_delta = md
+                self._peak("cusum", md / lim)          # (the sum is over its level: what decides is the size)
             elif g < 0.5 * c["cusum_h"]:
                 self.cusum_on = False
+            self.sample_t = t
         if max(abs(v), abs(rv)) < c["min_evidence"]:
             if c["mode"] == "share" and c.get("cusum_h") and self.cusum_on != (self.verdict == "disagree") and self.verdict != "unknown":
                 return self._evaluate(t)
@@ -134,6 +146,7 @@ class Pair:
         self.win.add(t, (abs(z) > c["z_bad"], v, rv))
         self.last_delta = v - rv
         self.times.append(t)
+        self.sample_t = t
         if c["mode"] == "mean":
             return self._evaluate_mean(t, math.hypot(s, rs))
         return self._evaluate(t)
@@ -158,6 +171,7 @@ class Pair:
         ratio = statistics.median(v for _, v, _ in items) / mr if abs(mr) > 1e-3 else None
         g = max(self.gp, self.gn)
         self.stats = {"n": len(items), "share": min(1.0, g / c["cusum_h"]), "ratio": ratio}
+        self._peak("track", g / c["cusum_h"])
         old = self.verdict
         if old == "disagree":
             last = list(self.recent)[-c["recover_n"]:]
@@ -190,6 +204,8 @@ class Pair:
             mr = statistics.median(r for _, _, r in fire)
             ratio = statistics.median(v for _, v, _ in fire) / mr if abs(mr) > 1e-3 else None
         self.stats = {"n": n, "share": share, "ratio": ratio}
+        if n >= c["min_n"] and c["mode"] == "share":
+            self._peak("share", share / c["fire_share"])
         old = self.verdict
         if c["mode"] == "ratio":
             bad = n >= c["min_n"] and ratio is not None and not (c["ratio_lo"] <= ratio <= c["ratio_hi"])
@@ -198,6 +214,12 @@ class Pair:
             self.suspect = False
         elif old == "disagree":
             rec = self.win.last(c["recover_window_s"])
+            if self.by_cusum and n >= c["min_n"] and share >= c["fire_share"]:
+                # the share test has reached its own level: the verdict is its verdict from here on (it is the
+                # stronger statement, it may gate where the CUSUM only reports, and it ends by its own rule)
+                self.by_cusum = False
+                self.changed_t = t
+                return True
             if self.by_cusum:
                 if not self.cusum_on and (share is None or share <= c["recover_share"]):
                     self.verdict, self.by_cusum = "agree", False
@@ -211,7 +233,7 @@ class Pair:
             self.by_cusum = self.cusum_on and not fire
             self.suspect = self.verdict == "agree" and share is not None and share >= c["suspect_share"]
             if self.by_cusum:
-                self.stats["share"] = 1.0              # the strength of the evidence, for the vote logic
+                self.stats["strength"] = 1.0           # the strength of the evidence, for the vote logic
         if self.verdict != old:
             self.changed_t = t
             return True
@@ -221,6 +243,8 @@ class Pair:
         s = self.stats
         return {"kind": self.kind if self.c["mode"] != "ratio" else "witness", "a": self.ref, "b": self.tested,
                 "quantity": self.quantity, "verdict": self.verdict, "n": s["n"],
+                "by": self.decided_by() if self.verdict == "disagree" else None,
+                "peak": {k: round(v, 2) for k, v in self.peak.items()},
                 "share": None if s["share"] is None else round(s["share"], 2),
                 "ratio": None if s["ratio"] is None else round(s["ratio"], 2),
                 "evidence_s": round(min(self.win.span(), self.c["fire_window_s"]), 1)}
@@ -231,7 +255,9 @@ class Pair:
         bits = []
         if s["ratio"] is not None:
             bits.append("ratio %.2f" % s["ratio"])
-        if s["share"] is not None and self.c["mode"] == "share":
+        if self.by_cusum:
+            bits.append("accumulated difference: mean offset %.3g over the last %d samples" % (getattr(self, "cusum_delta", 0.0), len(self.recent)))
+        elif s["share"] is not None and self.c["mode"] == "share":
             bits.append("%d %% of %d samples beyond %g sigma" % (round(100 * s["share"]), s["n"], self.c["z_bad"]))
         kind, what = self.kind_of()
         if kind is not None:
@@ -242,6 +268,25 @@ class Pair:
         """The kind of the disagreement (sign, unit, scale, bias) from the samples of the window."""
         from .fdi import describe_pair
         return describe_pair([(v, r) for _, v, r in self.win.last(self.c["fire_window_s"])])
+
+    def decided_by(self):
+        """Which test holds the present verdict: "track" (a slow source compared by its mean), "cusum", "share"."""
+        return "track" if self.c["mode"] == "mean" else "cusum" if self.by_cusum else "share"
+
+    def strength(self):
+        s = self.stats
+        return s.get("strength", s.get("share")) if self.by_cusum else s.get("share")
+
+    def expire(self, now, after_s=30.0):
+        """A verdict held by the CUSUM alone is evidence of a difference that was accumulating; without a sample
+        for `after_s` (the car stands, the source is silent) nothing accumulates and nothing clears it either: it
+        lapses to "unknown". (A verdict of the share test stays until agreement is seen, as before.)"""
+        if self.verdict == "disagree" and self.by_cusum and self.sample_t is not None and now - self.sample_t > after_s:
+            self.verdict, self.by_cusum, self.cusum_on = "unknown", False, False
+            self.gp = self.gn = 0.0
+            self.changed_t = now
+            return True
+        return False
 
     def fresh(self, since_t):
         """Samples valid after a time (evidence gathered since a disagreement began)."""
@@ -267,6 +312,7 @@ class SelfCheck:
         self.median = None
         self.n = 0
         self.changed_t = None
+        self.peak = 0.0
 
     def offer(self, t, ratio):
         c = self.c
@@ -274,6 +320,8 @@ class SelfCheck:
         fire = self.win.last(c["fire_window_s"])
         self.n = len(fire)
         self.median = statistics.median(fire) if fire else None
+        if self.n >= c["min_n"]:
+            self.peak = max(self.peak, self.median / c["fire_ratio"])
         old = self.fault
         if not old:
             if self.n >= c["min_n"] and self.median > c["fire_ratio"]:
@@ -291,7 +339,7 @@ class SelfCheck:
     def report(self):
         return {"kind": "self", "a": self.group, "quantity": self.quantity,
                 "verdict": "fault" if self.fault else ("ok" if self.n >= self.c["min_n"] else "unknown"),
-                "n": self.n, "ratio": None if self.median is None else round(self.median, 2),
+                "n": self.n, "ratio": None if self.median is None else round(self.median, 2), "peak": round(self.peak, 2),
                 "evidence_s": round(min(self.win.span(), self.c["fire_window_s"]), 1)}
 
     def describe(self):
@@ -316,6 +364,7 @@ class NisMonitor:
         self.high = False
         self.n_total = 0
         self.t_eval = -1e18
+        self.peak = 0.0
 
     def offer(self, t, d2):
         q = self.q
@@ -326,6 +375,7 @@ class NisMonitor:
         if len(q) >= self.c["min_n"] and (t - self.t_eval >= 0.2 or t < self.t_eval):    # the median is not free: 5 Hz
             self.t_eval = t
             self.value = statistics.median(d for _, d in q) / self.MED
+            self.peak = max(self.peak, self.value / self.c["fire"])
             old = self.high
             self.high = self.value > (self.c["recover"] if old else self.c["fire"])
             return self.high != old
@@ -334,7 +384,7 @@ class NisMonitor:
     def report(self):
         return {"kind": "nis", "a": self.group, "quantity": self.quantity,
                 "verdict": "unknown" if self.value is None else "high" if self.high else "ok",
-                "n": len(self.q), "ratio": None if self.value is None else round(self.value, 2)}
+                "n": len(self.q), "ratio": None if self.value is None else round(self.value, 2), "peak": round(self.peak, 2)}
 
     def describe(self):
         return "%s innovations %.1fx the stated uncertainty" % (self.quantity, self.value or 0.0)

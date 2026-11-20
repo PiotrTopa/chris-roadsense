@@ -19,6 +19,7 @@ Sessions: recorder directories; recordings made before `road_model` / `gnss` wer
 (read_session(road_model="vision", pos=...)).
 """
 import argparse
+import json
 import math
 import os
 import resource
@@ -153,7 +154,7 @@ def cmd_real(a):
         if a.no_map:
             from chris_integrator.sources import default_sources
             srcs = [s for s in default_sources() if s.id != "map"]
-        I = Integrator(sources=srcs)
+        I = Integrator(json.loads(a.cfg) if getattr(a, 'cfg', None) else None, sources=srcs)
         inn = {}
         I.ekf.stat = lambda row, d2, t, f=I._nis_stat: (f(row, d2, t), inn.setdefault((row.group, row.q), []).append(d2))
         states, held, n, cpu = {}, [], 0, 0.0
@@ -629,6 +630,7 @@ def main():
         p.add_argument("sessions", nargs="+")
         p.add_argument("--pos")
         p.add_argument("--no-map", action="store_true")
+        p.add_argument("--cfg", help="integrator configuration overrides, JSON (e.g. '{\"detectors\": {\"speed.cusum\": \"gate\"}}')")
     p = sub.add_parser("inject")
     p.add_argument("session")
     p.add_argument("--pos")

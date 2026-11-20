@@ -41,9 +41,17 @@ WHITE_SHARE = 0.33               # sqrt(0.11): at least this share of the sigma 
 TAIL = 1.35
 
 
-def speed_sigma(v):
-    """Characterised 1-sigma of the road model's speed against the vehicle's (two healthy drives)."""
-    return 0.25 + 0.035 * abs(v)
+# In turns the pose's speed is worse: robust sigma against the vehicle 0.36-0.50 m/s below 0.2 rad/s, 0.5-0.8 at
+# 0.2-0.3, 0.8-0.9 at 0.3-0.6 rad/s (two healthy drives, 12 000 frames), and 5-14 % of the frames above 0.2 rad/s
+# are beyond 4 of the straight-road sigmas (0.1-0.7 % below). A tight turn is not a camera fault: the term below
+# is the characterised error there (2 m/s per rad/s, in quadrature).
+TURN_SIGMA = 2.0
+
+
+def speed_sigma(v, w=0.0):
+    """Characterised 1-sigma of the road model's speed against the vehicle's (two healthy drives); w: the pose's
+    own yaw rate."""
+    return math.hypot(0.25 + 0.035 * abs(v), TURN_SIGMA * w)
 
 
 class VisionSource(Source):
@@ -100,7 +108,11 @@ class VisionSource(Source):
         x = ctx.x
         tau = float(x[itau])
         t = ts - tau
-        char = speed_sigma(v)
+        # (the turn is taken from the estimate, which a gyro holds on a car that has one: a model out of its range
+        # reports any yaw rate; the pose's own is used only while nothing else knows the yaw rate)
+        r_own = pose.get("yaw_rate")
+        w_est = float(ctx.x[E.W]) if float(ctx.P[E.W, E.W]) < 0.01 ** 2 else (float(r_own) if fin(r_own) else 0.0)
+        char = speed_sigma(v, w_est)
         vs = pose.get("vx_std")
         white = WHITE_SHARE * char
         if fin(vs) and float(vs) > 2.0 * char:
@@ -127,7 +139,9 @@ class VisionSource(Source):
         out.append(Meas("speed", t, v, white, h_speed, "vision.pose", robust=True, mon=(v, char), local=True,
                         consider=None if ref else (isc,)))
         if fin(vs) and abs(v) >= 1.0:
-            out.append(Meas("self:speed", ts, float(vs) / char, role="self"))
+            # (against the straight-road level, as before L43: a model that has left its range reports any yaw rate,
+            # and the turn term would then excuse its exploded uncertainty; measured on the incident drive, 0.6 s)
+            out.append(Meas("self:speed", ts, float(vs) / speed_sigma(v), role="self"))
         r = pose.get("yaw_rate")
         if fin(r):
             r = -float(r)                                # the device frame is z down: positive right

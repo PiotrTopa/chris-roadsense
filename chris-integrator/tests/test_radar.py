@@ -11,6 +11,8 @@ from chris_integrator.sim import default_sensors
 from chris_integrator.sim.radar import RadarSim
 
 RADAR = {"sources": [{"kind": "radar", "id": "*"}]}
+from chris_integrator.core.integrator import GATE_ALL  # noqa: E402
+VOTE = dict(RADAR, detectors=GATE_ALL)      # isolation by vote of small differences: detectors that report by default
 
 
 def lead_stats(run, t0=5.0, t1=1e9):
@@ -77,7 +79,7 @@ class Vote(unittest.TestCase):
     def test_knocked_camera_is_isolated_by_vote(self):
         sens = default_sensors(vision=dict(knock=(60.0, 1e9, 0.2))) + [RadarSim()]
         states = []
-        r = Run(sensors=sens, seed=2, integ=Integrator(RADAR),
+        r = Run(sensors=sens, seed=2, integ=Integrator(VOTE),
                 on_frame=lambda run, t, es, tr, ld: states.append((t, es["sources"]["vision"], ld)))
         first = next(t for t, v, _ in states if v["state"] == "fault")
         self.assertLess(first, 71.0)                                 # the car stands until 64 s; moving at 3 m/s by 66 s
@@ -96,7 +98,7 @@ class Vote(unittest.TestCase):
         and the camera together outvote the vehicle."""
         sens = default_sensors(vehicle=dict(speed_fault=(100.0, 140.0, 0.7))) + [RadarSim()]
         seen = []
-        r = Run(sensors=sens, seed=3, integ=Integrator(RADAR),
+        r = Run(sensors=sens, seed=3, integ=Integrator(VOTE),
                 on_frame=lambda run, t, es, tr, ld: seen.append((t, {k: (s["state"], s.get("isolation")) for k, s in es["sources"].items()}, es["speed"])))
         mid = [s for t, s, _ in seen if 114.0 <= t < 138.0]
         self.assertTrue(all(s["vision"][0] != "fault" for t, s, _ in seen if 100.0 <= t < 114.0))   # nobody blamed by rank meanwhile
@@ -108,7 +110,7 @@ class Vote(unittest.TestCase):
         # without the radar the receiver's track is the third opinion (L41): the vehicle is isolated by vote there
         # too, later (the track speaks once in three seconds), and the camera is never blamed by rank
         seen = []
-        Run(sensors=default_sensors(vehicle=dict(speed_fault=(100.0, 140.0, 0.7))), seed=3,
+        Run(sensors=default_sensors(vehicle=dict(speed_fault=(100.0, 140.0, 0.7))), seed=3, integ=Integrator({"gnss_absolute": True, "detectors": GATE_ALL}),
             on_frame=lambda run, t, es, tr, ld: seen.append((t, es["sources"]["vision"]["state"], es["sources"]["vehicle"].get("isolation"), es["speed"])))
         self.assertTrue(all(x[1] != "fault" for x in seen))
         self.assertTrue(all(x[2] == "vote" for x in seen if 122.0 <= x[0] < 138.0))
@@ -118,7 +120,7 @@ class Vote(unittest.TestCase):
     def test_radar_blackout_and_camera_only_fallback(self):
         sens = default_sensors() + [RadarSim(blackout=[(80.0, 110.0)])]
         src = []
-        r = Run(sensors=sens, seed=4, integ=Integrator(RADAR),
+        r = Run(sensors=sens, seed=4, integ=Integrator(VOTE),
                 on_frame=lambda run, t, es, tr, ld: src.append((t, ld["source"], ld["present"], ld["track_id"], es["sources"]["radar_front"]["state"])))
         dark = [x for x in src if 82.0 <= x[0] < 109.0]
         self.assertTrue(all(x[4] == "stale" for x in dark))

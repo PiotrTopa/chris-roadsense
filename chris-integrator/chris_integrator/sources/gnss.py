@@ -42,9 +42,37 @@ class GnssSource(Source):
     scale_n = 20.0               # fixes the noise scale averages over
     course_sigma = math.radians(15.0)
     alt_sigma_m = 10.0
+    # How old a fix is at its stamp is a property of the receiver and of how its host stamps it. The prior of the
+    # delay state is the reference receiver's (a head unit: 2.0 +- 1.5 s, measured); a receiver that names itself
+    # (`source` in the message) may have its own: {tag: (delay_s, sigma_s)}, extended from the configuration
+    # (`integrator.json`: {"gnss_delay": {"mytag": [0.2, 0.3]}}). `synthetic` is the vehicle input API's tag of
+    # a simulated drive: its fixes are stamped at their time of validity.
+    delays = {"synthetic": (0.0, 0.05)}
+
+    def _receiver(self, msg, ctx):
+        """Another receiver took over (the tag changed): its delay is not the old one's, and its positions are not
+        a continuation of the old ones (a simulated drive starts somewhere else). The delay state goes to that
+        receiver's prior and the position is anchored anew on its fixes."""
+        mem = ctx.mem
+        tag = msg.get("source")
+        if "receiver_tag" in mem and tag == mem["receiver_tag"]:
+            return
+        first = "receiver_tag" not in mem
+        mem["receiver_tag"] = tag
+        table = dict(self.delays, **{k: tuple(v) for k, v in (ctx.cfg.get("gnss_delay") or {}).items()})
+        a = self.aux[0]
+        d, sd = table.get(tag, (a.x0, a.sigma0))
+        if first and tag not in table:
+            return                                   # the default receiver from the start: the state is at its prior
+        ctx.integ.reset_aux(self.ix["tau"], d, sd)
+        if not first:
+            for k in ("scale2", "scale_k", "turn_t", "key"):
+                mem.pop(k, None)
+            ctx.integ.new_position_source("receiver changed to %s" % (tag or "an unnamed one"))
 
     def measure(self, msg, ctx):
         mem = ctx.mem
+        self._receiver(msg, ctx)
         rep = _repeat(msg, mem)
         mem["fix"], mem["hacc"], mem["receiver"] = msg.get("fix"), msg.get("hacc_m"), msg.get("source")
         lat, lon = msg.get("lat"), msg.get("lon")

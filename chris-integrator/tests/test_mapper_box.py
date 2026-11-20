@@ -45,6 +45,9 @@ def run(pack_path, mapper, x1=5600.0, seed=1, gnss_lag_s=2.0, **feed_kw):
     st.mixer.add_output("t", lambda e: last.__setitem__(e.stream, e.msg), streams=("ego_state", "map"))
     drive = sim.Drive(pack, S.main_road_path(pack, 20.0, x1))
     late = []
+    # ("synthetic" is the vehicle input API's tag of a simulated drive stamped at its time of validity; a receiver
+    # that lags is not that)
+    feed_kw.setdefault("source", "receiver" if gnss_lag_s else "synthetic")
     for ts, m, truth in sim.feed(drive, t0_ns=10 ** 12, seed=seed, **feed_kw):
         if m is None:
             continue
@@ -75,13 +78,18 @@ class MapperInTheStack(unittest.TestCase):
         self.assertGreater(len(avail) / len(maps), 0.97)
         self.assertGreater(sum(1 for m in avail if m["road"]["name"] == "Main") / len(avail), 0.99)
         # the pose the map shows is the estimator's own, and it stays near the truth
-        err = []
+        err, honest = [], []
         for t, es, m in maps:
             p = es["position"]
             if p["valid"]:
                 err.append(geo.dist_m(t.lat, t.lon, p["lat"], p["lon"]))
+                honest.append(err[-1] <= 2.0 * p["hacc_m"])
         err.sort()
-        self.assertLess(err[len(err) // 2], 6.0)
+        # (5.5 m with the estimator before L41; since then the receiver's delay and the along-track position are
+        # uncertain together at constant speed, the estimate says so (hacc about 9 m here) and is 7.8 m off in the
+        # median: less sharp, and inside its own stated uncertainty)
+        self.assertLess(err[len(err) // 2], 9.0)
+        self.assertGreater(sum(honest) / len(honest), 0.95)
         self.assertLess(err[int(0.95 * len(err))], 15.0)
         # the tunnel (x 3000 .. 3800, no fixes): dead reckoning with the map match as a measurement
         tun = [(t, es, m) for t, es, m in maps if t.tunnel]

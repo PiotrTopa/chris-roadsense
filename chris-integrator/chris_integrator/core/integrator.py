@@ -21,7 +21,8 @@ DEFAULT_CFG = dict(
     max_coast_s=1.0,             # ... further than this it is unknown
     epoch_back_s=2.0,            # a source's clock going back by more than this starts a new epoch
     camera_silent_s=0.3,         # without road frames for this long the state is also published on vehicle samples
-    position_fresh_s=3.0,        # position `fused` while an absolute fix is this fresh, else `coast` (dead reckoning)
+    position_fresh_s=1.6,        # position `fused` while the newest absolute fix arrived at most this long ago (one fix a
+                                 # second may miss one beat), else `coast` (dead reckoning)
     position_max_hacc_m=75.0,    # dead reckoning beyond this is unknown
     anchor_min_speed=3.0,        # a course initialises the heading only above this speed
     anchor_chord_m=15.0,         # without a course: two fixes this far apart do
@@ -51,15 +52,53 @@ DEFAULT_CFG = dict(
     # are still evaluated, so the class comes back by itself): the classes with no raw partner to be judged by
     quarantine=("pos", "heading", "alt", "map_cross", "map_heading", "mount_yaw"),
     reanchor_s=8.0,              # absolute positions set aside this long = the position is lost: anchor again
+    reanchor_widen=False,        # believe the receiver at its widest for a while after such a re-anchoring (L41; see _reanchor)
+    reanchor="soft",             # "soft": the position stays published with its uncertainty opened wide, and the next
+                                 # fixes pull it in; "hard": it is unknown until the next usable fix (before L43: on the
+                                 # reference car's healthy drives that happened 9 and 4 times, and a position lost just
+                                 # before parking stayed unknown for as long as the car stood)
+    reanchor_sigma_m=40.0, reanchor_heading_sigma=0.35,
+    settle_s=0.0,                # a relative position reference (the map's geometry) is not used this long after an anchoring ...
+    settle_fixes=0,              # ... nor before this many absolute fixes have been fused since, nor while they are set aside
     vote_wait_s=25.0,            # a disagreement of two sources waits this long at most for a third source's evidence
     vote_settle_s=1.0, vote_fresh_n=2,     # ... which must be this many samples valid this long after the disagreement began
+    gnss_delay={},               # {receiver tag: [delay_s, sigma_s]}: the delay prior of receivers that name themselves
     gnss_absolute=False,         # may the receiver's positions teach the speed scale and the yaw scales
                                  # (a good receiver: yes; one that scatters 10-15 m with a claimed 3 m: no)
     fdi={},                      # overrides of fdi.DEFAULT_CFG (signal, timing and trend detectors)
+    detectors={},                # overrides of DETECTORS: {detector: "gate" | "report"}
+    cusum_expire_s=30.0,         # a verdict held by a CUSUM alone lapses after this long without a sample
     objects={},                  # overrides of objects.DEFAULT_CFG
     lead={},                     # the camera-lead source's constants (sources/camera_lead.py) and the lead message's
     sources=None,                # extra sources of this car: [{"kind": "radar", "id": ..., "mount": {...}}, ...]
 )
+
+# Every detector that can set a source (or one quantity of it, or a row class) aside has a mode:
+#   "gate"    its verdict takes effect: the source's rows leave the estimate, and what depends on that source
+#             (a camera's lead, a speed with no other source) is published as unknown
+#   "report"  it runs and publishes its verdict with the evidence (`ego_state.diagnostics`, kind "reported"; the
+#             source's health entry lists it under `reported`), and nothing is set aside
+# The defaults follow one rule (docs/FAULTS.md, "Which detectors gate"): a detector gates by default only if it
+# was quiet, with a stated margin, on the reference car's healthy drives. The others are in `report` until more
+# healthy driving, or a better sensor, says otherwise; a car whose sensors support it switches them in
+# `integrator.json` ({"detectors": {"speed.track": "gate"}}).
+DETECTORS = {
+    "self_check": "gate",        # a source's stated uncertainty far above its characterised one
+    "signal.invalid": "gate",    # a value that is not a number
+    "signal.stuck": "report",    # a value frozen while it should vary (a constant true value looks the same: a simulated
+                                 # drive at constant speed, a cruise at one quantisation step; the pair tests decide)
+    "signal.noise": "gate",      # noise 25 x the characterised level
+    "speed.share": "gate",       # two speed sources: half of 5 s of samples beyond 4 sigma
+    "yaw_rate.share": "gate",    # ... two yaw-rate sources
+    "speed.cusum": "report",     # two speed sources: an accumulated small difference (bias, 10 % scale, drift)
+    "yaw_rate.cusum": "report",  # ... two yaw-rate sources
+    "speed.track": "report",     # a receiver's track as third opinion on the speed (its verdicts and its votes)
+    "innovation": "gate",        # a row class whose innovations are far beyond the stated uncertainty is set aside
+    "position.lost": "gate",     # absolute positions set aside for `reanchor_s`: position declared lost, anchored again
+    "map.conflict": "gate",      # the map's matched road lies beside the receiver's recent fixes: map rows set aside
+}
+
+GATE_ALL = {k: "gate" for k in DETECTORS}      # every detector acts (a car whose sensors were shown to support it; tests)
 
 _IV, _IA, _IW, _IAL = (np.array([i], dtype=np.intp) for i in (E.V, E.A, E.W, E.AL))
 _ONE = np.array([1.0])
@@ -98,6 +137,11 @@ class Integrator:
         for k, v in (cfg or {}).items():
             self.cfg[k] = dict(self.cfg[k], **v) if isinstance(self.cfg.get(k), dict) and isinstance(v, dict) else v
         self.model = E.EgoModel(self.cfg["process"])
+        self.detectors = dict(DETECTORS)
+        for k, v in (self.cfg["detectors"] or {}).items():
+            if v not in ("gate", "report"):
+                raise ValueError("detector %r: mode must be \"gate\" or \"report\", not %r" % (k, v))
+            self.detectors[k] = v              # (an unknown name is kept: a source may bring detectors of its own)
         self.fdi = Diagnostics(self.cfg["fdi"])
         self.specs, self.by_type, self.groups, self.ctx = [], collections.defaultdict(list), {}, {}
         self.pairs, self.selfs, self.nis = {}, {}, {}
@@ -378,7 +422,8 @@ class Integrator:
         if m is None:
             m = self.nis[key] = NisMonitor(row.group, row.q, self.cfg["nis"])
         if m.offer(t, d2) and row.q in self.cfg["quarantine"]:
-            self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
+            if self.gates("innovation"):
+                self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
             if row.q == "pos":
                 self._pos_high_t = t if m.high else None
         if row.q == "pos" and m.high and self._pos_high_t is not None and t - self._pos_high_t > self.cfg["reanchor_s"]:
@@ -452,6 +497,9 @@ class Integrator:
         kn = tau * v * math.sin(ps) if itau is not None else 0.0
         t = t_stamp - tau
         loc = not c["gnss_absolute"]
+        self.anchor_fixes = getattr(self, "anchor_fixes", 0) + 1
+        self.abs_latest = (t_stamp, e, n, sigma, src)      # the newest absolute fix as given (for cross-checks of relative references)
+        self.abs_delay = max(tau, 0.0)                     # ... and how old a fix is at its stamp (the freshness of the position)
         return [Meas("pos", t, e, sigma, lin(idx, ce, ke), src + ".pos", robust=True, cb=cb, local=loc),
                 Meas("pos", t, n, sigma, lin(idn, cn, kn), src + ".pos", robust=True, local=loc)]
 
@@ -460,18 +508,61 @@ class Integrator:
         the position is declared lost and anchored again on the next usable fix (a new local frame id)."""
         self._lost = False
         self._pos_high_t = None
-        self.anchored = False
-        self._anchor_first = None
+        txt = "the absolute position disagreed with the estimate for %.0f s (which of the two was wrong is not known)" % self.cfg["reanchor_s"]
+        if not self.gates("position.lost"):
+            self.fdi.event("position", "lost_reported", None, txt + ": reported only (detector position.lost in report mode)", quantity="position")
+            return
         self.reanchors = getattr(self, "reanchors", 0) + 1
-        for sp in self.specs:
-            if hasattr(sp, "on_reanchor"):
-                sp.on_reanchor(self.ctx[sp.id])
-        self.fdi.event("position", "reanchor", None, "the absolute position disagreed with the estimate for %.0f s: position "
-                       "declared lost and anchored again (which of the two was wrong is not known)" % self.cfg["reanchor_s"], quantity="position")
+        if self.cfg["reanchor"] == "soft":
+            # the dead-reckoned position stays published, with an uncertainty that says how little it is worth; the
+            # next fixes (no longer set aside) pull it in. Nothing is invalid in between, and nothing is confident.
+            l = self.ekf.latest()
+            if l is not None:
+                t, x, P = l
+                P = P.copy()
+                P[E.PE, E.PE] += self.cfg["reanchor_sigma_m"] ** 2
+                P[E.PN, E.PN] += self.cfg["reanchor_sigma_m"] ** 2
+                P[E.PSI, E.PSI] += self.cfg["reanchor_heading_sigma"] ** 2
+                self.ekf.rebase(t, x.copy(), P)
+                self.frame_id += 1
+                self.anchor_t, self.anchor_fixes = t, 0
+                self._cache()
+        else:
+            self.anchored = False
+            self._anchor_first = None
+        if self.cfg["reanchor_widen"]:
+            # Off by default (L43). Measured on the reference car's recording with a map fault injected: a receiver
+            # believed at 8 x its stated accuracy after every re-anchoring leaves a wrong map alone with the position
+            # (turned map bearing: 36 s confidently wrong against 0 s without this).
+            for sp in self.specs:
+                if hasattr(sp, "on_reanchor"):
+                    sp.on_reanchor(self.ctx[sp.id])
+        self.fdi.event("position", "reanchor", None, txt + ": position declared lost and anchored again", quantity="position")
         for k, m in self.nis.items():
             if k[1] in ("pos", "heading", "map_cross", "map_heading"):
                 m.reset_data()
         self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
+
+    def new_position_source(self, why):
+        """The absolute positions now come from somewhere that is not a continuation of before (another receiver,
+        a simulated drive beginning or ending, a host's `reset`): the position, the heading and the local frame
+        are forgotten and anchored anew; speed, yaw rate and every calibration state stay."""
+        self.anchored = False
+        self._anchor_first = None
+        self._lost = False
+        self._pos_high_t = None
+        self.origin = None
+        self.abs_latest = None
+        self.frame_id += 1
+        for k, m in self.nis.items():
+            if k[1] in ("pos", "heading", "alt", "map_cross", "map_heading"):
+                m.reset_data()
+        if self.gates("innovation"):
+            self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
+        for sp in self.specs:
+            if hasattr(sp, "on_new_position"):
+                sp.on_new_position(self.ctx[sp.id])
+        self.fdi.event("position", "new_source", None, "position forgotten and anchored anew: %s" % why, quantity="position")
 
     def _anchor(self, e, n, psi, sigma, tau, itau=None):
         """Place the local frame on a fix. The position is the fix carried forward by speed x delay along the
@@ -512,7 +603,18 @@ class Integrator:
         self.ekf.rebase(t, x, P)
         self.anchored = True
         self.frame_id += 1
+        self.anchor_t, self.anchor_fixes = t, 0
         self._cache()
+
+    def position_settled(self, t):
+        """May a relative position reference be used now? A map match is made from this very position: right after
+        an anchoring (one fix, tens of metres) the matcher's choice between parallel roads is not information, and
+        a row that says "you are on this road" would turn the guess into a confident position. It is used once the
+        anchor has been confirmed by further absolute fixes and while those are not set aside."""
+        c = self.cfg
+        if not self.anchored or t - getattr(self, "anchor_t", -1e18) < c["settle_s"] or getattr(self, "anchor_fixes", 0) < c["settle_fixes"]:
+            return False
+        return not any(k[1] == "pos" and m.high for k, m in self.nis.items())
 
     def reset_aux(self, i, x0, sigma0):
         """Put one calibration state back to a prior (its source says what it describes has changed)."""
@@ -533,9 +635,27 @@ class Integrator:
         self._cache()
 
     # ---- isolation -----------------------------------------------------------------------------------
+    def gates(self, detector):
+        """Is this detector allowed to set anything aside? (False: it reports.)"""
+        return self.detectors.get(detector, "report") == "gate"
+
+    def _pair(self, a, b, q):
+        return self.pairs.get((a, b, q)) or self.pairs.get((b, a, q))
+
+    def _detector(self, p):
+        """The detector that holds a pair's present verdict: `<quantity>.share | .cusum | .track`."""
+        return "%s.%s" % (p.quantity, p.decided_by())
+
     def _verdict(self, a, b, q):
-        p = self.pairs.get((a, b, q)) or self.pairs.get((b, a, q))
-        return p.verdict if p is not None else "unknown"
+        """A pair's verdict as a *vote*: one that a detector in report mode holds does not count."""
+        p = self._pair(a, b, q)
+        if p is None:
+            return "unknown"
+        if p.c["mode"] == "mean" and not self.gates(q + ".track"):
+            return "unknown"                   # the slow third opinion is not trusted to vote on this car
+        if p.verdict == "disagree" and not self.gates(self._detector(p)):
+            return "unknown"
+        return p.verdict
 
     def _indep(self, c, a, b, q):
         """Is group c an independent opinion on quantity q beside a and b? Groups of one family share sensors,
@@ -555,29 +675,36 @@ class Integrator:
 
     def _isolate(self):
         """Which groups (or single quantities of a group) are faulted, from the monitors' verdicts and the
-        detectors' findings (docs/DESIGN.md sections 5, 5a)."""
+        detectors' findings (docs/DESIGN.md sections 5, 5a). A detector in `report` mode goes through the same
+        logic and ends in a published verdict instead of an isolation (`fdi.reported`)."""
         found = {}                         # group -> [(rule, text)]: the whole group is out
         qfound = {}                        # (group, quantity) -> [(rule, text)]: only that quantity's rows
+        reported = {}                      # (group, quantity, detector) -> text
         self.disputed = {}
 
-        def blame(group, q, rule, txt):
-            if q is None or self._critical(group, q):
+        def blame(group, q, rule, txt, det):
+            if not self.gates(det):
+                reported[(group, q or "all", det)] = "would be set aside (%s): %s" % (rule, txt)
+            elif q is None or self._critical(group, q):
                 found.setdefault(group, []).append((rule, txt))
             else:
                 qfound.setdefault((group, q), []).append((rule, txt))
         for (gname, q), sc in self.selfs.items():
             if sc.fault:
-                blame(gname, None, "self", sc.describe())
+                blame(gname, None, "self", sc.describe(), "self_check")
         # a source that shows a fault by itself (a frozen value, a noise burst) needs no second opinion, and no rank
         evident = set()
         for name, g in self.groups.items():
-            for q, txt in (() if g.witness else self.fdi.self_evident(name)):
-                evident.add((name, q))
-                blame(name, q, "self", "%s %s" % (q, txt))
+            for q, kind, txt in (() if g.witness else self.fdi.self_evident(name)):
+                if self.gates("signal." + kind):
+                    evident.add((name, q))
+                blame(name, q, "self", "%s %s" % (q, txt), "signal." + kind)
         for (hi, lo, q), p in self.pairs.items():
             mode = p.c.get("fault")
             if p.verdict != "disagree" or not mode or p.c["mode"] == "ratio":
                 continue
+            det = self._detector(p)
+            gate = self.gates(det)
             against_hi = against_lo = 0
             for c in self.groups:
                 if not self._indep(c, hi, lo, q) or self.groups[c].fault is not None or (c, q) in self.qfaults:
@@ -595,7 +722,7 @@ class Integrator:
                 continue                   # the partner is already known to be the faulty one
             cg = self.groups[culprit]
             known = (cg.fault is not None and not cg.carried) or (culprit, q) in self.qfaults
-            if rule == "rank" and not known:
+            if rule == "rank" and not known and gate:
                 # two sources disagree and rank alone would decide. If the higher-ranked one shows a condition of
                 # its own, or an independent third source is about to have an opinion, nobody is blamed yet: the
                 # quantity is published as disputed (its uncertainty covers both readings) until the vote is in
@@ -603,11 +730,14 @@ class Integrator:
                     self.disputed[q] = (hi, lo, abs(p.last_delta or 0.0))
                     continue
             if rule == "rank" and mode == "vote":
+                if not gate:               # (reported all the same: two sources disagree, nobody can be named)
+                    reported[(lo, q, det)] = "%s disagrees with %s%s; no third opinion decides which" % (
+                        q, hi, p.describe()[len("%s disagrees with %s" % (q, p.ref)):])
                 continue                   # this quantity is isolated by vote only: suspect, nobody blamed
             if not known:
                 # blaming anew needs a disagreement that is still going on (a verdict held only by its
                 # recovery hysteresis is not one) ...
-                sh = p.stats.get("share")
+                sh = p.strength()
                 if sh is not None and sh <= p.c["recover_share"] and not p.by_cusum:
                     continue
                 # ... and, by rank alone, no independent third source that sides with the lower-ranked one and
@@ -615,7 +745,7 @@ class Integrator:
                 if rule == "rank" and self._vote_forming(hi, lo, q):
                     continue
             txt = "%s disagrees with %s" % (q, other) + p.describe()[len("%s disagrees with %s" % (q, p.ref)):]
-            blame(culprit, q, rule, txt)
+            blame(culprit, q, rule, txt, det)
         for name, g in self.groups.items():
             f = found.get(name)
             if f:
@@ -631,6 +761,8 @@ class Integrator:
         old = self.qfaults
         self.qfaults = {k: {"since": old[k]["since"] if k in old else self.now, "reason": "; ".join(t for _, t in f),
                             "rule": "vote" if any(r == "vote" for r, _ in f) else f[0][0]} for k, f in qfound.items()}
+        old = self.fdi.reported
+        self.fdi.reported = {k: {"since": old[k]["since"] if k in old else self.now, "text": t} for k, t in reported.items()}
         self._apply_faults()
 
     def _third_pending(self, hi, lo, q, p):
@@ -642,10 +774,11 @@ class Integrator:
         for name, cg in self.groups.items():
             if cg.fault is not None or not self._indep(name, hi, lo, q):
                 continue
-            p_lo = self.pairs.get((name, lo, q)) or self.pairs.get((lo, name, q))
-            p_hi = self.pairs.get((name, hi, q)) or self.pairs.get((hi, name, q))
+            p_lo, p_hi = self._pair(name, lo, q), self._pair(name, hi, q)
             if p_lo is None or p_hi is None or (p_lo.verdict == "unknown" and p_hi.verdict == "unknown"):
                 continue
+            if p_lo.c["mode"] == "mean" and not self.gates(q + ".track"):
+                continue                   # its vote does not count on this car: nothing to wait for
             newest = max([p_lo.times[-1]] if p_lo.times else [] + [p_hi.times[-1]] if p_hi.times else [], default=None)
             if newest is None or self.now - newest > 15.0:
                 continue                   # it has stopped delivering: nothing to wait for
@@ -661,11 +794,12 @@ class Integrator:
         for c, cg in self.groups.items():
             if cg.fault is not None or not self._indep(c, hi, lo, q):
                 continue
-            p_lo = self.pairs.get((c, lo, q)) or self.pairs.get((lo, c, q))
-            p_hi = self.pairs.get((c, hi, q)) or self.pairs.get((hi, c, q))
+            p_lo, p_hi = self._pair(c, lo, q), self._pair(c, hi, q)
             if p_lo is None or p_hi is None or p_lo.verdict != "agree":
                 continue
-            s_lo, s_hi = p_lo.stats.get("share") or 0.0, p_hi.stats.get("share")
+            if p_lo.c["mode"] == "mean" and not self.gates(q + ".track"):
+                continue
+            s_lo, s_hi = p_lo.strength() or 0.0, p_hi.strength()
             if p_hi.verdict == "unknown" or (s_hi is not None and s_hi > s_lo + 0.1):
                 return True
         return False
@@ -716,6 +850,12 @@ class Integrator:
     # ---- output --------------------------------------------------------------------------------------
     def state(self, ts_mono_ns, ts_real_ns=None):
         from . import output
+        if self.now is not None:
+            ex = False
+            for p in self.pairs.values():
+                ex |= p.expire(self.now, self.cfg["cusum_expire_s"])
+            if ex:
+                self._isolate()
         return output.ego_state(self, ts_mono_ns, ts_real_ns)
 
     def on_road(self, road):

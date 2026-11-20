@@ -162,7 +162,7 @@ def cmd_synth(a):
             s = cls(pack)
             truth = []
             late = []
-            for ts, m, o in sim.feed(sim.Drive(pack, path), t0_ns=10 ** 12, seed=a.seed):
+            for ts, m, o in sim.feed(sim.Drive(pack, path), t0_ns=10 ** 12, seed=a.seed, source="receiver" if a.lag > 0 else "synthetic"):
                 if m is None:
                     continue
                 if m["type"] == "gnss" and a.lag > 0:

@@ -19,6 +19,8 @@ TRUE = dict(vehicle=dict(gyro_bias=0.004, gyro_scale=0.04, accel_bias=0.15), vis
             gnss=dict(lag=2.2))
 _STREAM = {}
 
+from chris_integrator.core.integrator import GATE_ALL  # noqa: E402
+
 
 def stream(seed=1):
     if seed not in _STREAM:
@@ -28,10 +30,11 @@ def stream(seed=1):
     return _STREAM[seed]
 
 
-def run(faults, seed=1):
-    """[(t, ego_state, truth)] per road frame."""
+def run(faults, seed=1, gate=True):
+    """[(t, ego_state, truth)] per road frame. gate: every detector acts (the simulated car's sensors support it);
+    False: the defaults (detectors not shown quiet on a real car report only)."""
     w, msgs = stream(seed)
-    I = Integrator({"gnss_absolute": True})
+    I = Integrator(dict({"gnss_absolute": True}, **({"detectors": GATE_ALL} if gate else {})))
     out = []
     for m in apply(msgs, faults):
         if m["type"] != "road":
@@ -67,6 +70,29 @@ class Faults(unittest.TestCase):
         for t, es, tru in rows:
             if T0 + 4.0 <= t < 130.0 and es["speed"]["valid"]:
                 self.assertLess(abs(es["speed"]["value"] - 1.015 * tru["v"]), max(3.0 * es["speed"]["std"], 0.5), t)
+
+    def test_report_mode_names_the_fault_and_sets_nothing_aside(self):
+        """The defaults: a frozen speed and a gyro bias are found and published with the detector's name and its
+        evidence; no source and no quantity is set aside by a detector in report mode; no output goes invalid."""
+        for fault, det, src in ((Fault("vehicle.speed", "stuck", T0, 130.0), "signal.stuck", "vehicle"),
+                                (Fault("vehicle.gyro", "bias", T0, 130.0, b=0.04), "yaw_rate.cusum", None)):
+            rows = run([fault], gate=False)
+            late = [es for t, es, _ in rows if T0 + 8.0 <= t < 130.0]
+            rep = [d for es in late for d in es["diagnostics"] if d.get("kind") == "reported" and d.get("detector") == det]
+            self.assertTrue(rep, det)
+            self.assertTrue(all(d["mode"] == "report" and d["text"] for d in rep))
+            if src:
+                self.assertTrue(any(det in es["sources"][src].get("reported", ()) for es in late))
+            self.assertEqual(late[-1]["detectors"][det], "report")
+            if det == "yaw_rate.cusum":
+                self.assertTrue(all(not es["sources"]["vehicle"].get("set_aside") for t, es, _ in rows))
+                self.assertTrue(all(es["yaw_rate"]["valid"] for es in late))
+
+    def test_a_detector_mode_must_be_gate_or_report(self):
+        with self.assertRaises(ValueError):
+            Integrator({"detectors": {"speed.cusum": "maybe"}})
+        self.assertTrue(Integrator({"detectors": {"speed.cusum": "gate"}}).gates("speed.cusum"))
+        self.assertFalse(Integrator().gates("speed.cusum"))
 
     def test_gyro_bias_is_voted_out_and_the_speed_is_kept(self):
         """Gyro, wheel difference and camera are three yaw rates: a gyro bias is isolated by vote, only the gyro's

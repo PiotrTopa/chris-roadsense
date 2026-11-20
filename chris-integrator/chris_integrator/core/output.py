@@ -30,6 +30,8 @@ def _health(I, g, T):
                 checked = True
             if other.fault is not None:
                 continue               # the culprit of that disagreement is known, and it is the other one
+            if p.verdict == "disagree" and p.c["mode"] != "ratio" and not I.gates(I._detector(p)):
+                continue               # a detector in report mode: listed under `reported`, the state is not touched
             if p.suspect or (p.verdict == "disagree" and (lo == g.name or not other.witness)):
                 suspect = True
                 reason = p.describe() if lo == g.name else "%s of %s disagrees" % (q, lo)
@@ -56,6 +58,9 @@ def _health(I, g, T):
            "age_s": None if age is None else round(age, 3), "rate_hz": round(n / 2.0, 1)}
     if qf:
         out["set_aside"] = sorted(qf)
+    rep = sorted({det for (gg, _, det) in I.fdi.reported if gg == g.name})
+    if rep:
+        out["reported"] = rep          # detectors in report mode that name this source now (texts: `diagnostics`)
     if g.fault is not None:
         out["isolation"] = g.fault["rule"]
         out["since_s"] = None if g.fault["since"] is None else round(max(0.0, I.now - g.fault["since"]), 1)
@@ -63,7 +68,11 @@ def _health(I, g, T):
     if nis:
         out["nis"] = nis
     for s in g.sources:
-        out.update(s.report(I.ctx[s.id]) or {})
+        rep = dict(s.report(I.ctx[s.id]) or {})
+        why = rep.pop("suspect_reason", None)      # a source's own check holds its rows back
+        if why and out["state"] in ("ok", "unchecked"):
+            out["state"], out["reason"] = "suspect", why
+        out.update(rep)
     return out
 
 
@@ -123,13 +132,17 @@ def _position(I, T, sm, speed):
         p = _pos_none("no_absolute_source")
         p["local"] = local
         return p, _none("no_absolute_source")
-    age, srcs = I.ekf.near(T, c["position_fresh_s"], ("pos",), 1e9)
+    # a fix describes the car `delay` seconds before it arrives: the newest row is that much older than the newest
+    # fix. Freshness is about arrival (before L43 a receiver with a 2 s delay and one fix a second sat on the edge
+    # of the window, and the mode flipped between `fused` and `coast` every second).
+    fresh = c["position_fresh_s"] + getattr(I, "abs_delay", 0.0)
+    age, srcs = I.ekf.near(T, fresh, ("pos",), 1e9)
     cee, cen, cnn = float(P[E.PE, E.PE]), float(P[E.PE, E.PN]), float(P[E.PN, E.PN])
     tr, det = cee + cnn, cee * cnn - cen * cen
     hacc = math.sqrt(max(0.5 * tr + math.sqrt(max(0.25 * tr * tr - det, 0.0)), 0.0))     # 1-sigma semi-major
     lat, lon = E.to_geo(I.origin, float(x[E.PE]), float(x[E.PN]))
     hstd = math.degrees(math.sqrt(max(float(P[E.PSI, E.PSI]), 0.0)))
-    hsrc = I.ekf.near(T, c["position_fresh_s"], ("pos", "heading"), 1e9)[1]
+    hsrc = I.ekf.near(T, fresh, ("pos", "heading"), 1e9)[1]
     head = {"value": round(E.psi_to_course(float(x[E.PSI])), 2), "std": round(hstd, 2), "valid": hstd <= 45.0,
             "reason": None if hstd <= 45.0 else "heading_uncertain", "mode": "fused" if hsrc else "coast",
             "age_s": None if age is None else round(age, 3), "sources": hsrc, "unit": "deg clockwise from north"}
@@ -137,7 +150,7 @@ def _position(I, T, sm, speed):
         p = _pos_none("dead_reckoning_ran_out")
         p["local"] = local
         return p, head
-    mode = "fused" if age is not None and age <= c["position_fresh_s"] else "coast"
+    mode = "fused" if age is not None and age <= fresh else "coast"
     return {"valid": True, "reason": None, "mode": mode, "lat": round(lat, 7), "lon": round(lon, 7),
             "alt_m": round(float(x[E.Z]), 1), "hacc_m": round(hacc, 2),
             "cov_en": [round(cee, 3), round(cen, 3), round(cnn, 3)], "fix_age_s": None if age is None else round(age, 2),
@@ -208,7 +221,8 @@ def ego_state(I, ts_mono_ns, ts_real_ns=None):
     # the tables (calibration, per-source health, the monitors' verdicts, findings) are rebuilt five times a
     # second and at once when anything about a fault changes; the quantities above are fresh every frame
     key = (I.epoch, id(I.ekf), tuple(sorted((n, g.fault["rule"]) for n, g in I.groups.items() if g.fault is not None)),
-           tuple(sorted(I.qfaults)), tuple(sorted(I.disputed)), len(I.fdi.findings), len(I.fdi.events), len(I.pairs))
+           tuple(sorted(I.qfaults)), tuple(sorted(I.disputed)), len(I.fdi.findings), len(I.fdi.events), len(I.pairs),
+           tuple(sorted(I.fdi.reported)))
     tb = getattr(I, "_tables", None)
     if tb is None or tb[0] != key or not (0.0 <= T - tb[1] < TABLES_S):
         tb = I._tables = (key, T, {
@@ -216,11 +230,12 @@ def ego_state(I, ts_mono_ns, ts_real_ns=None):
             "sources": {n: _health(I, g, T) for n, g in I.groups.items()},
             "checks": [p.report() for p in I.pairs.values()] + [s.report() for s in I.selfs.values()]
             + [m.report() for m in I.nis.values() if m.value is not None],
-            "diagnostics": I.fdi.report(T)})
+            "diagnostics": I.fdi.report(T),
+            "detectors": dict(I.detectors)})
     tables = tb[2]
     return {"type": "ego_state", "api": 3, "seq": I.seq, "ts_mono_ns": ts_mono_ns, "ts_real_ns": ts_real_ns,
             "epoch": I.epoch, "speed": speed, "accel": accel, "yaw_rate": yr, "standstill": still,
             "position": pos, "heading": head, "grade": grade, "odometer_m": round(I.odometer, 2),
             "signals": sig, "calibration": tables["calibration"], "sources": tables["sources"], "checks": tables["checks"],
-            "diagnostics": tables["diagnostics"], "tables_age_s": round(T - tb[1], 3),
+            "diagnostics": tables["diagnostics"], "detectors": tables["detectors"], "tables_age_s": round(T - tb[1], 3),
             "reanchors": getattr(I, "reanchors", 0), "rejected": rej, "late": dict(I.counts["late"]), "dropped": dict(I.counts["dropped"])}

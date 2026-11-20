@@ -4,6 +4,8 @@ Noise measured on the reference car (docs/lanes/L35-ego-fusion-audit.md section 
 speed 0x0B4 robust sigma 0.012-0.020 m/s; gyro zeroed at standstill; rear wheel difference sigma 0.010-0.019
 rad/s; longitudinal accelerometer sigma 0.20-0.25 m/s2 about a slow offset.
 """
+import math
+
 import numpy as np
 
 from ..core import ego as E
@@ -13,6 +15,15 @@ from ..core.registry import NS, Meas, Source, fin
 FEED_GAP_S, FEED_WARMUP_S = 1.0, 0.35  # a feed silent this long is not believed for this long after it resumes
 YAW_SIGMA = {"yaw_rate": (0.004, 0.03), "wheel_speeds": (0.02, 0.05), "steering": (0.03, 0.10)}
 TRACK_M = 1.48
+# Wheel-speed sensors have a floor: on the reference car a wheel reads exactly 0 below about 0.35 m/s, and the four
+# come alive one at a time (126-320 samples per drive of a moving car with a wheel at zero, up to a speed signal
+# of 1.1 m/s; one wheel at 0.4 m/s beside one at 0 is a "yaw rate" of 0.3-0.6 rad/s). Below the floor the wheels
+# are no measurement of anything: neither their mean nor their difference is offered.
+WHEEL_FLOOR = 0.6                # m/s: every wheel at least this fast, or the sample is not used
+# The rear wheels' difference carries a slow offset against the gyro and the camera (which agree with each other
+# to 0.001-0.003 rad/s on straights): window medians of -0.022 to +0.003 rad/s over two minutes, not proportional
+# to the speed, on four drives. Its error is therefore not white; the sigma says so (rms of those medians).
+WHEEL_YAW_SLOW = 0.012           # rad/s
 _I_V, _ONE = np.array([E.V], dtype=np.intp), np.array([1.0])
 
 
@@ -185,13 +196,19 @@ class WheelsSource(Source):
         m = sum(ws) / len(ws)
         if msg.get("reverse"):
             m = -m
+        still = bool(msg.get("standstill")) and msg.get("speed_mps") == 0.0
+        alive = min(ws) >= WHEEL_FLOOR
+        if not alive and not (still and max(ws) == 0.0):
+            return []                # under the sensors' floor (creeping, pulling away): no measurement
         # the scale of wheel speeds against the speed signal is a car's own (0.98 here): the tolerance covers it
         out = [Meas("speed", t, m, 0.10 + 0.04 * abs(m), src="wheels.speed", role="monitor")]
         # the rear wheels' difference is a yaw rate of its own (another sensor than the gyro): fused, with its
         # scale against the gyro's as a state (declared by the vehicle source, which owns the feed's calibration)
         iswy = ctx.integ.model.index.get("vehicle.s_wy")
-        still = bool(msg.get("standstill")) and msg.get("speed_mps") == 0.0
-        if iswy is not None and len(ws) == 4 and not still and msg.get("yaw_source") == "yaw_rate":
+        # (not when the feed's own yaw rate is this very difference, relayed: that would count it twice. A feed
+        # without a gyro has the wheels as its yaw sensor: before L43 such a car had none at all, and its position
+        # left the road at the first bend.)
+        if iswy is not None and len(ws) == 4 and not still and alive and msg.get("yaw_source") in ("yaw_rate", None):
             rw = (ws[3] - ws[2]) / self.track_m
             if msg.get("reverse"):
                 rw = -rw
@@ -201,6 +218,6 @@ class WheelsSource(Source):
             def h_wy(x, vw=vw):
                 k = 1.0 + x[iswy]
                 return k * x[E.W], i_wy, np.array([k, clear_reg(x[E.W], vw, SCALE_MIN_YAW)])
-            sg = 0.02 + 0.05 * abs(rw)
+            sg = math.hypot(0.02 + 0.05 * abs(rw), WHEEL_YAW_SLOW)
             out.append(Meas("yaw_rate", t, rw, sg, h_wy, "wheels.yaw", robust=True, mon=(rw, sg)))
         return out

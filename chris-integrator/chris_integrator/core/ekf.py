@@ -67,11 +67,22 @@ class Filter:
         if x is not None:
             self.x0, self.P0 = np.array(x, float), np.array(P, float)
         self.entries, self.times = [], []
+        self.carry = []
         self.base = None                   # (t, x, P): the state the first entry is predicted from
         self.dirty = None
 
     def rebase(self, t, x, P):
-        """Restart the buffer from a given state (a re-anchor, an epoch): earlier entries are dropped."""
+        """Restart the buffer from a given state (a re-anchor, an epoch): earlier entries are dropped. What they
+        say about *when each quantity was last measured* is kept (`carry`): re-placing the position does not make
+        the speed that was measured 50 ms ago unmeasured (before L43 a frame right after a re-anchoring was
+        published with speed, yaw rate and lead unknown, "no_measurement")."""
+        carry = {}
+        for e in self.entries[-64:]:
+            if e.t >= t - 2.0:
+                for r in e.rows:
+                    if r.used:
+                        carry[(r.q, r.src)] = e.t
+        self.carry = [(tt, q, src) for (q, src), tt in carry.items()]
         self.entries, self.times = [], []
         self.base = (t, np.array(x, float), np.array(P, float))
         self.dirty = None
@@ -292,4 +303,11 @@ class Filter:
                         srcs.add(r.src)
                     if age is None or d < age:
                         age = d
+        for tt, q, src in getattr(self, "carry", ()):      # measured before the buffer was restarted
+            d = abs(tt - T)
+            if d <= reach and (kinds is None or q in kinds) and q != "pos":
+                if d <= window_s:
+                    srcs.add(src)
+                if age is None or d < age:
+                    age = d
         return age, sorted(srcs)
