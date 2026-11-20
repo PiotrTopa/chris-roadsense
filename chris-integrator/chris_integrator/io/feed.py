@@ -1,65 +1,42 @@
-"""The direct feed: the car backend speaks the vehicle input API (docs/VEHICLE_API.md of roadsense) to the
-integrator's `feed.sock`, as it did to mapd's `position.sock`. Messages are turned into the shapes the sources
-read (`ego`, `gnss`, `vehicle`, `objects`), stamped on this host's monotonic clock when they carry no stamp."""
-import math
+"""The direct feed: the car backend speaks the vehicle input API (docs/VEHICLE_INPUT.md) to the integrator's
+`feed.sock` (also `position.sock`, the name a car backend written for mapd knows) and to `POST /v2/vehicle`.
+
+The store behind it is `io.vehicle_input.VehicleInput` (validation with mapd's error reasons, quality, the
+description, the sensors, the `vehicle` topic). `Feed` is the short form for replays, tests and tools: messages in,
+the stack's input messages out, errors kept in `last_error` / `errors`."""
 import time
 
-ACCEPTS = ["gnss", "motion", "reset", "controls", "body", "vehicle", "objects"]
-NS = 1_000_000_000
+from .vehicle_input import TYPES, VehicleInput, hello as _hello
+
+ACCEPTS = list(TYPES)
 
 
-def hello():
-    return {"type": "hello", "api": "1.1", "server": "chris-integrator", "accepts": ACCEPTS, "clock": "CLOCK_MONOTONIC",
-            "now_mono_ns": time.monotonic_ns()}
-
-
-def _stamp(m, now_ns):
-    ts = m.get("ts_mono_ns")
-    if isinstance(ts, int):
-        return ts
-    age = m.get("age_ms")
-    if isinstance(age, (int, float)) and math.isfinite(age) and age >= 0:
-        return now_ns - int(age * 1e6)
-    return now_ns
+def hello(now_ns=None):
+    return _hello(time.monotonic_ns() if now_ns is None else now_ns)
 
 
 class Feed:
-    """Feeder messages -> integrator input messages. Keeps the last controls / body so that the `vehicle`
-    message carries every signal."""
+    """Feeder messages -> integrator input messages (`ego`, `gnss`, `vehicle`, `objects`, `reset`).
 
-    def __init__(self):
-        self.controls, self.body, self.seq = {}, {}, 0
+    cfg: io.vehicle_input.DEFAULTS keys. A replay on its own clock passes `now_ns` with every message (the stamp
+    checks are made against it)."""
+
+    def __init__(self, cfg=None, calibration=None):
+        self.vi = VehicleInput(cfg, calibration)
+        self.errors = []                 # (message type, reason) of the last rejected messages, at most 20
+
+    @property
+    def last_error(self):
+        return self.vi.last_error
 
     def convert(self, m, now_ns=None):
-        """List of input messages for the integrator (possibly empty)."""
-        if not isinstance(m, dict):
-            return []
+        """List of input messages for the integrator (empty for a rejected or a store-only message)."""
         now_ns = time.monotonic_ns() if now_ns is None else now_ns
-        t = m.get("type")
-        ts = _stamp(m, now_ns)
-        self.seq += 1
-        if t == "motion":
-            v = m.get("speed_mps")
-            ws = m.get("wheel_speeds_mps")
-            still = m.get("standstill")
-            if still is None and isinstance(v, (int, float)):
-                still = v == 0.0 and (not isinstance(ws, list) or all(w == 0.0 for w in ws))
-            out = {"type": "ego", "seq": self.seq, "ts_mono_ns": ts, "api": 1, "speed_mps": v, "gear": m.get("gear"),
-                   "reverse": bool(m.get("reverse") or m.get("gear") == "R"), "standstill": bool(still),
-                   "wheel_speeds_mps": ws, "yaw_rate_rps": m.get("yaw_rate_rps"),
-                   "yaw_source": "yaw_rate" if m.get("yaw_rate_rps") is not None else None,
-                   "turn_signal": m.get("turn_signal", self.controls.get("turn_signal")), "source": "vehicle",
-                   "tag": m.get("source") or m.get("tag"), "steering_wheel_deg": m.get("steering_wheel_deg"),
-                   "accel_long_mps2": m.get("accel_long_mps2"), "accel_lat_mps2": m.get("accel_lat_mps2")}
-            if out["reverse"] and isinstance(v, (int, float)) and v > 0:
-                out["speed_mps"] = -v
-            return [out]
-        if t == "gnss":
-            return [dict(m, ts_mono_ns=ts)]
-        if t in ("controls", "body"):
-            (self.controls if t == "controls" else self.body).update({k: v for k, v in m.items() if k not in ("type", "ts_mono_ns", "age_ms")})
-            return [{"type": "vehicle", "seq": self.seq, "ts_mono_ns": ts, "present": True, "controls": dict(self.controls),
-                     "body": dict(self.body)}]
-        if t == "objects":
-            return [dict(m, ts_mono_ns=ts)]
-        return []
+        outs, err = self.vi.on_message(m, now_ns)
+        if err is not None:
+            self.errors = (self.errors + [((m or {}).get("type") if isinstance(m, dict) else None, err)])[-20:]
+        return outs
+
+    def check(self, m, now_ns=None):
+        """(input messages, None) or ([], reason): the reply a feeder gets."""
+        return self.vi.on_message(m, time.monotonic_ns() if now_ns is None else now_ns)
