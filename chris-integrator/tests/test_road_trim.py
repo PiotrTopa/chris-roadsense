@@ -9,7 +9,7 @@ from chris_integrator.io.sockets import parse_line, parse_line_trimmed
 from chris_integrator.mixer import MessageClock
 from chris_integrator.stack import build
 
-DATA = os.path.join(os.path.dirname(__file__), "data", "road_raw_vision.jsonl")   # modeld's own lines (phone, L46)
+DATA = os.path.join(os.path.dirname(__file__), "data", "road_raw_vision.jsonl")   # modeld's own lines as a phone wrote them
 
 
 def lines():
@@ -26,8 +26,6 @@ def expected(raw):
         for ln in m[key]:
             for k in F.LINE_UNREAD:
                 ln.pop(k, None)
-    for k in F.TOP_UNREAD:
-        m.pop(k.decode(), None)
     return m
 
 
@@ -35,7 +33,7 @@ class TestRoadTrim(unittest.TestCase):
     def test_only_the_listed_members_go(self):
         for raw in lines():
             cut = F.trim_road(raw)
-            self.assertLess(len(cut), 0.6 * len(raw))
+            self.assertLess(len(cut), 0.65 * len(raw))
             self.assertEqual(json.loads(cut), expected(raw))
             msg, line = parse_line_trimmed(raw)
             self.assertEqual(msg, expected(raw))

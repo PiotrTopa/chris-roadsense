@@ -8,7 +8,7 @@
 #   sh scripts/install-phone.sh [--no-systemctl]
 #   DESTDIR=/scratch/dir SKIP_BUILD=1 sh scripts/install-phone.sh    files only, into a scratch prefix
 # Environment (optional): BUILD (build dir), CMAKE_ARGS, SKIP_BUILD=1 (install what BUILD already holds),
-#   DEBUG_API_PORT / DEBUG_API_HOST (the debug face, default 8091 on loopback; under their names before L46,
+#   DEBUG_API_PORT / DEBUG_API_HOST (the debug face, default 8091 on loopback; under their earlier names,
 #   API_PORT / API_HOST, they are still read here and mean the same), CHRIS_API_PORT / CHRIS_API_HOST (the
 #   consolidated API of chris-integrator, default 8090 on loopback; passed on to its install script, which
 #   never sees this script's API_PORT / API_HOST), AUTOSTART=1 (enable roadsense.target at boot),
@@ -28,7 +28,7 @@ done
 [ -n "$D" ] && SYSTEMCTL=0
 [ -n "$D" ] || [ "$(id -u)" = 0 ] || { echo "run as root (sudo), or DESTDIR=/some/dir for a scratch install"; exit 1; }
 # The debug face's port / bind as given to this script (DEBUG_API_PORT / DEBUG_API_HOST; API_PORT / API_HOST are
-# their names before L46). API_PORT / API_HOST leave the environment here: chris-integrator's install script,
+# their earlier names). API_PORT / API_HOST leave the environment here: chris-integrator's install script,
 # run from this one, would read them as the consolidated API's and refuse the collision; its own are
 # CHRIS_API_PORT / CHRIS_API_HOST. The integrator's link to this face follows the port when one was given.
 GIVEN_PORT=${DEBUG_API_PORT:-${API_PORT:-}}

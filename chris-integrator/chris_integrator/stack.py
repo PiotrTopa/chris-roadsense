@@ -17,7 +17,7 @@ Configuration: one JSON file per plug-in in the configuration directory, named a
      "road_whole": true}                                           parse every member of `road` (see below)
 
 With only the default boxes, the daemon parses a `road` line without the members none of them reads (most of the
-plan's arrays, the lines' heights, `meta`, the desire outputs: half of the line; `fastjson.trim_road`). The line
+plan's arrays and the lines' heights: nearly half of the line; `fastjson.trim_road`). The line
 itself is passed on whole to every consumer. A wiring with `plugins` or `replace` gets the whole message, as does
 `"road_whole": true`.
 """

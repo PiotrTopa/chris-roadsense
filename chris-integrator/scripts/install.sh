@@ -12,7 +12,7 @@
 #                                        debug face; written to <etc>/chris/integrator.env (defaults 8090,
 #                                        127.0.0.1, http://127.0.0.1:8091). An existing file is kept: only
 #                                        missing keys are added, a key given here explicitly is replaced.
-#                                        (API_PORT / API_HOST, the names before L46, are read when the CHRIS_
+#                                        (API_PORT / API_HOST, the earlier names, are read when the CHRIS_
 #                                        ones are not set. roadsense's scripts/install-phone.sh uses its own
 #                                        names for the debug face and does not pass those two on.)
 #   MAP_PACK                             CHRIS_MAP_PACK in integrator.env (default: <data>/maps/current.rsmap)
