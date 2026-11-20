@@ -29,6 +29,7 @@ No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC 
 """
 import math
 
+from ..native import round                  # builtins.round, native where built
 from ..contract import LocalEgo, signal
 
 NS = 1e9

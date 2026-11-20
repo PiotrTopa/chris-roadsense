@@ -11,6 +11,17 @@ def fin(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
+_NUM = frozenset((int, float))
+
+
+def all_fin(seq):
+    """all(fin(v) for v in seq), without a Python-level call per element for lists of plain ints and floats
+    (what a parsed JSON array holds); anything else is judged element by element as `fin` does."""
+    if set(map(type, seq)) <= _NUM:
+        return all(map(math.isfinite, seq))
+    return all(fin(v) for v in seq)
+
+
 class Mount:
     """Where a sensor sits, in the car frame (x forward, y left, origin the reference camera), and where its
     boresight points (yaw, rad, positive left)."""

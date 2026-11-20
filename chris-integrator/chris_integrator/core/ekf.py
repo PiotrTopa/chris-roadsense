@@ -15,6 +15,8 @@ import math
 
 import numpy as np
 
+from ..native import ekf as _N
+
 T_NU = 4.0                      # degrees of freedom of the robust rows' Student-t
 
 
@@ -32,17 +34,78 @@ class Row:
 
 
 class Entry:
-    __slots__ = ("t", "rows", "x", "P", "xp", "Pp", "F", "anchor")
+    __slots__ = ("t", "rows", "x", "P", "xp", "Pp", "F", "anchor", "usedq")
 
     def __init__(self, t):
         self.t = t
         self.rows = []
+        self.usedq = ()                    # (q, src) of the rows applied in the last filter pass (for `near`)
         self.x = self.P = self.xp = self.Pp = self.F = None
         self.anchor = None
 
 
 def wrap_pi(a):
     return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+
+# ---- the arithmetic of one scalar row -------------------------------------------------------------------
+# Two implementations of the same three steps: numpy (the reference) and the native core (when it is in use:
+# `chris_integrator.native`). `_run` below is the same code for both. The native steps work in place on arrays
+# the loop owns (`own`: this pass made the array, nothing else holds it); the numpy steps make new arrays.
+def _project_py(P, idx, coef, buf=None):
+    """(ph, s0): P h^T and h P h^T of a sparse row h. (`buf`: a work array of the pass, used by the native step.)"""
+    ph = P[:, idx] @ coef
+    return ph, float(coef @ ph[idx])
+
+
+def _apply_py(x, P, ph, s, nu, freeze, own):
+    """The row's correction: x in place (the caller's own copy), the new P returned."""
+    k = ph / s
+    if freeze is None:
+        x += k * nu
+        return P - k[:, None] * ph[None, :]
+    # Schmidt-Kalman: the frozen states' uncertainty is in S, but they are not corrected by this
+    # row (the gain is no longer optimal: the Joseph form of the covariance update)
+    k[freeze] = 0.0
+    x += k * nu
+    kp = k[:, None] * ph[None, :]
+    P = P - kp - kp.T + s * (k[:, None] * k[None, :])
+    return 0.5 * (P + P.T)
+
+
+def _sym_py(P, own):
+    return 0.5 * (P + P.T)
+
+
+def _project_native(P, idx, coef, buf=None):
+    ph = np.empty(P.shape[0]) if buf is None else buf
+    try:
+        return ph, _N.ekf_project(P, idx, coef, ph)
+    except (TypeError, ValueError, BufferError):       # a row model that returns lists, or a view
+        return _project_py(P, np.asarray(idx, dtype=np.intp), np.asarray(coef, dtype=float))
+
+
+def _apply_native(x, P, ph, s, nu, freeze, own):
+    if not own:
+        P = P.copy()
+    try:
+        _N.ekf_update(x, P, ph, s, nu, freeze)
+    except (TypeError, ValueError, BufferError):
+        return _apply_py(x, P, ph, s, nu, freeze, own)
+    return P
+
+
+def _sym_native(P, own):
+    if not own:
+        return _sym_py(P, own)
+    _N.ekf_sym(P)
+    return P
+
+
+if _N is None:
+    _project, _apply, _sym = _project_py, _apply_py, _sym_py
+else:
+    _project, _apply, _sym = _project_native, _apply_native, _sym_native
 
 
 class Filter:
@@ -154,6 +217,7 @@ class Filter:
             anchor = dict(e.anchor)
         predict = self.model.predict
         disabled, gate, stat = self.disabled, self.gate, self.stat
+        buf = np.empty(x.shape[0])         # P h^T of the row in hand: used up before the next row is projected
         for e in self.entries[i:]:
             dt = e.t - t
             if dt > 0.0:
@@ -161,15 +225,14 @@ class Filter:
             else:
                 F = None
             e.xp, e.Pp, e.F = x, P, F
-            own = dirty = False
+            own = pown = dirty = False     # x / P are arrays of this entry's own (not the predicted ones it keeps)
             for r in e.rows:
                 was = r.rejected
                 r.used = r.rejected = False
                 if r.group in disabled or (r.group, r.q) in disabled:
                     continue
                 pred, idx, coef = r.h(x)
-                ph = P[:, idx] @ coef
-                s0 = float(coef @ ph[idx])
+                ph, s0 = _project(P, idx, coef, buf)
                 nu = r.z - pred
                 if r.wrap:
                     nu = wrap_pi(nu)
@@ -201,24 +264,17 @@ class Filter:
                 else:
                     anchor[r.q] = e.t
                 s = s0 + var
-                k = ph / s
                 if not own:
                     x, own = x.copy(), True                # (the predicted state is kept in the entry)
-                if r.freeze is None:
-                    x += k * nu
-                    P = P - k[:, None] * ph[None, :]
-                else:
-                    # Schmidt-Kalman: the frozen states' uncertainty is in S, but they are not corrected by this
-                    # row (the gain is no longer optimal: the Joseph form of the covariance update)
-                    k[r.freeze] = 0.0
-                    x += k * nu
-                    kp = k[:, None] * ph[None, :]
-                    P = P - kp - kp.T + s * (k[:, None] * k[None, :])
-                    P = 0.5 * (P + P.T)
+                P = _apply(x, P, ph, s, nu, r.freeze, pown)
+                pown = True
                 r.used = True
                 dirty = True
             if dirty:
-                P = 0.5 * (P + P.T)
+                P = _sym(P, pown)
+                e.usedq = tuple([(r.q, r.src) for r in e.rows if r.used])
+            else:
+                e.usedq = ()
             e.x, e.P, t, e.anchor = x, P, e.t, dict(anchor)
 
     # ---- output --------------------------------------------------------------------------------------
@@ -269,21 +325,29 @@ class Filter:
         xs, Ps = self.entries[j1].x, self.entries[j1].P
         # a model may return its transition in a structured form and multiply by it itself (`apply_F`)
         fmul = getattr(self.model, "apply_F", None) or (lambda F, M: F @ M)
+        rts = getattr(self.model, "rts", None)         # a model may do the whole step itself (the native core)
+
+        def back(Pp, F, Pa, xa, xp, xs, Ps):
+            """One step back over a prediction: the smoothed (x, P) at its start from the smoothed at its end."""
+            if rts is not None:
+                r = rts(Pp, F, Pa, xa, xp, xs, Ps, self.wrap_idx)
+                if r is False:
+                    raise np.linalg.LinAlgError("singular")
+                if r is not None:
+                    return r
+            C = np.linalg.solve(Pp, fmul(F, Pa)).T
+            return xa + C @ self._diff(xs, xp), Pa + C @ (Ps - Pp) @ C.T
         try:
             for j in range(j1, j0, -1):                # smooth back to entry j0
                 e, a = self.entries[j], self.entries[j - 1]
                 if e.F is None:
                     continue
-                C = np.linalg.solve(e.Pp, fmul(e.F, a.P)).T
-                xs = a.x + C @ self._diff(xs, e.xp)
-                Ps = a.P + C @ (Ps - e.Pp) @ C.T
+                xs, Ps = back(e.Pp, e.F, a.P, a.x, e.xp, xs, Ps)
             e = self.entries[j0]
             dt = e.t - T
             if dt > 0.0:                               # and from entry j0 back to the node at T
                 xp, Pp, F = self.model.predict(x, P, dt)
-                C = np.linalg.solve(Pp, fmul(F, P)).T
-                xs = x + C @ self._diff(xs, xp)
-                Ps = P + C @ (Ps - Pp) @ C.T
+                xs, Ps = back(Pp, F, P, x, xp, xs, Ps)
             Ps = 0.5 * (Ps + Ps.T)
         except np.linalg.LinAlgError:
             return x, P
@@ -295,14 +359,15 @@ class Filter:
         reach = max(window_s, reach_s)
         lo, hi = bisect.bisect_left(self.times, T - reach), bisect.bisect_right(self.times, T + reach)
         age, srcs = None, set()
-        for e in self.entries[lo:hi]:
+        for e in self.entries[lo:hi]:          # (`usedq`: the rows the last pass applied, kept per entry by `_run`)
+            u = e.usedq
+            if not u:
+                continue
             d = abs(e.t - T)
-            for r in e.rows:
-                if not r.used:
-                    continue
-                if kinds is None or r.q in kinds:
+            for q, src in u:
+                if kinds is None or q in kinds:
                     if d <= window_s:
-                        srcs.add(r.src)
+                        srcs.add(src)
                     if age is None or d < age:
                         age = d
         for tt, q, src in getattr(self, "carry", ()):      # measured before the buffer was restarted

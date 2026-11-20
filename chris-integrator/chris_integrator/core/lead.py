@@ -1,6 +1,7 @@
 """The `tracks` and `lead` messages (docs/DESIGN.md sections 6, 8)."""
 import math
 
+from ..native import round                  # builtins.round, native where built
 from ..contract import signal, validity
 from .objects import AX, VX, VY, X, Y, class_of
 from .registry import NS

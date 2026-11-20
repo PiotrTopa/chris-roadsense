@@ -7,6 +7,7 @@ import json
 import math
 import os
 
+from ..native import status as native_status
 from .. import API_MAJOR, __version__
 from ..plugins.estimator import Estimator, lead_summary
 
@@ -198,6 +199,8 @@ class Api:
         rules, fused, lanes, view = P("rules"), P("fused"), P("lanes"), P("view")
         return {
             "api": {"major": API_MAJOR, "version": __version__, "server": "chris-integrator"},
+            # which implementation of the hot path runs: the native core or pure Python (and why)
+            "native": native_status(),
             "daemons": daemons,
             "fps": {t: self.mixer.fps(t) for t in TOPICS},
             "model_ms": road.get("model_ms"),

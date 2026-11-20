@@ -25,6 +25,23 @@ aiohttp bring along.
 `install.sh` checks all of this, and that the daemon's whole import chain loads with the host's interpreter,
 **before** it changes anything; a missing module stops it with the package to install.
 
+### The native core (optional)
+
+The package is pure Python and complete as such. A compiled module with the hot path's arithmetic and text
+work (`docs/NATIVE.md`) makes the daemon about twice as cheap; `install.sh` uses one when it is at hand for the
+host's machine type and C library and passes its self-test on the host, and says which it did:
+
+| situation | what the script does | its line in the summary |
+|---|---|---|
+| `native/dist/linux-<machine>-<libc>/_chris_native.abi3.so` in the source tree (made off the host by `native/cross-build.sh`), or a module built in the tree (`native/build.sh`), or `NATIVE=/path/to/_chris_native.abi3.so` | copies it into the installed package, runs `python3 -m chris_integrator.native` (loads? gives the pure-Python results on this machine?) | `native core: IN USE (linux-aarch64-musl, sha256 ..., self-test ok)` |
+| the self-test fails or the module does not load (another machine type, another C library) | removes the module again | `native core: NOT used, the compiled module ... failed here and was removed: pure Python (...)` |
+| no module at hand | nothing | `native core: no compiled module for linux-... at hand (...): pure Python` |
+| `NATIVE=0` | removes a module left by an earlier run | `native core: not installed (NATIVE=0): pure Python` |
+
+The script never compiles and installs no package. On a running system the choice is visible in `GET
+/v2/health` (`native`) and in the daemon's log at start (`hot path NATIVE (...)` / `hot path pure Python: ...`);
+`CHRIS_NATIVE=0` in `/etc/chris/integrator.env` switches the native core off without touching files.
+
 ## Install
 
 ```sh

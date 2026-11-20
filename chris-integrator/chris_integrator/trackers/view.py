@@ -55,6 +55,8 @@ No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC 
 """
 import math
 
+from ..native import round                  # builtins.round, native where built
+from .. import native as _native
 from ..contract import LocalEgo, validity
 from ..fastround import round_flat, scales
 from .roadview import RoadView
@@ -128,7 +130,7 @@ def _interp(xs, ys, x):
     return None
 
 
-def _interp_all(xs, ys, qs):
+def _interp_all_py(xs, ys, qs):
     """[_interp(xs, ys, q) for q in qs], walking the table once: for queries in rising order the segment search
     goes on where the last one ended (every earlier node was already below the smaller query); a query below
     its predecessor starts over. The same comparisons and arithmetic as `_interp`, so the same numbers."""
@@ -157,6 +159,17 @@ def _interp_all(xs, ys, qs):
         t = (x - xs[i - 1]) / ((xs[i] - xs[i - 1]) or 1.0)
         out.append(a + (b - a) * t)
     return out
+
+
+if _native.interp_all is None:
+    _interp_all = _interp_all_py
+else:
+    def _interp_all(xs, ys, qs, _n=_native.interp_all, _fb=_native.Fallback):
+        """`_interp_all_py` in the native core (lists of floats; anything else goes to the Python walk)."""
+        try:
+            return _n(xs, ys, qs)
+        except _fb:
+            return _interp_all_py(xs, ys, qs)
 
 
 class _Static:
@@ -726,7 +739,10 @@ class ViewBuilder:
                 todo.append((o, m))
             out.append(o)
         if todo:
-            rounded = round_flat(flat, self._scale(len(flat)), self._two(len(flat)))
+            if _native.round_list is not None:          # the same numbers either way: round(v, 2) of each
+                rounded = _native.round_list(flat, 2)
+            else:
+                rounded = round_flat(flat, self._scale(len(flat)), self._two(len(flat)))
             i = 0
             for o, m in todo:
                 pad = [None] * (nx - m)

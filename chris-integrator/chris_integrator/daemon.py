@@ -27,6 +27,7 @@ import os
 import signal
 import time
 
+from . import native
 from .io.vehicle_input import VehicleInput
 from .io.sockets import LINE_LIMIT, LineServer, Reader, parse_line_trimmed
 from .stack import build
@@ -226,6 +227,9 @@ class Daemon:
                 loop.add_reader(pl.fileno(), pl.pump)
         log.info("chris-integrator: %d source sockets, %d plug-ins (%s), state size %d, http %s", len(tasks) - 1,
                  len(self.mixer.order), ", ".join(s.name for s in self.mixer.order), self.integ.model.n, self.http)
+        nat = native.status()
+        log.info("chris-integrator: hot path %s%s", "NATIVE (%s)" % ", ".join(nat["parts"]) if nat["active"] else "pure Python",
+                 ": " + nat["reason"] if nat.get("reason") else "")
         try:
             await asyncio.gather(*tasks) if tasks else await asyncio.Event().wait()
         finally:

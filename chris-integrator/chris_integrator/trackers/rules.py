@@ -21,6 +21,7 @@ junction list unless `lights_junction` is off). Pure module, no I/O; see docs/la
 import collections
 import re
 
+from ..native import round                  # builtins.round, native where built
 from .speedlimit import SpeedLimit, load_rules, NS
 
 RULES_CFG = {
@@ -118,14 +119,14 @@ class RulesInEffect:
             self._sl_junctions_seen = set(key(j) for j in self.speed.junctions)
 
     def _turn_proxy(self):
-        h = self.speed.heading
-        if len(h) < 2:
+        span = self.speed.heading_span()
+        if span is None:
             return
-        yaws = [y for _, y in h]
-        if max(yaws) - min(yaws) >= self.speed.ex["turn_deg"]:
+        hi, lo = span
+        if hi - lo >= self.speed.ex["turn_deg"]:
             if self._turn_last_odo is None or self.odo - self._turn_last_odo > self.ecfg.get("turn_dedupe_m", 60):
                 self._turn_last_odo = self.odo
-                self._add_junction(self.odo, "turn", round(max(yaws) - min(yaws)))
+                self._add_junction(self.odo, "turn", round(hi - lo))
 
     def _on_lights(self, msg):
         ego = msg.get("ego")

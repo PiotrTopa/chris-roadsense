@@ -6,6 +6,7 @@ import logging
 import os
 
 from ..fastjson import loads_road_trimmed
+from ..native import loads
 
 log = logging.getLogger("chris_integrator.io")
 LINE_LIMIT = 16 * 1024 * 1024
@@ -18,7 +19,7 @@ def parse_line(raw):
     line = raw.decode("utf-8", "replace").strip()
     if not line:
         return None, None
-    msg = json.loads(line)
+    msg = loads(line)                      # json.loads, native where built
     return (msg, line) if isinstance(msg, dict) else (None, None)
 
 
@@ -31,7 +32,7 @@ def parse_line_trimmed(raw):
     try:
         msg = loads_road_trimmed(raw)
     except ValueError:                     # (bytes that are not UTF-8 land here too)
-        msg = json.loads(line)
+        msg = loads(line)
     return (msg, line) if isinstance(msg, dict) else (None, None)
 
 

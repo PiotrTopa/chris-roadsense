@@ -1,6 +1,8 @@
 """Helpers shared by the stack's plug-ins."""
 import collections
 
+from ..native import round                  # builtins.round, native where built
+
 DEFAULT_INTRINSICS = (1500.0, 960.0, 540.0, 1920, 1080)
 
 

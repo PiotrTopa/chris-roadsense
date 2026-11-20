@@ -21,6 +21,8 @@ import collections
 import math
 import statistics
 
+from ..native import round                  # builtins.round, native where built
+
 DEFAULT_CFG = dict(
     stuck_s=1.5, stuck_n=10,          # identical non-zero values for this long and this many samples: stuck
     stuck_fault_s=2.5,                # ... and a fault after this long

@@ -27,6 +27,7 @@ and the tracks, the lead and the ego state are the same, number for number, with
 """
 import math
 
+from ..native import round                  # builtins.round, native where built
 from .objects import Scan, SensorModel, X, Y, classify
 from .registry import NS, Source, fin
 

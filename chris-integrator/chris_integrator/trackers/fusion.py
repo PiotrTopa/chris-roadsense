@@ -21,6 +21,7 @@ confidence, when the map is otherwise available and fresh, it is the same road a
 `match_hold_s` and `match_hold_msgs` of that message. `map.match_hold` says so. Never across a change of the
 matched road, an unavailable or stale map (a real loss of position) or a changed map limit.
 """
+from ..native import round                  # builtins.round, native where built
 from ..contract import usable
 
 MAP_MAX_AGE_S = 3.0

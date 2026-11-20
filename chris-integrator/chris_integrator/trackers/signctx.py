@@ -18,6 +18,7 @@ they stay in the messages, `/v1/signs` (`suppressed_tracks`) and the history wit
 """
 import re
 
+from ..native import round                  # builtins.round, native where built
 from .projection import Projector
 
 ROUND_RED = re.compile(r"^regulatory--(no-|maximum-speed-limit|road-closed|height-limit|weight-limit|width-limit|stop$)")

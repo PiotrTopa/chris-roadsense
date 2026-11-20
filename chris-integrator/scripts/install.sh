@@ -21,6 +21,12 @@
 #                                        always runs /usr/bin/python3
 #   MAPPER_SRC                           the chris-mapper tree (default ../chris-mapper next to this tree)
 #   STOP_LEGACY=0                        do not stop / disable a legacy roadsense mapd (default: stop + disable)
+#   NATIVE                               the native core (docs/NATIVE.md): unset = use a compiled module when one
+#                                        for this machine is at hand (native/dist/linux-<machine>-<libc>/ of the
+#                                        tree, made by native/cross-build.sh, or one built in the tree by
+#                                        native/build.sh) and it passes its self-test here, else pure Python;
+#                                        NATIVE=0 = pure Python; NATIVE=/path/_chris_native.abi3.so = that file.
+#                                        Nothing is compiled by this script.
 set -eu
 
 SRC=$(cd "$(dirname "$0")/.." && pwd)
@@ -102,6 +108,37 @@ put_pkg() {   # $1 source package dir, $2 name: copied next to the old one, then
 }
 put_pkg "$SRC/chris_integrator" chris_integrator
 if [ -n "$MAPPER_SRC" ]; then put_pkg "$MAPPER_SRC/chris_mapper" chris_mapper; fi
+
+# ---- 2b. the native core: a compiled module for this machine is used when there is one and it gives the
+# pure-Python results here; otherwise the package runs pure Python (it is complete without it) --------------
+NAT_DIR=$LIB/chris_integrator/native
+NAT_LIBC=glibc; (ldd --version 2>&1 || true) | grep -qi musl && NAT_LIBC=musl
+NAT_TAG=linux-$(uname -m)-$NAT_LIBC
+NAT_SRC=
+case "${NATIVE:-}" in
+    0|no|off|false) rm -f "$NAT_DIR"/_chris_native*.so ;;
+    "") if [ -f "$SRC/native/dist/$NAT_TAG/_chris_native.abi3.so" ]; then NAT_SRC=$SRC/native/dist/$NAT_TAG/_chris_native.abi3.so; fi ;;
+    *) [ -f "$NATIVE" ] || die "NATIVE=$NATIVE: no such file"; NAT_SRC=$NATIVE ;;
+esac
+if [ -n "$NAT_SRC" ]; then
+    rm -f "$NAT_DIR"/_chris_native*.so
+    install -m 644 "$NAT_SRC" "$NAT_DIR/_chris_native.abi3.so"
+fi
+if ls "$NAT_DIR"/_chris_native*.so >/dev/null 2>&1; then
+    # the self-test: the module must load with this interpreter and give the reference's results on this machine
+    if NAT_OUT=$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$LIB" CHRIS_NATIVE=1 "$PYTHON" -m chris_integrator.native 2>&1); then
+        NAT_SUM=$(sha256sum "$NAT_DIR"/_chris_native*.so | cut -c1-16)
+        note "native core: IN USE ($NAT_TAG, sha256 $NAT_SUM..., from ${NAT_SRC:-the source tree}; self-test ok)"
+    else
+        rm -f "$NAT_DIR"/_chris_native*.so
+        note "native core: NOT used, the compiled module ${NAT_SRC:-of the source tree} failed here and was removed: pure Python ($(echo "$NAT_OUT" | tail -n 1))"
+    fi
+else
+    case "${NATIVE:-}" in
+        0|no|off|false) note "native core: not installed (NATIVE=${NATIVE}): pure Python" ;;
+        *) note "native core: no compiled module for $NAT_TAG at hand (native/cross-build.sh or native/build.sh make one): pure Python" ;;
+    esac
+fi
 
 # ---- 3. integrator.env: the car defaults, an existing file kept --------------------------------------
 ENVF=$ETC/integrator.env

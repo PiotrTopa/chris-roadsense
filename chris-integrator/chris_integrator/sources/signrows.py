@@ -15,6 +15,7 @@ import collections
 import math
 import statistics
 
+from ..native import round                  # builtins.round, native where built
 from ..core.registry import NS, Source, fin
 
 BINS = (10.0, 20.0, 30.0, 45.0, 70.0)        # box height classes, px

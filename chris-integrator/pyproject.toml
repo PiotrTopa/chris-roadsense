@@ -22,4 +22,4 @@ chris-integrator = "chris_integrator.daemon:main"
 include = ["chris_integrator*"]
 
 [tool.setuptools.package-data]
-chris_integrator = ["trackers/rules/*.json"]
+chris_integrator = ["trackers/rules/*.json", "native/src/*.c"]

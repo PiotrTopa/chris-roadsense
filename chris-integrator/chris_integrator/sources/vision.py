@@ -10,6 +10,7 @@ import math
 
 import numpy as np
 
+from ..native import round                  # builtins.round, native where built
 from ..core import ego as E
 from ..core.ego import AuxState
 from ..core.registry import NS, Meas, Source, fin

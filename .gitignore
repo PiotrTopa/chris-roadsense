@@ -32,3 +32,5 @@ captures/
 *.o5m
 roadsense-maps/
 maps-data/
+# chris-integrator native core: built artefacts (native/cross-build.sh), never committed
+chris-integrator/native/dist/

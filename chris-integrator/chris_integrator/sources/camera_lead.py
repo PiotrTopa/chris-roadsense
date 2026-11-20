@@ -17,8 +17,9 @@ import math
 
 import numpy as np
 
+from ..native import round                  # builtins.round, native where built
 from ..core.objects import AX, VX, X, Y, Det, Scan, SensorModel, Track
-from ..core.registry import NS, Source, fin
+from ..core.registry import NS, Source, fin, all_fin
 
 DEFAULT_CFG = dict(
     # track life cycle
@@ -596,7 +597,7 @@ class CameraLeadSource(Source):
         if isinstance(pl, dict) and msg.get("valid") is not False:
             xs, ys = pl.get("x"), pl.get("y")
             if isinstance(xs, list) and isinstance(ys, list) and len(xs) == len(ys) and len(xs) >= 2 \
-                    and all(fin(a) for a in xs) and all(fin(a) for a in ys):
+                    and all_fin(xs) and all_fin(ys):
                 n = len(xs)
                 k = 1
                 while k < n and xs[k] > xs[k - 1]:

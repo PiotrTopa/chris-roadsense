@@ -41,6 +41,7 @@ import math
 
 import numpy as np
 
+from ..native import round                  # builtins.round, native where built
 from ..contract import LocalEgo, signal
 
 NS = 1e9

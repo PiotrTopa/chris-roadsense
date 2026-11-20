@@ -9,8 +9,9 @@ re-serialised).
 Clocks. Plug-ins never read the wall clock. The bus clock is the only "now": `LiveClock` in a running stack,
 `MessageClock` in a replay (it advances with the messages), so a replay of a recording is deterministic and
 runs the same code as the car."""
-import json
 import time
+
+from ..native import dumps
 
 KINDS = ("raw", "measurement", "estimate", "decision", "context", "display", "status")
 TIMES = ("frame", "sample", "periodic", "event")
@@ -44,7 +45,7 @@ class Envelope:
     @property
     def line(self):
         if self._line is None:
-            self._line = json.dumps(self.msg, separators=(",", ":"))
+            self._line = dumps(self.msg)       # json.dumps(msg, separators=(",", ":")), native where built
         return self._line
 
 

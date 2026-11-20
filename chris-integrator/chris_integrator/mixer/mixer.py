@@ -15,6 +15,7 @@ import collections
 import logging
 import time
 
+from ..native import round                  # builtins.round, native where built
 from .bus import Bus, StreamSpec
 
 log = logging.getLogger("chris_integrator.mixer")

@@ -7,6 +7,8 @@ import collections
 import math
 import statistics
 
+from ..native import round                  # builtins.round, native where built
+
 
 class Series:
     """Raw measurements of one group for one quantity: (t, value, sigma), newest last."""
@@ -360,21 +362,52 @@ class NisMonitor:
     def __init__(self, group, quantity, cfg):
         self.group, self.quantity, self.c = group, quantity, cfg
         self.q = collections.deque(maxlen=cfg["max_n"])
+        self._sorted = []                 # the window's values in order, kept as samples come and go (the median
+        self._plain = True                # of 80 values five times a second per row class was a sort each time)
         self.value = None
         self.high = False
         self.n_total = 0
         self.t_eval = -1e18
         self.peak = 0.0
 
+    def _median(self):
+        """statistics.median of the window's values: from the ordered list (the same two middle values, the same
+        arithmetic); from a fresh sort when a value that does not order (NaN) is or was in the window."""
+        s = self._sorted
+        n = len(s)
+        if not self._plain or n != len(self.q):
+            vals = [d for _, d in self.q]
+            if all(d == d for d in vals):          # the value that did not order has left the window
+                self._sorted, self._plain = sorted(vals), True
+            return statistics.median(vals)
+        return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+    def _drop(self, d):
+        s = self._sorted
+        i = bisect.bisect_left(s, d)
+        if i < len(s) and s[i] == d:
+            del s[i]
+        else:                              # not found: the list is not in order (a NaN went through it)
+            self._plain = False
+
     def offer(self, t, d2):
         q = self.q
+        if self._plain:
+            if len(q) == q.maxlen:         # the deque drops its oldest sample by itself when it is full
+                self._drop(q[0][1])
+            if d2 == d2:
+                bisect.insort(self._sorted, d2)
+            else:
+                self._plain = False
         q.append((t, d2))
         while q and q[0][0] < t - self.c["window_s"]:
+            if self._plain:
+                self._drop(q[0][1])
             q.popleft()
         self.n_total += 1
         if len(q) >= self.c["min_n"] and (t - self.t_eval >= 0.2 or t < self.t_eval):    # the median is not free: 5 Hz
             self.t_eval = t
-            self.value = statistics.median(d for _, d in q) / self.MED
+            self.value = self._median() / self.MED
             self.peak = max(self.peak, self.value / self.c["fire"])
             old = self.high
             self.high = self.value > (self.c["recover"] if old else self.c["fire"])
@@ -391,5 +424,6 @@ class NisMonitor:
 
     def reset_data(self):
         self.q.clear()
+        self._sorted, self._plain = [], True
         self.value = None
         self.high = False

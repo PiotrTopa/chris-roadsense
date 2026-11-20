@@ -16,6 +16,10 @@ import math
 
 import numpy as np
 
+from ..native import ekf as _N
+
+_empty = np.empty
+
 PE, PN, PSI, V, A, W, AL, Z, TH, SV = range(10)
 NCORE = 10
 CORE_NAMES = ("pe", "pn", "psi", "v", "a", "w", "al", "z", "th", "sv")
@@ -68,6 +72,7 @@ class EgoModel:
         self.heading_free = True           # False: the heading does not move the position yet (not initialised)
         self._rho_cache = {}
         self._diag = None
+        self._par = None                   # the native core's parameter block (made on first use)
 
     @staticmethod
     def apply_F(F, M):
@@ -89,6 +94,7 @@ class EgoModel:
         self.n += 1
         self._psd = np.append(self._psd, 0.0 if aux.tau_s else aux.psd)
         self._rho_cache.clear()            # (the cached vectors have the old length)
+        self._par = None
         if aux.tau_s:
             self._gm.append((i, aux.tau_s, aux.sigma0))
         if aux.lo is not None or aux.hi is not None:
@@ -98,6 +104,7 @@ class EgoModel:
     def set_clamp(self, i, lo=None, hi=None):
         """The bounds of one calibration state, changed at run time (a source whose prior was replaced: another
         receiver has another delay, and the bounds of the old one would clip it)."""
+        self._par = None
         self._clamp = [c for c in self._clamp if c[0] != i]
         if lo is not None or hi is not None:
             self._clamp.append((i, lo, hi))
@@ -115,7 +122,64 @@ class EgoModel:
         vg = x[V] / (1.0 + x[SV])
         return (vg * c, vg * s, x[W], x[A], 0.0, x[AL], 0.0, vg * math.sin(x[TH]), 0.0, 0.0)
 
+    def _rho(self, dt):
+        """(decay, added variance) of the Gauss-Markov states over dt, kept per dt."""
+        rho = self._rho_cache.get(dt)
+        if rho is None:
+            if len(self._rho_cache) > 256:
+                self._rho_cache.clear()
+            n = self.n
+            r = np.ones(n)
+            q = np.zeros(n)
+            for i, tau, sig in self._gm:
+                r[i] = math.exp(-dt / tau)
+                q[i] = sig * sig * (1.0 - math.exp(-2.0 * dt / tau))
+            rho = self._rho_cache[dt] = (r, q)
+        return rho
+
+    def _native_par(self):
+        """The model's constants as the native core reads them (chris_native.c `ekf_predict`)."""
+        c = self.c
+        nan = float("nan")
+        par = [c["jerk_psd"], c["yaw_jerk_psd"], c["pos_psd"], c["alt_psd"], c["grade_psd"], c["scale_psd"]]
+        par += [lim for _, lim in _CAPS]
+        par += [float(len(self._clamp)), float(len(self._gm))]
+        par += [float(v) for v in self._psd]
+        for i, lo, hi in self._clamp:
+            par += [float(i), nan if lo is None else float(lo), nan if hi is None else float(hi)]
+        for i, tau, sig in self._gm:
+            par += [float(i), float(tau), float(sig)]
+        self._par = np.array(par, dtype=float)
+        return self._par
+
     def predict(self, x, P, dt):
+        """(x, P, F) after dt. With the native core: the same steps in C (`_predict_py` is the reference; the
+        two differ only in the order the covariance's sums of products are taken, i.e. at rounding level)."""
+        if _N is None or x.shape[0] != self.n:
+            return self._predict_py(x, P, dt)
+        n = self.n
+        rho = _empty(n) if self._gm else None             # the Gauss-Markov states' decay over dt (part of F)
+        x1, P1, Fc = _empty(n), _empty((n, n)), _empty((NCORE, NCORE))
+        try:
+            _N.ekf_predict(x, P, dt, self._par if self._par is not None else self._native_par(), rho, x1, P1, Fc)
+        except (TypeError, ValueError, BufferError):      # arrays the native core does not take (not contiguous)
+            return self._predict_py(x, P, dt)
+        return x1, P1, (Fc, rho)
+
+    def rts(self, Pp, F, Pa, xa, xp, xs, Ps, wrap_idx):
+        """One smoother step back over a prediction, native: (xs, Ps), False when Pp is singular, or None when
+        the native core is not in use (the filter then does the step with numpy: core/ekf.py `at`)."""
+        if _N is None:
+            return None
+        n = xa.shape[0]
+        xo, Po = np.empty(n), np.empty((n, n))
+        try:
+            ok = _N.ekf_rts(Pp, F[0], F[1], Pa, xa, xp, xs, Ps, wrap_idx, xo, Po)
+        except (TypeError, ValueError, BufferError):
+            return None
+        return (xo, Po) if ok else False
+
+    def _predict_py(self, x, P, dt):
         c = self.c
         n = self.n
         x = x.copy()
@@ -149,16 +213,7 @@ class EgoModel:
             (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)))
         rho = None
         if self._gm:
-            rho = self._rho_cache.get(dt)
-            if rho is None:
-                if len(self._rho_cache) > 256:
-                    self._rho_cache.clear()
-                r = np.ones(n)
-                q = np.zeros(n)
-                for i, tau, sig in self._gm:
-                    r[i] = math.exp(-dt / tau)
-                    q[i] = sig * sig * (1.0 - math.exp(-2.0 * dt / tau))
-                rho = self._rho_cache[dt] = (r, q)
+            rho = self._rho(dt)
             x *= rho[0]
         P = P.copy()
         P[:NCORE, :] = Fc @ P[:NCORE, :]

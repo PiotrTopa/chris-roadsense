@@ -23,6 +23,8 @@ often on a bicycle). Nothing here is read by gating, association, existence or t
 """
 import math
 
+from ..native import round                  # builtins.round, native where built
+
 ALIASES = {"person": "human", "pedestrian": "human", "bicycle": "bike", "cyclist": "bike", "rider": "bike",
            "motorcycle": "motorbike", "motor": "motorbike", "lorry": "truck", "coach": "bus", "train": "tram"}
 HALF_LIFE_S = 30.0

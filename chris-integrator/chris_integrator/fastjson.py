@@ -1,8 +1,9 @@
 """Parse only what is needed of a large JSON line. A `road` message is about 6 kB, four fifths of it lane
 lines and road edges the integrator's estimator does not read; `drop()` cuts named top-level members out of
 the bytes before the JSON parser sees them. Falls back to the whole line whenever the cut is not certain."""
-import json
 import re
+
+from .native import loads as _loads      # json.loads, native where built
 
 _TOK = re.compile(rb'[\[\]{}"]')
 
@@ -84,9 +85,9 @@ ROAD_DROP = (b"lane_lines", b"road_edges", b"meta", b"desire_state", b"desire_pr
 def loads_road(line):
     """A `road` line parsed without the members the integrator's core does not read."""
     try:
-        return json.loads(drop(line, ROAD_DROP))
+        return _loads(drop(line, ROAD_DROP))
     except ValueError:
-        return json.loads(line)
+        return _loads(line)
 
 
 # ---- the `road` line as the default stack reads it ---------------------------------------------------------
@@ -155,6 +156,6 @@ def loads_road_trimmed(raw):
     """A `road` line (bytes) parsed without the members the default stack does not read; the whole line when
     the trimmed one does not parse."""
     try:
-        return json.loads(trim_road(raw))
+        return _loads(trim_road(raw))
     except ValueError:
-        return json.loads(raw)
+        return _loads(raw)

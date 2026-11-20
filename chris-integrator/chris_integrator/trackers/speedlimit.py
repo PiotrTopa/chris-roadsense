@@ -11,6 +11,7 @@ import math
 import os
 import re
 
+from ..native import round                  # builtins.round, native where built
 from ..contract import LocalEgo
 
 RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules")
@@ -104,6 +105,10 @@ class SpeedLimit:
         self.seq = None
         self._last_road_ns = None
         self.heading = collections.deque()  # (odo, yaw_deg) for the turn proxy
+        # the largest and smallest heading of that window, kept as it slides (a standing car's window grows by
+        # one sample a frame: `max` and `min` over it every frame were 0.5 ms a frame on a phone after a minute)
+        self._h_hi, self._h_lo = collections.deque(), collections.deque()      # (sample number, yaw): monotonic
+        self._h_in = self._h_out = 0
         self.yaw_deg = 0.0
         # area / road class / zone beliefs
         self.area = {"type": self.cfg["default_area"], "source": "config", "confidence": 0.3
@@ -140,6 +145,16 @@ class SpeedLimit:
             return False
         return self._update_output()
 
+    def heading_span(self):
+        """(max, min) of the headings in the turn window, or None with fewer than two samples: what
+        `max(y for _, y in heading)` and `min(...)` give, without walking the window."""
+        if len(self.heading) < 2 or not self._h_hi or self._h_in - self._h_out != len(self.heading):
+            if len(self.heading) < 2:
+                return None
+            yaws = [y for _, y in self.heading]       # (a window filled by hand: a test, a restored state)
+            return max(yaws), min(yaws)
+        return self._h_hi[0][1], self._h_lo[0][1]
+
     def _clock(self, msg):
         ts = msg.get("ts_mono_ns")
         if ts is not None and (self.now_ns is None or ts >= self.now_ns):
@@ -166,8 +181,21 @@ class SpeedLimit:
             self.odo += 0.5 * (v + (self.v_ego if self.v_ego is not None else v)) * dt
             self.yaw_deg += math.degrees(yaw_rate) * dt
             self.heading.append((self.odo, self.yaw_deg))
+            hi, lo, y = self._h_hi, self._h_lo, self.yaw_deg
+            while hi and hi[-1][1] <= y:
+                hi.pop()
+            hi.append((self._h_in, y))
+            while lo and lo[-1][1] >= y:
+                lo.pop()
+            lo.append((self._h_in, y))
+            self._h_in += 1
             while self.heading and self.odo - self.heading[0][0] > self.ex["turn_window_m"]:
                 self.heading.popleft()
+                if hi[0][0] == self._h_out:
+                    hi.popleft()
+                if lo[0][0] == self._h_out:
+                    lo.popleft()
+                self._h_out += 1
         self._last_road_ns = ts
         self.v_ego = v
         self._check_expiry()
