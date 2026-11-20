@@ -651,7 +651,8 @@ def main():
     s.set_defaults(fn=cmd_verify)
     s = sub.add_parser("install", help="copy a pack to a device")
     s.add_argument("pack")
-    s.add_argument("--host", default="user@192.168.0.86")
+    s.add_argument("--host", default=os.environ.get("ROADSENSE_PHONE", "user@phone"),
+                   help="ssh target (default: $ROADSENSE_PHONE, else user@phone)")
     s.add_argument("--remote-dir", default="roadsense-maps", help="directory on the device (relative to the home directory)")
     s.add_argument("--dry-run", action="store_true", help="print the commands only")
     s.set_defaults(fn=cmd_install)

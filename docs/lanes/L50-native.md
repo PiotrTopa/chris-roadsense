@@ -172,7 +172,7 @@ input; the lane tracker frame by frame; a simulated drive through both implement
 Commands:
 
 ```sh
-cd ~/projects/wt/roadsense-l50; PY=~/projects/roadsense/.venv-models/bin/python; D=~/datasets/roadsense-rec
+cd ~/projects/wt/roadsense-l50; PY=~/projects/roadsense/.venv-models/bin/python; D=<datasets>/roadsense-rec
 export PYTHONHASHSEED=0; PACK=~/roadsense-maps/packs/poland-20261114-f2.rsmap; O=/tmp/l50; B=chris-integrator/tools/cost_bench.py
 (cd chris-integrator && sh native/build.sh)                         # this machine's module, with its self-test
 (cd chris-integrator && PYTHONPATH=/usr/lib/python3/dist-packages $PY -m pytest -q -p no:cacheprovider tests)
@@ -325,7 +325,7 @@ The ratios are the laptop's: the phone prices Python and numpy alike about seven
 runs; no unit, no configuration, no other package touched). Check: `cd /usr/local/lib/chris && find
 chris_integrator -name '*.py' | LC_ALL=C sort | xargs sha256sum | sha256sum` = `70e72fe5...43387e` (the same in
 `chris-integrator/` of this branch); module `native/_chris_native.abi3.so` sha256 `5382b037...a190`; marker
-`.deployed-commit-chris_integrator` = 7d1a07e. The phone's source tree `~user/d1/roadsense` got this branch's
+`.deployed-commit-chris_integrator` = 7d1a07e. The phone's source tree `<phone-home>/d1/roadsense` got this branch's
 `chris-integrator/` (with `native/dist/`) and `scripts/sync-phone.sh`.
 
 **Live** (full stack on the replay playlist, each run started fresh, 200 s warm-up, 240 s window,
@@ -353,10 +353,10 @@ chris_integrator -name '*.py' | LC_ALL=C sort | xargs sha256sum | sha256sum` = `
 **Undo.** Softest: the line `CHRIS_NATIVE=0` in `/etc/chris/integrator.env` and a restart of the stack (the same
 package on pure Python; that is how the comparison runs above were made). The package: as root, stack off
 (`roadsense_mode off`), `mv /usr/local/lib/chris/chris_integrator{,.l50}`, `tar xzf
-/home/user/rollback-20261120-l50/chris-lib-before.tar.gz -C / usr/local/lib/chris`, `roadsense_mode auto`
+<phone-home>/rollback-20261120-l50/chris-lib-before.tar.gz -C / usr/local/lib/chris`, `roadsense_mode auto`
 (`RESTORE.txt` in that folder, root 0700; it also holds the replaced package directory, the state files as
 found and the bench's five recorder sessions, 273 MB). The replaced source-tree files:
-`~user/l50/d1-roadsense-replaced-files-fae9098.tgz`.
+`<phone-home>/l50/d1-roadsense-replaced-files-fae9098.tgz`.
 
 **The state the phone was left in (15:30 CET):** as found, with the new package. `roadsense_mode auto`, the
 stack running on the DVR camera source with no camera attached (the bench's five-minute restart loop goes on);
@@ -365,7 +365,7 @@ the copies of 14:13 and verified by checksum (`/var/lib/chris/integrator.json`, 
 `/var/lib/roadsense/camera-calibration.json`, `signs.jsonl`, `vehicle-calibration.json`, `/etc/roadsense/calib.json`);
 the recordings folder holds the 93 sessions it held. `chris-integrator.service` disabled as the provisioning
 wants it; `CHRIS_NATIVE` not set. No reboot, no package installed, highest temperature 84.4 C. Working files in
-`~user/l50` (trees, results, scripts; deletable). CMDB: `~/.infra/servers/poco.md` updated in place, `dotinfra
+`<phone-home>/l50` (trees, results, scripts; deletable). CMDB: the phone's entry updated in place, `dotinfra
 lint` clean, synced, event 12.
 
 **The install script and the unit's link** (L49's finding): `scripts/install.sh` re-created

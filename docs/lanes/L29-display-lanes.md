@@ -114,7 +114,7 @@ trained on a data set with a non-commercial or research-only licence (CULane, Tu
 Whether weights inherit that is not settled; they would in any case be fetched by a script and not committed. If
 one were adopted, the cautious place is roadsense-signs or a fetch-only model with the note in docs/LICENSES.md:
 a decision for the owner. The classical analysis has no such question. Nothing was downloaded beyond the three
-model files above (246 MB) into `~/datasets/l29/dl`, each in its own directory; no data set.
+model files above (246 MB) into `<datasets>/l29/dl`, each in its own directory; no data set.
 
 ## 3. Method
 
@@ -227,7 +227,7 @@ Hand check (by eye, tuning rides): on the expressway and in the tunnels the clas
 (solid, dashed, and the double edge line as one). In town it finds the dashed lines and also kerbs and the edge
 of a hatched area; behind stopped traffic it draws nothing. In the storm ride it drew lines on a kerb, on a
 fence base and on the streak of a red light (the rule against lines through the camera's foot point was added
-for that). On the night snow it follows wheel tracks. Sheets: `~/datasets/l29/out/*.jpg`.
+for that). On the night snow it follows wheel tracks. Sheets: `<datasets>/l29/out/*.jpg`.
 
 ## 5. What was built
 
@@ -259,13 +259,13 @@ ego-lane filter, and `view.road` / `view.objects` message for message (identical
 
 End to end on the laptop (`tools/ring_replay.py` as the camera at 5 frames a second, the daemon, a socket
 client, a governor file): 5.0 messages a second, 3.5-4.9 ms per frame with the laptop loaded, no message while
-`laned_hz` is 0, back at once when the cap goes (`~/datasets/l29/e2e/run.sh`).
+`laned_hz` is 0, back at once when the cap goes (`<datasets>/l29/e2e/run.sh`).
 
 ## 6. MFD (car repo)
 
 Chain replay as L27 did it: `tools/view_replay.py STREAM --ws WS`, then the car repo's
 `tools/scene_feed_replay.py WS --strip 60:6:PNG` (frontend interpreter
-`~/projects/cyberpank-prius-gen2-computer/.venv-fe`, system numpy through `PYTHONPATH=~/datasets/l27/mfd/np`).
+`~/projects/cyberpank-prius-gen2-computer/.venv-fe`, system numpy through `PYTHONPATH=<datasets>/l27/mfd/np`).
 "Before" = the new default's road stream (13.8 runs/s, 0-180 s); "after" = the same stream with laned's messages
 (5 a second, 50 ms late), seam default.
 
@@ -278,8 +278,8 @@ Chain replay as L27 did it: `tools/view_replay.py STREAM --ws WS`, then the car 
 
 The MFD draws the new lines; the picture is the same picture with slightly moved lines, steadier near the car
 on the motorway and a little less steady at 30 m in town. Screenshots (six consecutive drawn frames from 60 s):
-`/home/piotr/datasets/l29/mfd/mfd_a1-night_before.png`, `/home/piotr/datasets/l29/mfd/mfd_a1-night_after.png`,
-`/home/piotr/datasets/l29/mfd/mfd_warsaw-city_before.png`, `/home/piotr/datasets/l29/mfd/mfd_warsaw-city_after.png`.
+`<datasets>/l29/mfd/mfd_a1-night_before.png`, `<datasets>/l29/mfd/mfd_a1-night_after.png`,
+`<datasets>/l29/mfd/mfd_warsaw-city_before.png`, `<datasets>/l29/mfd/mfd_warsaw-city_after.png`.
 
 Car repo: the MFD code needed no change (the scene director already handles lines of changing length). One
 edit, in a tool only, on branch `v2-l29` (worktree `~/projects/wt/prius-l29`, so that `wt/prius-v2` stayed
@@ -321,8 +321,8 @@ All of this is an estimate until step 2 below.
 | suite | command | result |
 |---|---|---|
 | roadsense api | `PYTHON=~/projects/roadsense/.venv-models/bin/python sh tools/smoke_api.sh` | 252 passed (242 on `v2`, one seam test replaced by 11 in `api/tests/test_display_lanes.py`) |
-| C++ | whole tree, Release, `-DROADSENSE_NCNN=ON` (L27's configuration), build tree `~/datasets/l29/build` | builds, laned and laned_replay without warnings; laned alone: `cmake -S laned` |
-| daemon end to end, laptop | `~/datasets/l29/e2e/run.sh` | section 5 |
+| C++ | whole tree, Release, `-DROADSENSE_NCNN=ON` (L27's configuration), build tree `<datasets>/l29/build` | builds, laned and laned_replay without warnings; laned alone: `cmake -S laned` |
+| daemon end to end, laptop | `<datasets>/l29/e2e/run.sh` | section 5 |
 | car suite (`v2-l29` of the car repo = `v2` + the tool fix) | `PRIUS_ROADSENSE_REPO=<this worktree> SDL_VIDEODRIVER=dummy .venv-fe/bin/python -m pytest -q tests` | 1697 passed, 19 skipped, 5 failed: the five BEAN tests of `tests/test_bean_rx.py` / `test_bean_tx.py` that read `tests/fixtures/bean_nhw20_frames.txt.gz`, a file that is untracked in `wt/prius-v2` and therefore absent in a fresh worktree (FileNotFoundError); no roadsense code |
 | MFD chain replay, recorded car drive | section 6 | identical to `v2` |
 | MFD scene feed replay with laned | section 6 | draws; screenshots there |
@@ -339,7 +339,7 @@ python tools/laned/display_eval.py score sc=SC.npz vis=VIS.npz cl=V.npz --ego SC
        [--labels LANES.csv --source RIDE] --paint $L29_FRAMES/RIDE.nv12 --frame0 N --focal F --calib RIDE/calib.json --trim-for cl=DL.jsonl
 ```
 
-The drivers that ran the tables (`~/datasets/l29/work/*.sh`, results `~/datasets/l29/res/*.json`) are not in the
+The drivers that ran the tables (`<datasets>/l29/work/*.sh`, results `<datasets>/l29/res/*.json`) are not in the
 repo; they only loop these commands over the rides.
 
 ## 10. Limits, and what is open

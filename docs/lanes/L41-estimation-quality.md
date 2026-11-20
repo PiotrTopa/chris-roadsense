@@ -497,7 +497,7 @@ New output fields, additive: `ego_state.diagnostics[]`, `ego_state.tables_age_s`
 ## 10. Reproducing
 
 ```sh
-cd ~/projects/wt/roadsense-l41; D=~/datasets/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; L38=~/projects/wt/roadsense-l38; O=/tmp/l41; mkdir -p $O
+cd ~/projects/wt/roadsense-l41; D=<datasets>/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; L38=~/projects/wt/roadsense-l38; O=/tmp/l41; mkdir -p $O
 PP=$(python3 -c "import pytest,os;print(os.path.dirname(os.path.dirname(pytest.__file__)))"); PY=~/projects/roadsense/.venv-models/bin/python
 PYTHONPATH=$PP $PY -m pytest -q -p no:cacheprovider chris-integrator/tests     # 39 passed
 PYTHONPATH=$PP $PY -m pytest -q -p no:cacheprovider api/tests                  # 255 passed

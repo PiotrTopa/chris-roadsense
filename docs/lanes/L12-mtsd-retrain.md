@@ -13,7 +13,7 @@ roadsense-signs `tools/mtsd/` (data, training, classifier scoring), this repo `d
 ## Journal
 
 ### 0. Data (19:44-20:20)
-* Signed links (13, valid until 2026-11-26) in `~/datasets/mtsd/urls.txt` (mode 600, never printed). HEAD of every
+* Signed links (13, valid until 2026-11-26) in `<datasets>/mtsd/urls.txt` (mode 600, never printed). HEAD of every
   link, then the two `.txt` files read (md5 lists): 6 files `mtsd_v2_fully_annotated_*` (annotation 121 MB,
   images test 8.96 GB, train.0/1/2 10.38/10.36/10.39 GB, val 4.57 GB) and 5 `mtsd_v2_partially_annotated_*`
   (annotation 72 MB, train.0-3 11.8-11.9 GB each, ~47.5 GB).

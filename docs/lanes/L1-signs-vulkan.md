@@ -226,7 +226,7 @@ hottest zone 67 C, cpu7 57 C, gpu 66 C. Matches the interpolation (5 signs/s, >=
 ## 5. Phone state at hand-back
 camerad-dvr + modeld + api running as found; roadsense-signd stopped as found, but its binary,
 the *-ncnn models (`/var/lib/roadsense/models/mtsd_*-ncnn.{param,bin}`) and the unit file were
-reinstalled from the L1 tree with `NCNN_DIR=/home/user/vulkan-work/ncnn BUILD=/var/tmp/roadsense-signs-build
+reinstalled from the L1 tree with `NCNN_DIR=<phone-home>/vulkan-work/ncnn BUILD=/var/tmp/roadsense-signs-build
 scripts/install-phone.sh` (see below), so `systemctl start roadsense-signd` now starts the
 recommended GPU configuration. Scratch: `~/l1/` (scripts, user build, replay outputs), `~/roadsense-signs`
 synced to the committed tree.

@@ -2,8 +2,8 @@
 
 Execution lane of the 2.0 campaign, 2026-11-19 01:40-05:26 CET (Warsaw local), Opus. Phone on the bench (no camera, no
 gateway), reached over its access point; rides replayed. Nothing installed: the merged branches (roadsense `v2`
-27b9fcc, roadsense-signs `v2` 3749b60) were built in `/home/user/l28` (`l28-build`, 01:45-01:51) and run from
-there as transient units; models in `/home/user/l28/models` (copied from `/home/user/l27/models`, sha256 as in
+27b9fcc, roadsense-signs `v2` 3749b60) were built in `<phone-home>/l28` (`l28-build`, 01:45-01:51) and run from
+there as transient units; models in `<phone-home>/l28/models` (copied from `<phone-home>/l27/models`, sha256 as in
 L27 section 1). Phone lock taken from `L24` as `L28`. Harness: `tools/governor/l28/` (batch scripts, profile) and
 two small fixes (section 4).
 
@@ -294,8 +294,8 @@ Readings:
   minimum, GPU minimum 257 MHz); hottest zone 32 C; `/run/phone-lane.lock` removed; the netwatch drop-in
   `/run/systemd/system/prius-netwatch.service.d/99-lane-off.conf` **left in place** (prius-netwatch inactive);
   nothing installed, `/etc` and the car backend untouched, no `apk`, no adb.
-* Files: `/home/user/l28` (1.5 GB: sources, builds, models copy, `out/` traces and logs, `fp16/` streams 430 MB);
-  other lanes' directories untouched. Laptop copies of the results: `/mnt/win/linux-scratch/l28/{out,fp16}`.
+* Files: `<phone-home>/l28` (1.5 GB: sources, builds, models copy, `out/` traces and logs, `fp16/` streams 430 MB);
+  other lanes' directories untouched. Laptop copies of the results: `<scratch>/l28/{out,fp16}`.
 
 ## 6. Open
 

@@ -34,7 +34,7 @@
 - [x] api topic `fused` (speed limit, built-up, place, lanes, tunnel with provenance), `/v1/map`, `/v1/fused`, status page
 - [x] `scripts/roadsense-maps` (fetch, build, info, verify, install); Poland pack built on the dev box (docs/MAPS.md, docs/lanes/L13-mapd.md)
 - [ ] a real position source: no feeder exists yet (the car's head-unit GNSS and the Prius CAN motion are to be fed by the car backend); every number so far comes from `tools/synth_drive.py`
-- [x] mapd on the phone (2026-11-15): deployed with `install-phone.sh` (`roadsense-mapd.service` in `roadsense.target`, started/stopped by the car backend with the rest of the stack); Poland pack (262 MB, OSM 2026-11-14) at `/var/lib/roadsense/maps/current.rsmap` -> `~user/roadsense-maps/poland-20261114.rsmap`, sha256 checked. Measured on the phone (little cores 0-2, Nice 10): idle 0.35 % of one core, 37 MB RSS; live synthetic drives (GNSS 1 Hz + motion 20 Hz) 8.2 % (S2 tunnel) / 9.6 % (Warsaw city) of one core, RSS max 46 / 52 MB, step 15 / 22 ms mean (EMA, max 40 ms), `map` message 2.9 / 5.6 kB, api +~2 % of one core with the new topics; tile load 10.6 ms cold / 4.4 ms warm (p50 of the 20 largest tiles + city centres, max 14 ms); offline replay results (on-route %, dead-reckoning error, tunnel announcement) identical to the laptop
+- [x] mapd on the phone (2026-11-15): deployed with `install-phone.sh` (`roadsense-mapd.service` in `roadsense.target`, started/stopped by the car backend with the rest of the stack); Poland pack (262 MB, OSM 2026-11-14) at `/var/lib/roadsense/maps/current.rsmap` -> `<phone-home>/roadsense-maps/poland-20261114.rsmap`, sha256 checked. Measured on the phone (little cores 0-2, Nice 10): idle 0.35 % of one core, 37 MB RSS; live synthetic drives (GNSS 1 Hz + motion 20 Hz) 8.2 % (S2 tunnel) / 9.6 % (Warsaw city) of one core, RSS max 46 / 52 MB, step 15 / 22 ms mean (EMA, max 40 ms), `map` message 2.9 / 5.6 kB, api +~2 % of one core with the new topics; tile load 10.6 ms cold / 4.4 ms warm (p50 of the 20 largest tiles + city centres, max 14 ms); offline replay results (on-route %, dead-reckoning error, tunnel announcement) identical to the laptop
 - [ ] mapd step time on the phone is 20-30x the laptop's (laptop 0.7 ms) while one tile decode is only ~2.5x slower: probably low little-core clocks at an 8 % duty cycle (not verified); fine at 2 Hz, worth a look before raising `hz`
 - [ ] vehicle constants (`wheelbase_m`, `steering_ratio`, `track_m`) are nominal Prius values, not calibrated; vision odometry speed depends on the camera calibration
 - [ ] built-up area is inferred from landuse where no tag states it (D-42 / D-43 sign nodes are not used); turn restrictions, turn lanes and lane-level geometry are not in the pack
@@ -170,3 +170,17 @@ The ncnn/Vulkan fp16-packed backend misses the original accuracy gate only at th
 - [ ] fp16 on the Adreno: the lead distance of this model differs from fp32 by 0.37 m on average (0.86 m p95), twice supercombo's; the strict gate script rejects both models on the 120-frame bench clip (its maximum runs over absent lines to 192 m). A longer clip with leads through both arithmetic paths and the tracker is open
 - [ ] the run rate is now set by the GPU turn-taking with the sign detector (tuned for supercombo's 54 ms run), not by the GPU: 7 points of GPU time are unused
 - [ ] not deployed; the car's own camera has not seen this model
+
+## chris: roadsense becomes the per-camera input of an integrator (lanes L35-L51, 2026-11-19 / 20; docs/lanes/)
+The stack is now **chris**: roadsense is one camera's perception (raw topics, the load governor, a debug face on
+port 8091), and everything that combines sources, tracks over time, decides or is the consumers' interface moved
+to **chris-integrator** (top-level `chris-integrator/`, consolidated API on port 8090) with the map as its own
+box **chris-mapper** (`chris-mapper/`). Both are also published as their own repositories
+(github.com/PiotrTopa/chris-integrator, github.com/PiotrTopa/chris-mapper).
+- [x] ego-motion and input audit (L35); integrator design and first build in the api (L37, L38)
+- [x] the integrator as a mixer: input / output channels, plug-in transformers on one bus; consolidated topics moved out of the api; the map box split off (L39); mapd stays as a legacy daemon, off in the chris stack
+- [x] estimation quality, fault detection, object layer (L41); road-user classes end to end, non-critical (L42)
+- [x] one deployable state: vehicle input store, install scripts and units, public split (L43)
+- [x] cost on the phone with identical outputs (L46), the position / map loop on poor reception (L47), whole-system budget (L48, L49), a native core for the hot path, deployed on the phone (L50)
+- [x] chris-integrator and chris-mapper ready for their own public repositories (L51)
+- [ ] real-drive ground truth for the map match and the stated position uncertainty (L47 rests on simulation for those claims)

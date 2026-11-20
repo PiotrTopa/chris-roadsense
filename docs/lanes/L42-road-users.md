@@ -1,6 +1,6 @@
 # L42: road-user classes end to end (non-critical)
 
-Lane L42, 2026-11-19, laptop only (phone and car read-only; nothing deployed; the phone, `user@10.200.0.14`, did
+Lane L42, 2026-11-19, laptop only (phone and car read-only; nothing deployed; the phone, `user@phone`, did
 not answer, so the 2026-11-19 recordings' frames could not be fetched: the evaluation uses the eleven earlier car
 drives with frames on the laptop, `~/roadsense-rec/2026111[2-8]-*`). Owner's words: "we were adding on roadsense
 a possibility to distinguish human, bike, bus, truck, car and visualise accordingly, as non-critical
@@ -132,13 +132,13 @@ have no frames on the laptop and the phone did not answer. Full rate: two rides 
 
 ### 3.1 Labelled sets (labelled by eye before anything was scored; one labeller)
 
-* **Detections** (`~/datasets/l42/dets`): 216 boxes of the unit's two light views (141 wide, 75 second view), a
+* **Detections** (`<datasets>/l42/dets`): 216 boxes of the unit's two light views (141 wide, 75 second view), a
   stratified sample by the detector's class (45 per class where there were that many: bike 32, motorbike 4, no
   train at all) of the boxes with score >= 0.3 and height >= 14 px, from 199 frames of 9 drives. The sheets show
   the box on a crop and a number, never the class. Labels: person, bike (cyclist or bicycle), motorbike, car, van,
   truck, bus, tram, other. The same parked bus or a row of parked bicycles appears in several seconds: the
   sample is not 216 independent objects.
-* **Leads** (`~/datasets/l42/lead`): 150 frames where the road model had a lead (prob >= 0.5, 3-70 m), at most
+* **Leads** (`<datasets>/l42/lead`): 150 frames where the road model had a lead (prob >= 0.5, 3-70 m), at most
   one per 20 s of a drive, from 8 drives; the lead's projected rear drawn on a wide crop. Labels: 124 car, 1 van,
   25 none (no vehicle where the road model puts the lead, or unreadable). No truck, bus or two-wheeler lead in
   the sample: on these drives the car followed cars.
@@ -148,7 +148,7 @@ have no frames on the laptop and the phone did not answer. Full rate: two rides 
 
 ### 3.2 Per-detection classes (before any vote)
 
-`tools/road_users/score.py ~/datasets/l42/dets` (rows: label; columns: the detector's class after rider
+`tools/road_users/score.py <datasets>/l42/dets` (rows: label; columns: the detector's class after rider
 pairing; `dropped` = below its class threshold):
 
 | label \ detector | bike | bus | car | motorbike | person | truck | dropped | n |
@@ -279,7 +279,7 @@ on / off: objects come and go with the view's fade (`appear` after two placed de
 shape hopping: the class is a vote with a sticky label in the integrator, and the backend's confidence rule.
 
 Screenshots (headless, `SDL_VIDEODRIVER=dummy`, `python -m cyberpunk_computer.ui.scene.demo --shots DIR`), shots
-88-94 in `~/datasets/l42/shots/` (`NN_name.png` native 480x240, `NN_name@4x.png`): 88 lead truck + car + bus in
+88-94 in `<datasets>/l42/shots/` (`NN_name.png` native 480x240, `NN_name@4x.png`): 88 lead truck + car + bus in
 the left lane, 89 lead bus, 90 lead van + truck, 91 lead motorbike + cyclist at the edge, 92 lead cyclist, 93
 pedestrians at the edge and crossing + a cyclist, no lead, 94 lead of unknown class (generic car) + van, car,
 pedestrian. Shots 1-87 and the sign legend are byte-identical to `main`'s (176 files compared).
@@ -344,30 +344,30 @@ lines 44-80 of `v2-l39`: `classify` / `class_of` now call `core/classvote.py`; L
 
 Laptop; heavy runs inside `systemd-run --user -p MemoryMax=...`. `SIGNS` = roadsense-signs checkout (branch
 `l42-road-users`), `RS` = this checkout; the light detector `bdd100k_yolo11n_320x960(.onnx | -ncnn.param)` as
-installed by roadsense-signs `scripts/fetch-models.sh` (here `~/datasets/l26/models/`); a venv with
+installed by roadsense-signs `scripts/fetch-models.sh` (here `<datasets>/l26/models/`); a venv with
 onnxruntime + opencv for the scan (here `~/l7/venv`).
 
 ```sh
 # signd, lights_replay and the tests (ncnn from scripts/build-ncnn.sh or the L26 tree)
-cmake -S $SIGNS -B build -DROADSENSE_DIR=$RS -DROADSENSE_NCNN=ON -DNCNN_DIR=~/datasets/l26/ncnn && cmake --build build -j4
+cmake -S $SIGNS -B build -DROADSENSE_DIR=$RS -DROADSENSE_NCNN=ON -DNCNN_DIR=<datasets>/l26/ncnn && cmake --build build -j4
 build/road_users_test && build/lights_tracker_test && build/signs_tracker_test
 # 3.7: light messages unchanged with the flag off (old build = main) and the light part unchanged with it on
 build/lights_replay --backend ncnn-cpu --model M-ncnn.param --roi2 0.125,0.125,0.875,0.569 --thr-keep 0.12 --coast 3 [--road-users] FRAMES...
 
 # 3.1-3.2: the detector on the recorded frames (all three views), blind sheets, labels by eye, scores
 LIGHTS_DET=M.onnx THREADS=6 python $SIGNS/tools/road_users/car_scan.py car_scan.npz ~/roadsense-rec/2026111[2-8]-*
-python $SIGNS/tools/road_users/sheets.py dets car_scan.npz ~/datasets/l42/dets --per-class 45       # -> labels.txt by eye
-python $SIGNS/tools/road_users/sheets.py lead SESSIONS... --out ~/datasets/l42/lead --n 150        # -> labels.txt by eye
-python $SIGNS/tools/road_users/score.py ~/datasets/l42/dets [--screen]
+python $SIGNS/tools/road_users/sheets.py dets car_scan.npz <datasets>/l42/dets --per-class 45       # -> labels.txt by eye
+python $SIGNS/tools/road_users/sheets.py lead SESSIONS... --out <datasets>/l42/lead --n 150        # -> labels.txt by eye
+python $SIGNS/tools/road_users/score.py <datasets>/l42/dets [--screen]
 
 # 3.3-3.5: through chris-integrator, per session (calibration of the car per section 3.5)
-python $RS/tools/road_users_eval.py car_scan.npz ~/roadsense-rec/SESSION --calib -1.3,-3.3 --labels ~/datasets/l42/lead [--no-cost] --out SESSION.json
+python $RS/tools/road_users_eval.py car_scan.npz ~/roadsense-rec/SESSION --calib -1.3,-3.3 --labels <datasets>/l42/lead [--no-cost] --out SESSION.json
 
 # 3.4 full rate: a ride split to 5 frames a second, the unit's two views with the ROIs moved to the car's horizon
-python -I $SIGNS/tools/road_users/mjpeg_frames.py ~/datasets/rides/warsaw-city/warsaw-city.mjpeg ~/datasets/l42/rides/warsaw-city
+python -I $SIGNS/tools/road_users/mjpeg_frames.py <datasets>/rides/warsaw-city/warsaw-city.mjpeg <datasets>/l42/rides/warsaw-city
 build/lights_replay --backend ncnn-cpu --model M-ncnn.param --roi 0,0.10,1,0.72 --roi2 0.125,0.225,0.875,0.669 --thr-keep 0.12 \
     --coast 3 --threads 4 --road-users $(cat warsaw-city.list) > warsaw-city.lights.jsonl
-python $RS/tools/road_users_ride.py ~/datasets/rides-road/warsaw-city.road.jsonl.gz warsaw-city.lights.jsonl warsaw-city.list
+python $RS/tools/road_users_ride.py <datasets>/rides-road/warsaw-city.road.jsonl.gz warsaw-city.lights.jsonl warsaw-city.list
 
 # tests
 (cd $RS/chris-integrator && PYTHONPATH=$PP $PY -m pytest -q -p no:cacheprovider tests)   # 300 passed (288 + 12 new)
@@ -376,7 +376,7 @@ python $RS/tools/road_users_ride.py ~/datasets/rides-road/warsaw-city.road.jsonl
 SDL_VIDEODRIVER=dummy .venv-fe/bin/python -m cyberpunk_computer.ui.scene.demo --shots DIR   # shots 88-94
 ```
 
-Data (laptop, not in any repository: the owner's frames and labels): `~/datasets/l42/` (`car_scan.npz`,
+Data (laptop, not in any repository: the owner's frames and labels): `<datasets>/l42/` (`car_scan.npz`,
 `dets/` and `lead/` sheets, samples and labels, `rides/` frames and light messages, `shots/`).
 
 ## 10. Branch heads

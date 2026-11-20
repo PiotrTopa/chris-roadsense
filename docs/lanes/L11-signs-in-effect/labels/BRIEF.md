@@ -6,7 +6,7 @@ You label ONE ride. You never see any engine output; you write what a careful Po
 * Contact sheets: `~/l11/frames/<slug>/sheet_NNN.jpg` — 12 frames per sheet, one frame every 2.0 s, the ride time (m:ss.s)
   printed on each tile. Look at EVERY sheet in order (Read tool). Signs are small on the sheets: whenever a tile shows a
   sign post, a junction, a village entry or anything doubtful, pull full-resolution frames with
-  `/home/piotr/projects/roadsense/.venv-models/bin/python ~/l11/scripts/frame.py <slug> T1 T2 ...` (ride seconds, 0.05 s
+  `~/projects/roadsense/.venv-models/bin/python ~/l11/scripts/frame.py <slug> T1 T2 ...` (ride seconds, 0.05 s
   steps are fine; prints the JPEG paths; ~2 s per call) and Read them. Be generous with full frames: a sign is readable
   only when it is close (one or two frames before the car passes it). Typical need: 30-80 full frames per ride.
 * The video is 20 fps; frame.py time = ride time. The car drives on the right (Poland).

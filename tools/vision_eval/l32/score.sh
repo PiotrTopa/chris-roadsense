@@ -1,14 +1,14 @@
 #!/bin/sh
 # after ac_all.sh: lead place by distance, lead tables (L27/L29), lanes / far range (L24-M) before and after
-W=/home/piotr/projects/wt/roadsense-l32; AC=/home/piotr/datasets/l32/ac; R=/home/piotr/datasets/l32/res; mkdir -p $R
-PY=/home/piotr/projects/roadsense/.venv-models/bin/python
+W=$HOME/projects/wt/roadsense-l32; AC=$HOME/datasets/l32/ac; R=$HOME/datasets/l32/res; mkdir -p $R
+PY=$HOME/projects/roadsense/.venv-models/bin/python
 cd $AC
 for t in off warm cold pcold poff; do
   python3 $W/tools/vision_eval/lead_lateral.py $(ls *.$t.13.8.jsonl.gz) --json $R/lat_$t.json > $R/lat_$t.txt
 done
 # the lead tables: supercombo's stream of L24-M as the reference stream, then the vision streams
 mkdir -p $R/road; for f in $AC/*.13.8.jsonl.gz; do ln -sf $f $R/road/; done
-for f in /home/piotr/datasets/openpilot-models/l24/road/*.sc.13.8.jsonl.gz /home/piotr/datasets/openpilot-models/l24/road/*.vis.20.jsonl.gz; do ln -sf $f $R/road/; done
+for f in $HOME/datasets/openpilot-models/l24/road/*.sc.13.8.jsonl.gz $HOME/datasets/openpilot-models/l24/road/*.vis.20.jsonl.gz; do ln -sf $f $R/road/; done
 $PY $W/tools/vision_eval/lead_eval.py extract $R/road $R/lead > $R/extract.log 2>&1
 for set in "tune krakow-2024,warsaw-storm,gdansk-night-snow,tunnels-s3" "held s7-elblag-lowsun,krakow-night-tunnel,a1-night,warsaw-city"; do
   set -- $set

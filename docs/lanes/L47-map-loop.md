@@ -509,7 +509,7 @@ The state grew by one (`gnss.ue` / `un` replace `be` / `bn`; `map.amb` is new).
 ## 9. Reproducing
 
 ```sh
-cd ~/projects/wt/roadsense-l47; D=~/datasets/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; O=/tmp/l47; mkdir -p $O
+cd ~/projects/wt/roadsense-l47; D=<datasets>/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; O=/tmp/l47; mkdir -p $O
 PY=~/projects/roadsense/.venv-models/bin/python; PP=$(python3 -c "import pytest,os;print(os.path.dirname(os.path.dirname(pytest.__file__)))")
 # "main" below = a checkout of 6054373 with this branch's three tools and sim/sensors.py copied over it (the
 # same tools, simulator and receivers on both sides):

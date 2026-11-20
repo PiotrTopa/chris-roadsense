@@ -1,9 +1,18 @@
 # roadsense
 
 **Camera road perception for any car, on a phone.** A forward-looking camera watches the road; a
-handful of small daemons turn the stream into structured road understanding (lanes, road edges,
-lead vehicle, traffic lights, signs, scenery and an OpenStreetMap layer) and serve it over a local
-HTTP / WebSocket API.
+handful of small daemons turn one camera's stream into structured road understanding (the road model's
+path, lane lines, road edges and lead vehicles, scenery, and the sockets for sign and traffic-light
+providers).
+
+roadsense is the **per-camera perception** of **chris**, a perception stack for a car computer. Its output
+is one input of [chris-integrator](chris-integrator/) (also published as
+[PiotrTopa/chris-integrator](https://github.com/PiotrTopa/chris-integrator)), which combines it with the
+car's own motion and signals, GNSS and the map box [chris-mapper](chris-mapper/)
+([PiotrTopa/chris-mapper](https://github.com/PiotrTopa/chris-mapper)), takes the decisions (lead vehicle,
+lanes, speed limit, ego traffic light, ...) and serves the consolidated HTTP / WebSocket API that consumers
+read. Both live in this repository as top-level directories and are mirrored to their own repositories.
+roadsense itself keeps a debug face per camera (raw topics, `/preview` with overlays, the load governor).
 
 ![roadsense output drawn on a Toyota Prius multi-display: lanes, lead vehicle 26 m ahead with a 1.8 s gap](docs/images/mfd_curve_night.png)
 
@@ -20,7 +29,14 @@ that uses it (headless render with simulated data).</sub>
 * In the spirit of [openpilot](https://github.com/commaai/openpilot) (its MIT driving models are
   used) and [flowpilot](https://github.com/flowdriveai/flowpilot) (GPL-3.0: ideas only, no code).
 
-## What it serves
+## What the stack serves
+
+The topics below are what a consumer of the whole stack gets. The raw per-camera ones (`road`, `env`,
+`camera`, `health`, and `signs` / `lights` from a provider) come from roadsense; everything that combines
+sources, tracks over time or decides (`lanes`, `lead`, the ego light, `speed_limit`, `rules`, `map`,
+`fused`, `vehicle` / `objects` / `ego_state`, `view`) is produced and served by chris-integrator since lanes
+L37-L43 (the "api tracker" and "mapd" in the table are where that logic lived before; mapd remains as a
+legacy daemon, off in the chris stack).
 
 | Topic | Source | Content |
 |---|---|---|
@@ -67,18 +83,21 @@ contract: [MFD_MAIN_SCREEN.md](https://github.com/PiotrTopa/cyberpank-prius-gen2
 ## Architecture
 
 ```
- camera ──> camerad ──> shared-memory frame ring (NV12 + intrinsics, 20-30 fps)
-                               ┌──────────────┴──────────────┬───────────────────────┐
-                               ▼                             ▼                       ▼
-                     modeld (C++, ncnn / ONNX Runtime)   envd (C++, 1 fps)   sign provider (optional)
-                               │      newline-delimited JSON over Unix sockets       │
-                               └──────────────┬──────────────┴───────────────────────┘
- position feeder (GNSS, vehicle motion) ──> mapd (Python, map pack) ──┤
-                                              ▼
-                                    api (Python, aiohttp) ──> HTTP /v2/*, WebSocket /ws, MJPEG /preview
+ roadsense (per camera)                                       chris-integrator (the mixer)
+ camerad ──frame ring (shm)──┬──> modeld ──── road, calib ──┐
+                             ├──> envd (1 fps) ── env ──────┤    input channels ─> bus ─> plug-ins:
+                             ├──> sign provider ─ signs ────┼──> estimator, map box (chris-mapper),
+                             ├──> light provider  lights ───┤    lanes, ego light, sign context, rules,
+                             └──> laned (optional) ─────────┤    fused, view ─> output channels:
+ api (debug face: /preview, raw topics, governor) ──────────┘    HTTP /v2 + /ws (port 8090), socket, recorder
+                                                                        ▲
+ the car (motion, GNSS, controls, body, objects) ── vehicle input API ──┘
 ```
 
-The processes share only two mechanisms:
+Full picture and the cut between the two: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (top) and
+[chris-integrator/docs/DESIGN.md](chris-integrator/docs/DESIGN.md).
+
+Inside roadsense the processes share only two mechanisms:
 
 * the **frame ring** `/dev/shm/roadsense-frames`: a 4096-byte header (magic `RSFRAME1`, size,
   strides, focal length and principal point) and 6 NV12 slots with sequence numbers and timestamps;
@@ -100,11 +119,11 @@ The processes share only two mechanisms:
   either can host it.
 * **The car's own data:** any process may feed GNSS fixes, the car's motion (speed, yaw rate, wheel
   speeds, steering angle), driver controls (turn signal, brake, cruise), body signals and radar object
-  lists to `<rundir>/position.sock`: the car-agnostic vehicle input API
-  ([docs/VEHICLE_API.md](docs/VEHICLE_API.md), reference client `tools/vehicle_client.py`, a minimal
-  OBD-II + GPS feeder in `tools/examples/`). Every signal is optional and carries its quality; roadsense
-  reports back what it holds and what it could calibrate (topic `vehicle`). mapd filters the position,
-  dead-reckons through drop-outs and matches to the map. Without a feeder or a pack the map layer reports "unavailable" and everything else runs
+  lists to chris-integrator's `feed.sock` (also served as `position.sock`): the car-agnostic vehicle input
+  API ([docs/VEHICLE_API.md](docs/VEHICLE_API.md), reference client `tools/vehicle_client.py`, a minimal
+  OBD-II + GPS feeder in `tools/examples/`). Every signal is optional and carries its quality; the
+  integrator reports back what it holds and what it could calibrate (topic `vehicle`). Its estimator filters
+  the position, dead-reckons through drop-outs, and the map box matches it to the map. Without a feeder or a pack the map layer reports "unavailable" and everything else runs
   on vision alone. Packs are built from OpenStreetMap with `scripts/roadsense-maps`
   ([docs/MAPS.md](docs/MAPS.md)).
 
@@ -131,11 +150,11 @@ scripts/fetch-models.sh            # dev box: download the road models (pinned s
 scripts/push-models.sh             # models -> phone ~/roadsense/models
 scripts/sync-phone.sh user@phone   # source tree -> phone ~/roadsense
 ssh user@phone 'cd ~/roadsense && sudo sh scripts/install-phone.sh && sudo systemctl start roadsense.target'
-curl http://phone:8080/v2/health   # or open http://phone:8080/ for the status page
+ssh user@phone curl -s http://127.0.0.1:8090/v2/health   # chris-integrator (consumer API); 8091: roadsense's debug face
 
 # GPU backend (modeld --backend ncnn): build ncnn once (~45 min), then install with it
 ssh -t user@phone 'sh ~/roadsense/scripts/build-ncnn.sh ~/ncnn'
-ssh user@phone 'cd ~/roadsense && sudo CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=/home/user/ncnn" BUILD=build-ncnn sh scripts/install-phone.sh'
+ssh user@phone 'cd ~/roadsense && sudo CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=$HOME/ncnn" BUILD=build-ncnn sh scripts/install-phone.sh'
 
 # USB DVR camera instead of the phone camera (needs libjpeg-turbo-dev at build time)
 ssh user@phone 'cd ~/roadsense && sudo sh scripts/install-camerad-dvr.sh --enable'
@@ -149,7 +168,9 @@ the `signs` / `lights` sockets and joins `roadsense.target`; roadsense runs with
 
 | Document | What's in it |
 |---|---|
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | frame ring, socket and API contract, every topic and endpoint |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | frame ring, socket and API contract, the raw per-camera topics, the debug face, the cut to chris-integrator |
+| [chris-integrator](chris-integrator/README.md) | the integrator: design, consolidated topics and API (docs/TOPICS.md), install |
+| [chris-mapper](chris-mapper/README.md) | the map box: map matching, map context, pack format |
 | [HARDWARE.md](docs/HARDWARE.md) | the reference phone, camera path, thermals |
 | [VEHICLE_API.md](docs/VEHICLE_API.md) | vehicle input API: how a car integration feeds GNSS, motion, controls, body signals and range sensors |
 | [MAPS.md](docs/MAPS.md) | map packs: fetch, build, install, licensing |

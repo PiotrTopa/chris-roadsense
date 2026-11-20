@@ -1,11 +1,11 @@
 #!/bin/sh
 # usage: sweep.sh RIDE START_S DUR_S MODEL(vision|supercombo) TAG DYAW_DEG DCX_PX [DPITCH_DEG] [extra modeld_replay args]
 set -eu
-RIDE=/home/piotr/datasets/rides/$1; S=$2; DUR=$3; MODEL=$4; TAG=$5; DYAW=$6; DCX=$7; DP=${8:-0}
+RIDE=$HOME/datasets/rides/$1; S=$2; DUR=$3; MODEL=$4; TAG=$5; DYAW=$6; DCX=$7; DP=${8:-0}
 shift 7; [ $# -gt 0 ] && shift
-B=${B:-/home/piotr/datasets/l32/build/modeld}
-OUT=${OUT:-/home/piotr/datasets/l32/sweep}
-M=/home/piotr/datasets/openpilot-models/v0.11.1
+B=${B:-$HOME/datasets/l32/build/modeld}
+OUT=${OUT:-$HOME/datasets/l32/sweep}
+M=$HOME/datasets/openpilot-models/v0.11.1
 slug=$(basename "$RIDE")
 mj=$(ls "$RIDE"/*.mjpeg | head -1)
 set -- $(python3 - "$RIDE" "$DYAW" "$DCX" "$DP" <<'PY'
@@ -17,7 +17,7 @@ PY
 F=$1; CX=$2; CY=$3; P=$4; Y=$5; R=$6; H=$7; shift 7
 s0=$((S*20)); n=$((DUR*20))
 if [ "$MODEL" = vision ]; then MA="--road-model vision --model $M/driving_vision-fp32.onnx --policy $M/driving_policy-fp32.onnx --policy-hz 0"
-else MA="--road-model supercombo --model /home/piotr/projects/roadsense/models/supercombo-fp32.onnx"; fi
+else MA="--road-model supercombo --model $HOME/projects/roadsense/models/supercombo-fp32.onnx"; fi
 o="$OUT/$slug.$MODEL.$TAG.jsonl"
 ffmpeg -nostdin -loglevel error -f mjpeg -framerate 20 -i "$mj" -vf "trim=start_frame=$s0:end_frame=$((s0 + n)),scale=in_range=full:out_range=full,format=nv12" -f rawvideo - \
  | "$B/modeld_replay" /dev/stdin --width 1280 --height 720 --fps 20 --focal "$F" --cx "$CX" --cy "$CY" \

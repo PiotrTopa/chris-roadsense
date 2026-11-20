@@ -7,7 +7,7 @@ very often reports `regulatory--no-entry` (B-2) on the leading car's stop lamps.
 better open data; check the other round red classes too; keep B-2 and speed limits alive (L6 consumes them).
 
 Laptop scratch `~/l8/` (scripts, recordings, harvests, models); phone scratch `~/l8/`. Downloads under
-`~/datasets/<name>/` with a `SOURCE.txt` each.
+`<datasets>/<name>/` with a `SOURCE.txt` each.
 
 ## 0. First look (phone sign history, before any change)
 `/var/lib/roadsense/signs.jsonl` on the phone (pulled 10:41 CET): 13 134 ended tracks over 68.4 replay loops
@@ -65,9 +65,9 @@ road/s. Fixes that fail are reported as nulls.
 ## 2. Data (downloads, licences, what each is used for)
 | Set | Where | Licence | Use |
 |---|---|---|---|
-| Krakow ride (10-min loop, 1280x720, 20 fps) | `~/datasets/rides/krakow-2024/` (L5) | CC BY 3.0 (Relaxing Roads 4K, Wikimedia Commons) | harvest of every frame with a Python mirror of signd (ORT, `tools/verifier/harvest_ride.py`): 11 000 detections, 1 111 IoU tracks, 103 with >= 2 round red votes, hand-labelled (34 false: 16 light, 12 lamp, 6 other); phone recordings |
-| BDD100K val (10 000 images, FiftyOne export) | `~/datasets/dashcam/bdd100k_val_fo/` (L2/L7) | BDD100K licence, non-commercial research | detector-mined round red detections vs GT boxes (582: 540 on traffic signs, 23 on vehicles/lights), 27 980 red-blob crops in car/truck/bus boxes (stop/tail lamps, day + night), 3 001 red-light blobs (GT colour `R`) |
-| GTSRB (51 839 images) | `~/datasets/gtsrb-zenodo/` (new, 320 MB, md5 7faafd0d...) | official site: free to use, cite Stallkamp et al. IJCNN 2011 (site unreachable 2026-10-27); Zenodo record 13741936 copy lists CC BY 4.0 | positives: round red classes (speed limits, no overtaking, no entry, no vehicles, no trucks, stop): 6 000 train / 3 000 test crops |
+| Krakow ride (10-min loop, 1280x720, 20 fps) | `<datasets>/rides/krakow-2024/` (L5) | CC BY 3.0 (Relaxing Roads 4K, Wikimedia Commons) | harvest of every frame with a Python mirror of signd (ORT, `tools/verifier/harvest_ride.py`): 11 000 detections, 1 111 IoU tracks, 103 with >= 2 round red votes, hand-labelled (34 false: 16 light, 12 lamp, 6 other); phone recordings |
+| BDD100K val (10 000 images, FiftyOne export) | `<datasets>/dashcam/bdd100k_val_fo/` (L2/L7) | BDD100K licence, non-commercial research | detector-mined round red detections vs GT boxes (582: 540 on traffic signs, 23 on vehicles/lights), 27 980 red-blob crops in car/truck/bus boxes (stop/tail lamps, day + night), 3 001 red-light blobs (GT colour `R`) |
+| GTSRB (51 839 images) | `<datasets>/gtsrb-zenodo/` (new, 320 MB, md5 7faafd0d...) | official site: free to use, cite Stallkamp et al. IJCNN 2011 (site unreachable 2026-10-27); Zenodo record 13741936 copy lists CC BY 4.0 | positives: round red classes (speed limits, no overtaking, no entry, no vehicles, no trucks, stop): 6 000 train / 3 000 test crops |
 | MTSD (for hard-negative retraining of the classifier) | - | CC BY-NC-SA, download needs a Mapillary account | not used (no accounts): the classifier stays as is, a separate verifier is trained instead |
 
 No download or loading step was denied. Weights trained here (BDD/GTSRB/ride) are not committed.
@@ -103,7 +103,7 @@ real (p >= 0.5):
 | GTSRB Test round red | 3 000 | 0.999 | 0.999 |
 | BDD detector-mined on vehicles | 7 | 3 round bus lamps accepted, 2 real signs (STOP, DO NOT ENTER inside a vehicle box) accepted, 2 rejected | |
 
-Commands: `build_sets.py ~/l8/harvest ~/datasets/gtsrb-zenodo/data ~/l8/harvest/sets.npz`, then
+Commands: `build_sets.py ~/l8/harvest <datasets>/gtsrb-zenodo/data ~/l8/harvest/sets.npz`, then
 `train_verifier.py ~/l8/harvest/sets.npz ~/l8/models/verifier_v1.onnx [--exclude-src krakow]`.
 
 ### 3c. Fixes scored offline on the phone's before recording

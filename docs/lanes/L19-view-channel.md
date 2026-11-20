@@ -1,6 +1,6 @@
 # L19: a live lead at standstill, a display channel (`view`), and what the MFD draws
 
-Built 2026-11-18 on the dev box (P52), roadsense 2.0 campaign. Nothing was deployed; the phone was not touched.
+Built 2026-11-18 on the dev box (laptop), roadsense 2.0 campaign. Nothing was deployed; the phone was not touched.
 Branches: roadsense `v2-l19`, car computer `v2-l19` (both unpushed). Contract: docs/ARCHITECTURE.md ("api-derived
 topic lead", "api-derived topic view", the measurement / display rule under "api"); car side:
 docs/MFD_MAIN_SCREEN.md 7.4.

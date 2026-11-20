@@ -7,11 +7,11 @@ connected), reached over its access point. Owner's approval: "deploy yes, whenev
 
 | piece | version | how |
 |---|---|---|
-| roadsense | main c35dd53 (api 2.0.0) | git tree to `/home/user/d1/roadsense`, built there (`build/`, ncnn `/home/user/vulkan-work/ncnn`), `CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=..." sh scripts/install-phone.sh` |
-| roadsense-signs | main 86624a9 | `/home/user/d1/roadsense-signs`, `ROADSENSE_DIR=/home/user/d1/roadsense NCNN_DIR=... sh scripts/install-phone.sh` |
-| road model files | v0.11.1, sha256 as in L27 section 1 | copied from `/home/user/l28/models` (identical to `/home/user/l27/models` and the laptop's `/mnt/win/linux-scratch/l27/models`) |
-| light-state model | `lights_state_car_48x24.onnx` 97bfddf6... | from the laptop (`~/datasets/l26/models`, same as `wt/signs-L21`); was not installed before (signd used the BDD model) |
-| map pack | `poland-20261114-f2.rsmap`, format 2, sha256 838442af14db9ec45172f2f276a7cad0f9db4edeb0a9b2893cddae7209ccc1c5 | `scripts/roadsense-maps install --host user@10.42.0.1`, then the symlink `current.rsmap` |
+| roadsense | main c35dd53 (api 2.0.0) | git tree to `<phone-home>/d1/roadsense`, built there (`build/`, ncnn `<phone-home>/vulkan-work/ncnn`), `CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=..." sh scripts/install-phone.sh` |
+| roadsense-signs | main 86624a9 | `<phone-home>/d1/roadsense-signs`, `ROADSENSE_DIR=<phone-home>/d1/roadsense NCNN_DIR=... sh scripts/install-phone.sh` |
+| road model files | v0.11.1, sha256 as in L27 section 1 | copied from `<phone-home>/l28/models` (identical to `<phone-home>/l27/models` and the laptop's `<scratch>/l27/models`) |
+| light-state model | `lights_state_car_48x24.onnx` 97bfddf6... | from the laptop (`<datasets>/l26/models`, same as `wt/signs-L21`); was not installed before (signd used the BDD model) |
+| map pack | `poland-20261114-f2.rsmap`, format 2, sha256 838442af14db9ec45172f2f276a7cad0f9db4edeb0a9b2893cddae7209ccc1c5 | `scripts/roadsense-maps install --host user@phone`, then the symlink `current.rsmap` |
 | car backend | car repo main ddee72a (working tree; `user_settings.json` change and the untracked fixture not part of the app) | the app step of `POCO/sync.sh --app` (rsync of `cyberpunk_computer/`, `requirements.txt`, powerbox files, `dashboard/dist/`; `prius-backend ensure-venv`; restart). The overlay/provision part was not run: its `--core` files were already identical on the phone (sha256 compared), the rest is the car network layer |
 
 Unit states as found and left: `roadsense.target` disabled, `roadsense-laned.service` installed and disabled,
@@ -39,7 +39,7 @@ Configs in `/etc/roadsense` kept (installer does not overwrite); new: `laned.jso
 
 ## Rollback
 
-`/home/user/rollback-20261119/` on the phone (root 0700), made before any change: `roadsense-bin.tar.gz`,
+`<phone-home>/rollback-20261119/` on the phone (root 0700), made before any change: `roadsense-bin.tar.gz`,
 `roadsense-lib-etc-units.tar.gz`, `roadsense-models.tar`, `backend-app.tar.gz`, `car-overlay.tar.gz`,
 `state-before.txt`, `SHA256SUMS`, and `RESTORE.txt` with the exact commands.
 
@@ -47,8 +47,8 @@ Configs in `/etc/roadsense` kept (installer does not overwrite); new: `laned.jso
 
 The only code change since c35dd53 is `api/roadsense_api/lead.py` (vision lead profile `weak_coast_s`
 2.5 -> 1.5). Rollback first: the installed api as `api-before-ef0c2dd.tar.gz` in
-`/home/user/rollback-20261119/` (in `SHA256SUMS`, commands appended to `RESTORE.txt`). The git tree went to
-`/home/user/d1/roadsense` and `scripts/install-phone.sh` ran as before: nothing was relinked and all 14
+`<phone-home>/rollback-20261119/` (in `SHA256SUMS`, commands appended to `RESTORE.txt`). The git tree went to
+`<phone-home>/d1/roadsense` and `scripts/install-phone.sh` ran as before: nothing was relinked and all 14
 installed binaries kept their sha256; the installed api equals the source tree and `lead.py` carries 1.5.
 Check as before (stack through the backend, about 1 min of `krakow-25-35.mjpeg`): api 2.0.0, road model
 vision without fallback, plan at 5 Hz, road / lead / lanes / view 14.8-15.1 a second, governor level 0,
@@ -59,8 +59,8 @@ fan automatic, lock removed.
 
 Phone in the parked car (key off), reached over WireGuard, on the car's 12 V battery (12.75 V at the start,
 lowest 12.34 V during the check, 12.59 V after). Rollback first: `roadsense-before-dcd043f.tar.gz` (binaries,
-api + mapd, `/etc/roadsense`, units, nft rule) in `/home/user/rollback-20261119/`, in `SHA256SUMS`, commands in
-`RESTORE.txt`. Git tree to `/home/user/d1/roadsense`, built there (13:09-13:10; `calibrator_test` all passed),
+api + mapd, `/etc/roadsense`, units, nft rule) in `<phone-home>/rollback-20261119/`, in `SHA256SUMS`, commands in
+`RESTORE.txt`. Git tree to `<phone-home>/d1/roadsense`, built there (13:09-13:10; `calibrator_test` all passed),
 `scripts/install-phone.sh` as before. Changed binaries: only `modeld` (783672d6...a9b0 -> d0eed72b8e687798ec345e208f428dd4f748825302ff2b5cf7ddce8e3b9dfb8e)
 and `modeld_replay` (-> 4ef2a636...a33a); the other 12 kept their sha256. Installed api and modeld unit equal
 the tree. `/etc/roadsense/calib.json` (pitch 0.0561, yaw -0.0621, set by hand) unchanged (sha256 41d8a6a2...),

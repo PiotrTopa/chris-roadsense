@@ -19,14 +19,14 @@ built, what was measured and how to reproduce every number.
 | `geom.py` | the shared geometry (roadsense's frames and signs, OpenCV's distortion model), plausibility checks | numpy | |
 | `tests/test_calib.py` | 33 tests on synthetic data with known answers | 10 of them need OpenCV | |
 
-OpenCV is not in `.venv-models`; the lane venv is `/home/piotr/datasets/l33/venv`
+OpenCV is not in `.venv-models`; the lane venv is `<datasets>/l33/venv`
 (`pip install numpy pillow opencv-contrib-python-headless`: OpenCV 5.1.0, numpy 2.5.5). Below `PY` is that
 venv's python and commands run from the checkout.
 
 ```sh
 $PY -m unittest discover -s tools/calib/tests                 # 33 tests OK (about 40-50 s on the loaded laptop)
 python3 -m unittest discover -s tools/calib/tests             # without OpenCV: 33 run, 10 skipped
-PYTHON=/home/piotr/projects/roadsense/.venv-models/bin/python sh tools/smoke_api.sh    # api suite: 252 OK, unchanged
+PYTHON=~/projects/roadsense/.venv-models/bin/python sh tools/smoke_api.sh    # api suite: 252 OK, unchanged
 ```
 
 ## 1. Lens
@@ -57,8 +57,8 @@ car's recorded pictures two pictures of a parked scene one second apart differ b
 driving by 14-38; the thresholds are 2 (still) and 4 (moved).
 
 ```sh
-B=/home/piotr/datasets/l33/build; W=/mnt/win/linux-scratch/l33/ringtest
-ROADSENSE_RING=$W/ring ROADSENSE_RUNDIR=$W/run ROADSENSE_CONFIG_DIR=$W/cfg $B/camerad-replay/camerad-replay --file ~/datasets/rides/s7-elblag-lowsun/s7-elblag-lowsun.mjpeg --start 60 &
+B=<datasets>/l33/build; W=<scratch>/l33/ringtest
+ROADSENSE_RING=$W/ring ROADSENSE_RUNDIR=$W/run ROADSENSE_CONFIG_DIR=$W/cfg $B/camerad-replay/camerad-replay --file <datasets>/rides/s7-elblag-lowsun/s7-elblag-lowsun.mjpeg --start 60 &
 ROADSENSE_RING=$W/ring python3 -I tools/calib/capture.py --out $W/shots --count 4 --every 1.0 --all
 ROADSENSE_RUNDIR=$W/run python3 -I tools/calib/capture.py --out $W/prev --source preview --count 2 --every 0.5
 ```
@@ -95,7 +95,7 @@ Rehearsal on synthetic pictures, rendered through a camera with focal 990, centr
 | reprojection error | | 0.104 px | |
 
 ```sh
-S=/mnt/win/linux-scratch/l33/rehearsal
+S=<scratch>/l33/rehearsal
 $PY tools/calib/lens.py synth --out $S/synth --views 26 --focal 990 --cx 655 --cy 348 --k1 -0.33 --k2 0.12
 $PY tools/calib/lens.py solve $S/synth --board charuco:8x5 --square-mm 30 --out $S/lens.json --debug-dir $S/dbg
 ```
@@ -143,8 +143,8 @@ stay within 1 %. The mount estimate on the bent ride moves by at most 0.12 deg (
 (pictures) against the unbent one.
 
 ```sh
-/home/piotr/datasets/l33/scripts/dist_all.sh      # 4 replays (val.sh with K1=-0.34 [FDECL=880.4])
-$PY /home/piotr/datasets/l33/scripts/dist_eval.py
+<datasets>/l33/scripts/dist_all.sh      # 4 replays (val.sh with K1=-0.34 [FDECL=880.4])
+$PY <datasets>/l33/scripts/dist_eval.py
 ```
 
 **Decision.**
@@ -230,8 +230,8 @@ Angles in degrees.
 | a1-night | supercombo | warp | 153 / 30 | -0.91, +2.16 | -7.27, -0.62 (0.09, 0.22) | +0.02, -0.11 | -7.43, -0.54 | -0.00, +0.00 |
 
 ```sh
-/home/piotr/datasets/l33/scripts/val_all.sh        # 12 replays: val.sh RIDE START DUR MODEL TAG DECL_DP DECL_DY WARP_DP WARP_DY
-$PY /home/piotr/datasets/l33/scripts/summ.py       # runs mount.py on each, prints this table
+<datasets>/l33/scripts/val_all.sh        # 12 replays: val.sh RIDE START DUR MODEL TAG DECL_DP DECL_DY WARP_DP WARP_DY
+$PY <datasets>/l33/scripts/summ.py       # runs mount.py on each, prints this table
 ```
 
 Reading:
@@ -246,7 +246,7 @@ Reading:
   differ from the files by 0.2-0.5 deg: s7 pitch is -3.0 to -3.2, not -2.86; a1-night is pitch -5.8 to -5.96,
   yaw -3.0 to -3.2, not -6.36 / -2.75. Lane L32's own replays of a1-night with the declared pitch changed by
   as it is and with the declared pitch lowered by 1 deg give the same absolute pitch (-5.78, -5.80 deg;
-  `mount.py --min-blocks 3 /home/piotr/datasets/l32/sweep/a1-night.vision.{base,pitch-1}.jsonl.gz`, one at a time).
+  `mount.py --min-blocks 3 <datasets>/l32/sweep/a1-night.vision.{base,pitch-1}.jsonl.gz`, one at a time).
 
 Unselected pictures against the hand calibrations (one picture every 2 s of every whole ride, curves, junctions and
 tunnels included, no straight selection because no road messages exist for them; `--pictures` mode):
@@ -276,8 +276,8 @@ tunnels included, no straight selection because no road messages exist for them;
 | winter-snow-rural | 400 (363) | 10 % | -4.30, -4.83 | -2.92, -5.39 | -1.38, +0.56 |
 
 ```sh
-/home/piotr/datasets/l33/scripts/ridepics.sh; $PY /home/piotr/datasets/l33/scripts/ridepics_eval.py
-$PY tools/calib/mount.py --pictures /mnt/win/linux-scratch/l33/ridepics/winter-fog --focal 690      # one ride
+<datasets>/l33/scripts/ridepics.sh; $PY <datasets>/l33/scripts/ridepics_eval.py
+$PY tools/calib/mount.py --pictures <scratch>/l33/ridepics/winter-fog --focal 690      # one ride
 ```
 
 About half of the rides agree within 0.5 deg, the rest differ by 0.7-7 deg. To find out which side is wrong, three of the
@@ -290,8 +290,8 @@ disputed rides were replayed (supercombo, 150-180 s) and measured with straight 
 | tunnels-s3 | -1.76, -4.18, **refused**: the two halves of the window differ by 2.05 deg in yaw | -1.55, -4.38 | -1.13, -1.41 | -1.89, -3.95 | within this window the file is right and the unselected whole-ride result is not; the recording is not one steady mounting |
 
 ```sh
-for r in "tunnels-s3 60 180" "forest-lubelskie 60 180" "tunnel-swinoujscie 20 150"; do /home/piotr/datasets/l33/scripts/val.sh $r supercombo base 0 0 0 0; done
-$PY tools/calib/mount.py /home/piotr/datasets/l33/val/forest-lubelskie.supercombo.base --frames --min-blocks 3
+for r in "tunnels-s3 60 180" "forest-lubelskie 60 180" "tunnel-swinoujscie 20 150"; do <datasets>/l33/scripts/val.sh $r supercombo base 0 0 0 0; done
+$PY tools/calib/mount.py <datasets>/l33/val/forest-lubelskie.supercombo.base --frames --min-blocks 3
 ```
 
 So: (a) **some rides' hand calibrations are wrong by degrees in yaw** (forest-lubelskie 2.9, tunnel-swinoujscie
@@ -305,7 +305,7 @@ stretches itself.
 
 The recorder's sessions are enough for a static estimate: they hold the `road` messages with `pose` at about
 13.5 a second (method 1) and one full-size picture a second (method 2). Sessions with straight driving
-(`/home/piotr/roadsense-rec`, supercombo, calibration in use: pitch 0, yaw 0, focal 975):
+(`~/roadsense-rec`, supercombo, calibration in use: pitch 0, yaw 0, focal 975):
 
 | session | straight s / blocks | road model's motion: pitch, yaw | pictures: pitch, yaw | pictures minus motion |
 |---|---|---|---|---|
@@ -347,7 +347,7 @@ Run on a copy of the config with the car's session of 17 Nov 16:38 (yaw and pitc
 the red mark sits where the lane lines meet on all four pictures.
 
 ```sh
-C=/mnt/win/linux-scratch/l33/cfg; mkdir -p $C; cp config/calib.json config/camera-dvr.json $C/
+C=<scratch>/l33/cfg; mkdir -p $C; cp config/calib.json config/camera-dvr.json $C/
 $PY tools/calib/mount.py ~/roadsense-rec/20261117-163836 --frames --out $C/mount.json
 $PY tools/calib/apply.py --config-dir $C --camera-file camera-dvr.json --mount $C/mount.json \
     --height-m 1.25 --camera-to-front-m 1.6 --lateral-offset-m 0.02 --session ~/roadsense-rec/20261117-163836
@@ -388,8 +388,8 @@ against it.
 * Shared files touched: `docs/ARCHITECTURE.md` (a "Calibration tools" subsection under "Calibration"),
   `docs/ROADMAP.md` (two sub-items under the calibration item). L32 may touch the same paragraphs.
 * Nothing under `modeld/`, `api/` or `laned/` was changed.
-* Scratch: `/home/piotr/datasets/l33` (venv, build of `modeld_replay` / `camerad-replay` from this branch, `val/`
-  replays, scripts), `/mnt/win/linux-scratch/l33` (ride pictures, ring test). Heavy jobs ran in
+* Scratch: `<datasets>/l33` (venv, build of `modeld_replay` / `camerad-replay` from this branch, `val/`
+  replays, scripts), `<scratch>/l33` (ride pictures, ring test). Heavy jobs ran in
   `systemd-run --user -p MemoryMax=` units.
 
 ## 8. Hand-back (2026-11-19, 12:45 CET)

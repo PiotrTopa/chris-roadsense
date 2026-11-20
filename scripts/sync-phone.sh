@@ -2,7 +2,7 @@
 # Reference deployment: copy the working tree (no build dirs, no models) to the phone's ~/roadsense. rsync is not on the phone.
 set -eu
 cd "$(dirname "$0")/.."
-T=${1:-user@192.168.0.86}
+T=${1:-${ROADSENSE_PHONE:-user@phone}}
 # The tracked files, and chris-integrator's native core as built for the target (native/dist/, made on this
 # machine by chris-integrator/native/cross-build.sh; not tracked): its install script uses the artefact that
 # fits the phone and passes its self-test there, and installs pure Python when there is none.

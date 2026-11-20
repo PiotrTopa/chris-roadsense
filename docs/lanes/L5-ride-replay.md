@@ -25,7 +25,7 @@ were visible in the chosen window.
 | downloaded | Commons 1080p VP9 transcode (2.04 GB, md5 = etag f0e15e81...), 8 parallel HTTP ranges (one stream ran at ~0.5 MB/s) |
 | window | 25:00-35:00 of the original (10 min): wide arterials, a Vistula bridge, roundabout/large junctions, trams, buses, dense traffic, dusk/overcast light |
 | camera | action camera on the bonnet line / low windscreen, rectilinear ("linear") wide mode, red bonnet visible in the bottom ~5 % of the frame, no overlays |
-| laptop path | `~/datasets/rides/krakow-2024/` (`SOURCE.txt`, `download/`, `krakow-25-35.mjpeg`, `camera-replay.json`, `calib.json`, `sheet/`) — not in any repo |
+| laptop path | `<datasets>/rides/krakow-2024/` (`SOURCE.txt`, `download/`, `krakow-25-35.mjpeg`, `camera-replay.json`, `calib.json`, `sheet/`) — not in any repo |
 
 ### 2. Route: MJPEG file + camerad-replay (chosen) — 22:35-22:45 CET
 Route (a) of the brief. The phone has no ffmpeg installed (it *is* in apk, `ffmpeg-8.1.2-r3`, not needed)
@@ -104,16 +104,16 @@ camerad-replay -> private ring (`ROADSENSE_RING=/dev/shm/roadsense-frames-l5`, r
 See the hand-back report; copied here when phase 2 runs.
 
 ### 6. Phase 2a: ride data on the phone (22:48-22:51 CET)
-One plain `scp` (single stream, 3 min 02 s, ~8.3 MB/s) to `user@192.168.0.86:~/rides/krakow-2024/`:
+One plain `scp` (single stream, 3 min 02 s, ~8.3 MB/s) to `user@phone:~/rides/krakow-2024/`:
 `krakow-25-35.mjpeg` (1 508 884 969 B, md5 f2917ad4e104e7f84e7fbc6b4f4d3a00, matches the laptop),
 `camera-replay.json`, `calib.json`, `SOURCE.txt` (md5s match). Code (step 1) and the switch (step 3) wait
 for L4. Process note: stop downloads by PID, not `pkill` by name.
 
 ### 7. Phase 2b: the phone runs the ride (23:16-23:21 CET)
-L4 safe point 23:16. Step 1: `git archive HEAD` of the replay files only into `~user/roadsense`
+L4 safe point 23:16. Step 1: `git archive HEAD` of the replay files only into `<phone-home>/roadsense`
 (ring.h, jsonsock.h, camerad-replay/, config/camera-replay.json, config/calib-replay.json,
 scripts/use-replay.sh, the two units). Step 3: `use-replay.sh --enable
-/home/user/rides/krakow-2024/krakow-25-35.mjpeg` as root: first real run clean, no fixes needed. It built
+<phone-home>/rides/krakow-2024/krakow-25-35.mjpeg` as root: first real run clean, no fixes needed. It built
 camerad-replay with `c++` (no build dir), recorded `dvr` as the source to restore, saved
 `calib.json.pre-replay`, disabled camerad-dvr, started the replay (index 483 ms) and try-restarted
 modeld / envd / signd. L4's runtime drop-ins `/run/systemd/system/roadsense-{modeld,signd}.service.d/l4.conf`
@@ -138,4 +138,4 @@ Overlays (`docs/lanes/L5-ride-replay/phone-overlay-{1,2}.jpg`, from `/preview` o
   lines on the painted markings, road edges on the kerb lines, lead 89 m p 0.88. Good.
 
 Replay left RUNNING (user watches). Back to the DVR camera:
-`dotinfra vault exec poco_user_password -- ssh user@192.168.0.86 'cd ~/roadsense && sudo -S -p "" sh scripts/use-replay.sh --disable'`
+`ssh user@phone 'cd ~/roadsense && sudo -S -p "" sh scripts/use-replay.sh --disable'`

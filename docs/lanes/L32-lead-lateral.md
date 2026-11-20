@@ -2,7 +2,7 @@
 
 Lane of the 2.0 campaign, 2026-11-19, Fable. Branch `v2-l32` from main (bef6b77). Laptop only; the phone was not
 touched and nothing was fetched from it. All tools and drivers: `tools/vision_eval/l32/` (README there),
-`tools/vision_eval/lead_lateral.py`, `tools/vision_eval/calib_from_pose.py`; outputs in `~/datasets/l32`.
+`tools/vision_eval/lead_lateral.py`, `tools/vision_eval/calib_from_pose.py`; outputs in `<datasets>/l32`.
 
 The owner's observations this report has to explain, as given: (1) the lead is drawn shifted to the right, more
 the further it is; (2) standing still, a lead that pulls away is drawn straight ahead, without a shift; the
@@ -217,7 +217,7 @@ host feed is not the cause.
 
 The same ride stretch replayed with the calibration's yaw changed by +-1 and +-2 deg, the principal point `cx`
 moved by the same angle, the pitch by +-1 deg (`sweep.sh`, ORT fp32, every frame; compared run by run against
-the unchanged replay: `sens.py ~/datasets/l32/sweep RIDE MODEL`). Median change of each output's direction in
+the unchanged replay: `sens.py <datasets>/l32/sweep RIDE MODEL`). Median change of each output's direction in
 degrees, divided by the size of the calibration change (first value: yaw increased, second: decreased):
 
 | output | vision, a1-night (yaw +1 / -1) | vision, warsaw-city (+2 / -2) | vision, tunnels-s3 (+2 / -2) | supercombo, a1-night (+2 / -2) | supercombo, warsaw-city (+2 / -2) |
@@ -252,7 +252,7 @@ The other hypotheses of the brief:
   is not something a decode error produces.
 
 On the rides with their own (estimated) calibrations the same effect is there in small
-(`lead_lateral.py ~/datasets/openpilot-models/l24/road/*.vis.13.8.jsonl.gz`):
+(`lead_lateral.py <datasets>/openpilot-models/l24/road/*.vis.13.8.jsonl.gz`):
 
 | ride | vision: lead - lane centre by distance 15-30 / 30-45 / 45-60 / 60-75 / 75-90 / 90-105 m, m | vision: angle lead - lane, deg [90 %] | vision: lead - plan | supercombo: lead - lane | vision: direction of `pose`, deg | expected lead - lane (-0.95 x) |
 |---|---|---|---|---|---|---|
@@ -421,7 +421,7 @@ same within the spread between rides; the distance noise at 15-30 m is 0.02-0.03
 
 **Lanes, far range, ego lane** (`evaluate.py` of L24-M on the same streams; far range = a tracked inner line point
 seen at that distance against the same line when the car is 5-15 m from it, |dy| median, m; ego lane against L20's
-labels where they exist; `~/datasets/l32/res/eval.json`)
+labels where they exist; `<datasets>/l32/res/eval.json`)
 
 | ride | measure | off | warm | cold | poff | pcold |
 |---|---|---|---|---|---|---|
@@ -502,11 +502,11 @@ labels where they exist; `~/datasets/l32/res/eval.json`)
 | check | command | result |
 |---|---|---|
 | roadsense api | `PYTHON=~/projects/roadsense/.venv-models/bin/python sh tools/smoke_api.sh` | 255 passed (252 on main + 3 in `api/tests/test_calibration.py`) |
-| C++ | whole tree, Release, with `-DROADSENSE_NCNN=ON` (`~/datasets/l32/build-ncnn`) and without (`~/datasets/l32/build2`) | builds |
+| C++ | whole tree, Release, with `-DROADSENSE_NCNN=ON` (`<datasets>/l32/build-ncnn`) and without (`<datasets>/l32/build2`) | builds |
 | estimator | `build/modeld/calibrator_test` | all passed (closed loop to 0.005 deg, gates, observe mode, disagreeing blocks, a town ride, a moved camera, out of range, state file kept / ignored / reset) |
 | warp | `build/modeld/warp_test` | 10 cases identical (untouched) |
 | `modeld_replay` unchanged without `--auto-calib` | 200 frames of a1-night, vision + policy and supercombo, ORT fp32, against the binary built from main (`calib` and `road` lines without the timing fields) | identical for both models |
-| the daemon itself | `camerad-replay` + `modeld --backend ncnn` on the laptop, s7-elblag-lowsun from 70 s, `calib.json` wrong by yaw +3.4 / pitch -1.4 deg (`/mnt/win/linux-scratch/l32/daemon/run.sh`) | 19.6-19.9 runs/s; `collecting` for 4 blocks, at block 5 (29 s) `source: "auto"`, yaw 5.92 -> 2.68 deg (the ride's own value 2.52), pitch -4.26 -> -3.14 (-2.86); after a restart of modeld the estimate is `restored` and in use from the first frames |
+| the daemon itself | `camerad-replay` + `modeld --backend ncnn` on the laptop, s7-elblag-lowsun from 70 s, `calib.json` wrong by yaw +3.4 / pitch -1.4 deg (`<scratch>/l32/daemon/run.sh`) | 19.6-19.9 runs/s; `collecting` for 4 blocks, at block 5 (29 s) `source: "auto"`, yaw 5.92 -> 2.68 deg (the ride's own value 2.52), pitch -4.26 -> -3.14 (-2.86); after a restart of modeld the estimate is `restored` and in use from the first frames |
 | car suite | not run: the car repo is not edited and the api change is one more key in `/health` | - |
 
 Not pushed. Worktrees left for the bisect: `~/projects/wt/roadsense-l32-pre2` (3da2b63), `~/projects/wt/prius-l32-pre2`
@@ -516,7 +516,7 @@ Not pushed. Worktrees left for the bisect: `~/projects/wt/roadsense-l32-pre2` (3
 ## 11. Reproduce
 
 * Chain trace: `sh tools/vision_eval/l32/chain.sh NAME ROAD.jsonl.gz API_DIR BACKEND_REPO FRONTEND_REPO
-  [--ego --ego-yaw-bias R --ego-yaw-per-speed K]` -> `~/datasets/l32/chain/NAME.{ws,scenes,rows}.jsonl.gz`,
+  [--ego --ego-yaw-bias R --ego-yaw-per-speed K]` -> `<datasets>/l32/chain/NAME.{ws,scenes,rows}.jsonl.gz`,
   `NAME.txt`, `NAME.json`. Bisect: `bisect.sh RIDE`, tables `bisect_table.py RIDE CONFIG...`. Injection:
   `inject.sh RIDE`. Episode: `chain_episode.py ROWS... [--list | --t0 S --t1 S]`.
 * Road streams: `ac.sh RIDE START DUR TAG OUT DYAW_DEG DPITCH_DEG [modeld_replay args]` (vision), `ac_sc.sh`

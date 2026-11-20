@@ -66,7 +66,7 @@ supercombo is unchanged: `modeld_replay` of the branch and of 89798e7 on 60 fram
 
 ### Unit check: C++ against the Python reference (40-60 frames of `krakow-2024`)
 
-`python -I tools/models_survey/check_cpp_vision.py ~/datasets/rides/krakow-2024 DUMP ROAD.jsonl --frames 60`
+`python -I tools/models_survey/check_cpp_vision.py <datasets>/rides/krakow-2024 DUMP ROAD.jsonl --frames 60`
 (the C++ side: the command in the script's docstring, `modeld_replay --dump-tensors`):
 
 | stage | result |
@@ -78,7 +78,7 @@ supercombo is unchanged: `modeld_replay` of the branch and of 89798e7 on 60 fram
 
 ### ncnn and fp16 (laptop)
 
-ncnn 20261020 built on the laptop (`~/datasets/openpilot-models/l24/ncnn`, static, Vulkan via simplevk), modeld
+ncnn 20261020 built on the laptop (`<datasets>/openpilot-models/l24/ncnn`, static, Vulkan via simplevk), modeld
 with `-DROADSENSE_NCNN=ON -DNCNN_DIR=...`. On the laptop's Quadro P3200 (fp16 packed + storage, fp32 arithmetic,
 the closest the laptop has to the Adreno's fp16-packed mode), 200 frames of `krakow-2024`, ncnn against ORT fp32
 (`tools/ncnn/compare_replay.py ort.jsonl ncnn.jsonl`): lane y error mean 0.0036 m, max 0.055 m; lead x max
@@ -148,7 +148,7 @@ a1-s8-rain (rain motorway) was dropped: after the restart the laptop was shared 
 ## 3. Results
 
 Default trackers, all nine rides (`python3 tools/vision_eval/summarize.py res_all.json`; results file built by
-`evaluate.py ROAD_DIR --out res.json` per ride and merged; `ROAD_DIR` = `~/datasets/openpilot-models/l24/road`):
+`evaluate.py ROAD_DIR --out res.json` per ride and merged; `ROAD_DIR` = `<datasets>/openpilot-models/l24/road`):
 
 | metric | rides | sc.13.8 | vis.13.8 (ratio, 90% CI of diff, verdict) | vis.17 (ratio, 90% CI of diff, verdict) | vis.20 (ratio, 90% CI of diff, verdict) |
 |---|---|---|---|---|---|
@@ -235,7 +235,7 @@ Coordinator question 2. The candidate stage (vision streams only, supercombo unt
   message time of the presence probabilities (lane lines, lead 0) and of the geometry (line / edge y, lead x and v);
 * the trackers' own hysteresis and filters (`--lanes-set`, `--lead-set`, config keys that exist already).
 
-Six variants were run on the tuning rides krakow-2024, warsaw-storm, winter-snow-rural (`~/datasets/openpilot-models/
+Six variants were run on the tuning rides krakow-2024, warsaw-storm, winter-snow-rural (`<datasets>/openpilot-models/
 l24/tune/P0..P5.json`; winter-snow-rural carries no lines or leads, so the tuning in effect used two rides):
 
 | variant | lead on/off / identity / inner-line changes per min, krakow + warsaw (supercombo: 1.75, 2.5 / 0.75, 1.25 / 4.5, 3.0) | jitter 50 m | far 40-70 m (krakow) |
@@ -306,12 +306,12 @@ Files to copy (from the laptop; models are not in the repository):
 
 | file | size | from |
 |---|---|---|
-| `driving_vision-ncnn.param` | 19,656 B | `~/datasets/openpilot-models/l24/ncnn-model/` (or `tools/ncnn/make_vision_ncnn.sh driving_vision-fp32.onnx driving_vision-ncnn`) |
+| `driving_vision-ncnn.param` | 19,656 B | `<datasets>/openpilot-models/l24/ncnn-model/` (or `tools/ncnn/make_vision_ncnn.sh driving_vision-fp32.onnx driving_vision-ncnn`) |
 | `driving_vision-ncnn.bin` | 78,572,356 B | same |
-| `driving_vision-fp32.onnx` (ORT reference for the gate) | 92,985,140 B | `~/datasets/openpilot-models/v0.11.1/` |
+| `driving_vision-fp32.onnx` (ORT reference for the gate) | 92,985,140 B | `<datasets>/openpilot-models/v0.11.1/` |
 | `driving_policy-fp32.onnx` | 27,959,695 B | same |
 
-Build on the phone from branch `v2-l24m` (same as today): `CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=/home/user/ncnn"`
+Build on the phone from branch `v2-l24m` (same as today): `CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=<phone-home>/ncnn"`
 with the usual `cmake -S . -B build ...; cmake --build build -j4` (targets `modeld`, `modeld_replay`).
 
 1. fp16 gate (ncnn Vulkan fp16-packed against ORT fp32, plus the pipelined path against one-stage), one command:
@@ -342,7 +342,7 @@ with the usual `cmake -S . -B build ...; cmake --build build -j4` (targets `mode
 ## 9. Tests and commits
 
 * C++ unit check against the Python reference: section 1.
-* api tests: `PYTHON=/home/piotr/projects/roadsense/.venv-models/bin/python sh tools/smoke_api.sh` (unittest; that
+* api tests: `PYTHON=~/projects/roadsense/.venv-models/bin/python sh tools/smoke_api.sh` (unittest; that
   venv has aiohttp; no interpreter on the laptop has both aiohttp and pytest, the suite does not need pytest):
   **214 tests, OK** (211 before + 3 in `api/tests/test_vision_road.py`: the pipeline and the ego-light selection
   with a vision `road` message without `plan`, and with a policy plan).

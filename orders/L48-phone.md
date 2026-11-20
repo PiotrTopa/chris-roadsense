@@ -2,7 +2,7 @@
 
 Placed by lane L48 (whole-system optimisation), 2026-11-20. Execution lane: Opus. Phone: the car computer
 (Poco F1) on the bench, replay playlist, reached as in the CMDB entry of the phone; root through the vault
-(`dotinfra vault exec poco_user_password -- ssh HOST 'sudo -S -p "" CMD'`, password on stdin only, never
+(`ssh HOST 'sudo -S -p "" CMD'`, password on stdin only, never
 printed). Background: docs/lanes/L48-system-optimisation.md. Related orders of the sub-lanes, to be run in the
 same session where it says so: `orders/L48-envd-phone.md` (envd), car repo `docs/lanes/L48-B-order.md` (backend).
 
@@ -21,7 +21,7 @@ time per unit, rail power, zones), plus the daemons' stats lines of the same win
 `signs`). Without root, `tools/budget/snap_ro.sh` gives the CPU columns only.
 
 Rides: the replay playlist switched to one ride per run with `sudo sh scripts/use-replay.sh --enable
-/home/user/rides/<slug>/<slug>.mjpeg` (back to the playlist at the end: `--playlist /home/user/rides`):
+<phone-home>/rides/<slug>/<slug>.mjpeg` (back to the playlist at the end: `--playlist <phone-home>/rides`):
 `rural-zloczew` (no lights for minutes), `krakow-lights` (lights nearly always), `a1-night` (motorway, night).
 
 ## P0. Baseline (the installed stack, nothing changed)
@@ -37,7 +37,7 @@ and GPU temperatures of the last 60 s; hottest zone maximum), road runs a second
 # laptop: copy api/roadsense_api of v2-l48 to the phone as ~/l48/api/roadsense_api
 # phone, root:
 mkdir -p /run/systemd/system/roadsense-api.service.d
-printf '[Service]\nEnvironment=PYTHONPATH=/home/user/l48/api\nCPUAffinity=0-3\n' > /run/systemd/system/roadsense-api.service.d/99-l48.conf
+printf '[Service]\nEnvironment=PYTHONPATH=<phone-home>/l48/api\nCPUAffinity=0-3\n' > /run/systemd/system/roadsense-api.service.d/99-l48.conf
 systemctl daemon-reload && systemctl restart roadsense-api
 ```
 Run `rural-zloczew`, 240 s. Checks while it runs: `curl -s 127.0.0.1:8091/v1/health` answers with `fps.road`
@@ -54,8 +54,8 @@ false, or the total above P0's big-core share times 3 (the same work moved, noth
 ## P2. Light detector's idle pattern (roadsense-signs `l48-opt`)
 
 Build signd of `l48-opt` on the phone into `~/l48/build-signs` (as `scripts/install-phone.sh` builds it:
-`-DROADSENSE_NCNN=ON -DNCNN_DIR=/home/user/vulkan-work/ncnn`, roadsense headers of `v2-l48`), do not install.
-Drop-in: the installed `ExecStart` line with the binary replaced by `/home/user/l48/build-signs/signd` and the
+`-DROADSENSE_NCNN=ON -DNCNN_DIR=<phone-home>/vulkan-work/ncnn`, roadsense headers of `v2-l48`), do not install.
+Drop-in: the installed `ExecStart` line with the binary replaced by `<phone-home>/l48/build-signs/signd` and the
 option appended (`ExecStart=` first, to clear the installed one).
 
 | run | signd | rides |
@@ -72,7 +72,7 @@ to `auto` afterwards): `lights_replay` of the lane build on the first 5 minutes 
 `krakow-night-tunnel`, every 4th frame, production options, once without and once with `--idle ZW.Z.W`
 (the frames and the command are those of L21's `~/l21/lightseval.sh`; add `--idle P`); copy the outputs to the
 laptop and score them with roadsense-signs `tools/lights/replay_score.py` against L15's reference files
-(`~/datasets/l24s/lights/ref_*`), exactly as section 3.2 of the lane report.
+(`<datasets>/l24s/lights/ref_*`), exactly as section 3.2 of the lane report.
 
 Pass (all of): P2-0 equals P0; on `rural-zloczew` and `a1-night` `sg-lights` falls by at least the share of
 periods skipped times 0.8; the big-core temperature does not rise on any ride; `lights` is never `degraded`

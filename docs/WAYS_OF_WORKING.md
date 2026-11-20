@@ -29,10 +29,16 @@ Kill criteria per lane are stated in its brief.
 ## Compute
 | Host | Use | Limits | Never touch |
 |---|---|---|---|
-| P52 (laptop) | builds, model conversion, replays | heavy jobs in `systemd-run --user -p MemoryMax=...` | sd_runs / other programmes' jobs |
-| Poco F1 192.168.0.86 | on-device benchmarks and runs | stop anything that passes 95 C; no reboots unless needed | the flex/USB setup (user's hardware) |
+| laptop | builds, model conversion, replays | heavy jobs in `systemd-run --user -p MemoryMax=...` | other programmes' jobs |
+| Poco F1 (`user@phone`) | on-device benchmarks and runs | stop anything that passes 95 C; no reboots unless needed | the flex/USB setup (user's hardware) |
 
-Secrets: vault key `poco_user_password` via `dotinfra vault exec poco_user_password -- ssh ... sudo -S -p ""`.
+Secrets: root on the phone is `ssh user@phone 'sudo -S -p "" CMD'` with the password fed on stdin from a
+secret store, never typed into a command line, a file or a lane report.
+
+Placeholders in commands of lane reports and orders (the repository is public, so hosts and personal paths are
+generalised): `user@phone` is the phone's ssh login (postmarketOS user `user`; `phone` is a host alias),
+`<phone-home>` that user's home directory on the phone, `<datasets>` the laptop's data folder (rides, drive
+recordings, model downloads; never committed), `<scratch>` a large scratch disk, `~` the laptop user's home.
 
 ## User rulings (dated)
 - 2026-10-22: boot autostart of roadsense.target stays disabled (thermal); start by hand.

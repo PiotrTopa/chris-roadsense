@@ -30,9 +30,9 @@ product"); not MIT-compatible, so not evaluated either.
 ### Datasets (evaluation only; nothing from them is shipped except, if trained, a probe that is NOT committed)
 | dataset | what | labels used | licence / access |
 |---|---|---|---|
-| BDD100K val images (10 000, 1280x720, `~/datasets/dashcam/bdd100k_val_fo`, mirror `dgural/bdd100k` on HF, downloaded 2026-10-19 without an account) | dashcam frames, USA | weather (clear 5346, overcast 1239, partly cloudy 738, rainy 738, snowy 769, foggy 13, undefined 1157), scene (city street 6112, highway 2499, residential 1253, parking lot 49, tunnel 27, gas stations 7, undefined 53), timeofday (daytime 5258, night 3929, dawn/dusk 778, undefined 35) | BDD100K licence: educational / research / not-for-profit use |
-| DAWN (`~/datasets/dashcam/dawn`, Fog 302, Rain 202, Snow 206; Sand not downloaded) | traffic scenes in adverse weather | weather | CC BY-NC 3.0 (Mendeley Data 766ygrbt8y) |
-| Places365-Standard val_256 (`~/datasets/places365`, downloaded 2026-10-26 from data.csail.mit.edu without a form; the site asks for a form for research use of the legacy set, noted) | scene photos, NOT dashcam views; proxy for the classes BDD lacks | forest_road, field_road (-> rural road), highway, street, residential_neighborhood, parking_garage-indoor (-> underground parking), parking_lot, tunnel-ish classes if present, bridge, gas_station (100 images each) | research use |
+| BDD100K val images (10 000, 1280x720, `<datasets>/dashcam/bdd100k_val_fo`, mirror `dgural/bdd100k` on HF, downloaded 2026-10-19 without an account) | dashcam frames, USA | weather (clear 5346, overcast 1239, partly cloudy 738, rainy 738, snowy 769, foggy 13, undefined 1157), scene (city street 6112, highway 2499, residential 1253, parking lot 49, tunnel 27, gas stations 7, undefined 53), timeofday (daytime 5258, night 3929, dawn/dusk 778, undefined 35) | BDD100K licence: educational / research / not-for-profit use |
+| DAWN (`<datasets>/dashcam/dawn`, Fog 302, Rain 202, Snow 206; Sand not downloaded) | traffic scenes in adverse weather | weather | CC BY-NC 3.0 (Mendeley Data 766ygrbt8y) |
+| Places365-Standard val_256 (`<datasets>/places365`, downloaded 2026-10-26 from data.csail.mit.edu without a form; the site asks for a form for research use of the legacy set, noted) | scene photos, NOT dashcam views; proxy for the classes BDD lacks | forest_road, field_road (-> rural road), highway, street, residential_neighborhood, parking_garage-indoor (-> underground parking), parking_lot, tunnel-ish classes if present, bridge, gas_station (100 images each) | research use |
 | ACDC, Dark Zurich | fog/rain/snow/night dashcam | not used: registration required (never create accounts) | - |
 
 ### Classes scored (exactly these; the daemon publishes the same names)
@@ -144,7 +144,7 @@ at the period), the order has the big-core and TinyCLIP rows as fallbacks.
 
 Command per cell: `tools/envd/zeroshot_eval.py --emb <cache>/<ds>_<tag>.npz --classes <cache>/classes_<tag>.json
 --group G --label-col COL --dataset DS` on the embeddings of `tools/envd/embed_dataset.py` (job
-`~/datasets/envd-cache/extract_all.sh`, laptop CPU, 8 threads, ~21 img/s for ViT-B/32). Recall in %,
+`<datasets>/envd-cache/extract_all.sh`, laptop CPU, 8 threads, ~21 img/s for ViT-B/32). Recall in %,
 macro over classes with n >= 20 (BDD foggy n=13 and gas stations n=7 shown, not in the macro).
 
 TinyCLIP "auto" variants (22M, 45M) dropped: their checkpoints are weight-inheritance pruned and
@@ -261,7 +261,7 @@ remaining confusions are city vs residential (BDD's own labels are noisy here) a
 Final probe numbers are re-done on the chosen encoder with the squash preprocessing (section 4).
 
 ## 3. Final numbers: ViT-B-32/openai, squash preprocessing (the shipped path), zero-shot class file
-`~/datasets/envd-cache/final_eval.sh` (18:1x CET): `embed_dataset.py --preproc squash` for BDD val,
+`<datasets>/envd-cache/final_eval.sh` (18:1x CET): `embed_dataset.py --preproc squash` for BDD val,
 DAWN, Places subset, then `zeroshot_eval.py --md`. The committed `models/envd-classes.json`
 (sha256 5001c370...) is this file.
 
@@ -309,7 +309,7 @@ the B halves (hash of the file name; disclosed change from the pre-registration:
 are split too, after the first attempt - BDD-only training - drove the Places-only classes to 0-12 %
 recall on Places: rural road 0, forest road 12, underground parking 1, bridge 11; the anchored L2
 alone did not protect them once highway's row had moved). Light has BDD only.
-Output: `~/datasets/envd-cache/envd-classes-probe.json` (sha256 8d433489..., NOT committed:
+Output: `<datasets>/envd-cache/envd-classes-probe.json` (sha256 8d433489..., NOT committed:
 BDD / DAWN / Places are research-licensed; drop-in for `--classes` or `classes` in `envd.json`).
 
 | group | test set | zero-shot macro | probe macro | probe per class |
@@ -368,9 +368,9 @@ on the phone's ncnn build.
   08c4ba7 (class file, config), 645547d (final numbers); all pushed to origin.
 - Phone: untouched (the stress test ran the whole lane; die 80-84 C). envd is not installed there;
   `orders/L2-envd-phone.md` covers build, install, cost rows A-F and a 30-min run.
-- Laptop files outside the repo: `~/datasets/envd-cache/` (embeddings, class files incl.
+- Laptop files outside the repo: `<datasets>/envd-cache/` (embeddings, class files incl.
   `envd-classes-probe.json`, `onnx/*.onnx`, `ncnn/vitb32_openai.*`, logs, `final_eval.out`),
-  `~/datasets/places365/` (val_256.tar + the 900-image `sel/`), `~/datasets/roadsense-replay/ljkr.nv12(.xz)`,
+  `<datasets>/places365/` (val_256.tar + the 900-image `sel/`), `<datasets>/roadsense-replay/ljkr.nv12(.xz)`,
   `models/envd-image.onnx` (ignored by git). `.venv-models` gained open_clip, torchvision, aiohttp,
   transformers, sentencepiece.
 - Open: phone cost + 30-min run (order); ncnn verification on the phone; BDD "partly cloudy" is

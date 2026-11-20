@@ -4,7 +4,7 @@ Lane opened 2026-10-27 ~06:35 CET (Opus, build + measurement). Goal: roadsense s
 colour state red / yellow / red+yellow / green / flashing / off, which light applies to the ego lane) live on
 the phone next to modeld + signd + envd, without costing the road rate much (speed-first ruling: road >= ~12/s).
 Times CET (Warsaw local, UTC+1). Laptop scratch: `~/l7/` (venv, scripts, exported models, eval outputs); downloads
-in `~/datasets/l7-models/`; phone scratch `~/l7/` (sources, build `build-signs`, models, scripts, `live/`).
+in `<datasets>/l7-models/`; phone scratch `~/l7/` (sources, build `build-signs`, models, scripts, `live/`).
 
 ## 0. Starting point
 Phone up 8 h 48 min, full stack from the L4 units on the Krakow replay (camerad-replay 20 fps): modeld 14.1 runs/s
@@ -22,7 +22,7 @@ Phone up 8 h 48 min, full stack from the L4 units on the Krakow replay (camerad-
 | Megvii YOLOX-nano / tiny ONNX (COCO) | GitHub release 0.1.1rc0 | Apache-2.0 | COCO | downloaded, not evaluated (COCO-class detector; COCO YOLO11n already far behind) |
 | own state CNN (48x24) | trained here on BDD100K val crops | weights: BDD100K terms (local only); code AGPL-3.0 | red, yellow, green, none | **chosen state** |
 
-Datasets: BDD100K val (10 000 images 1280x720, FiftyOne mirror already on disk from L2, `~/datasets/dashcam/bdd100k_val_fo`,
+Datasets: BDD100K val (10 000 images 1280x720, FiftyOne mirror already on disk from L2, `<datasets>/dashcam/bdd100k_val_fo`,
 26 884 traffic-light boxes with colour G 11 430 / NA 8 355 / R 6 605 / Y 494; BDD100K terms: research /
 non-commercial) and the Krakow replay ride (CC BY 3.0, Relaxing Roads 4K, attribution in `L5-ride-replay/ATTRIBUTION.txt`).
 No accounts created; Bosch STL, LISA, DTLD, S2TLD not used (registration or non-commercial, and BDD covers the need).
@@ -170,7 +170,7 @@ Cost of lights vs B0: -0.34 road runs/s (-2.4 %), signs and road latency unchang
 
 ## 6. Live accuracy on the Krakow replay (qualitative)
 
-`~/l7/scripts/grab_overlays.py http://192.168.0.86:8080 OUT 640 3` (laptop: reads `/preview` and `/ws?topics=lights`,
+`~/l7/scripts/grab_overlays.py http://phone:8080 OUT 640 3` (laptop: reads `/preview` and `/ws?topics=lights`,
 saves the overlay frame and the lights message at most every 3 s while lights are reported), 08:06-08:17 CET, one
 ride loop: 43 frames. Four kept in `docs/lanes/L7-traffic-lights/` (CC BY 3.0, `ATTRIBUTION.txt`):
 

@@ -1,8 +1,8 @@
 #!/bin/sh
-# Reference deployment: copy the downloaded/converted models to the phone (default target user@192.168.0.86).
+# Reference deployment: copy the downloaded/converted models to the phone (target: the argument, else $ROADSENSE_PHONE, else user@phone).
 set -eu
 cd "$(dirname "$0")/.."
-T=${1:-user@192.168.0.86}
+T=${1:-${ROADSENSE_PHONE:-user@phone}}
 ssh "$T" 'mkdir -p ~/roadsense/models'
 # the default road model (v0.11.1 vision + policy) and supercombo (selectable, and modeld's fallback)
 for f in models/driving_vision-fp32.onnx models/driving_policy-fp32.onnx models/driving_vision-ncnn.param models/driving_vision-ncnn.bin \

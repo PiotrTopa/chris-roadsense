@@ -35,7 +35,7 @@ it current:
 
 ```sh
 sudo install -d /var/lib/roadsense/maps
-sudo ln -sfn /home/user/roadsense-maps/poland-YYYYMMDD.rsmap /var/lib/roadsense/maps/current.rsmap
+sudo ln -sfn "$HOME"/roadsense-maps/poland-YYYYMMDD.rsmap /var/lib/roadsense/maps/current.rsmap
 ```
 
 mapd checks the pack path every 10 s and loads a new file without a restart; nothing else has to be

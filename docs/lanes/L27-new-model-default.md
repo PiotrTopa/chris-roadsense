@@ -282,9 +282,9 @@ key; tests in `api/tests/test_governor.py` (15).
 ## 6. Phone (benchmarks only; nothing installed, the installed units and the car backend untouched)
 
 2026-11-19 01:08-01:43 CET, bench, phone lock taken from `L24` as `L27` and given back as `L24`. Sources of
-this branch (commit d447378) and the four model files (sha256 as in section 1) in `/home/user/l27`; built there
+this branch (commit d447378) and the four model files (sha256 as in section 1) in `<phone-home>/l27`; built there
 (`l27-build`, 2.5 min); every job a transient unit (`l27-bench`, `l27-gatesc`, `l27-batch`, the stack as
-`l21-*` units of `tools/budget/stack.sh` with `L21_HOME=/home/user/l27`). Fan 100 % and host mode `on` during
+`l21-*` units of `tools/budget/stack.sh` with `L21_HOME=<phone-home>/l27`). Fan 100 % and host mode `on` during
 the runs, `fan_auto` and mode `auto` afterwards. Hottest zone during the gate 47 C. The netwatch hold
 (`/run/systemd/system/prius-netwatch.service.d/99-lane-off.conf`) was in place and was not touched.
 
@@ -392,8 +392,8 @@ Reading (`new-default` against `sc-new`, the same code and daemons with the othe
 
   The MFD draws lanes, path and lead from `view` with the new default. The drawn lead is about twice as
   unsteady on this ride (section 3, "still worse").
-  Screenshots (six consecutive drawn frames from 60 s): `/home/piotr/datasets/l27/mfd/mfd_before.png`,
-  `/home/piotr/datasets/l27/mfd/mfd_after.png`. In that moment "before" also shows the lane to the left and the
+  Screenshots (six consecutive drawn frames from 60 s): `<datasets>/l27/mfd/mfd_before.png`,
+  `<datasets>/l27/mfd/mfd_after.png`. In that moment "before" also shows the lane to the left and the
   lane boxes; "after" shows the ego lane only: the vision model's outer line was not present there.
 * `tools/mfd_chain_replay.py` on a recorded car drive (20261117-145921, junction labels) against `v2` and
   against this branch: identical output (section 8); a recording carries supercombo's `road` without
@@ -415,11 +415,11 @@ Reading (`new-default` against `sc-new`, the same code and daemons with the othe
 
 ## 9. Reproduce
 
-* lead: `python tools/vision_eval/lead_eval.py extract ~/datasets/openpilot-models/l24/road LEAD_DIR`, then the
+* lead: `python tools/vision_eval/lead_eval.py extract <datasets>/openpilot-models/l24/road LEAD_DIR`, then the
   `score` commands above (`--per-ride`, `--no-profile`, `--set KEY=JSON`).
 * ego lane: `tools/egolane_replay.py ROAD --labels LANES.csv --map-count label [--set commit_p=0.9]` per ride
   and stream (the estimator takes the profile from the stream's `road_model`).
-* plan hold: `python tools/vision_eval/plan_hold.py ~/datasets/openpilot-models/l24/road RIDE ...`; pose noise:
+* plan hold: `python tools/vision_eval/plan_hold.py <datasets>/openpilot-models/l24/road RIDE ...`; pose noise:
   `python tools/vision_eval/pose_noise.py LEAD_DIR RIDE ...`.
 * model resolution: `modeld_replay FRAMES.nv12 --width W --height H --models-dir DIR [--road-model M]`.
 * fp16 gate: `tools/ncnn/vision_gate.sh`.

@@ -15,7 +15,7 @@ Catalogue: `docs/RIDES.md`. Times CET (Warsaw local, UTC+1). Videos never go int
 * **YouTube with the Creative Commons filter** (`sp=EgIwAQ%3D%3D`) is the productive source. The licence
   is no longer printed in the watch-page HTML, so each candidate is verified with yt-dlp's `license` field
   (YouTube's own metadata; "Creative Commons Attribution license (reuse allowed)" = CC BY 3.0 unported).
-  yt-dlp 2026.10.26 installed into a private venv `~/datasets/rides/.tools/venv` (pip, no permission issue).
+  yt-dlp 2026.10.26 installed into a private venv `<datasets>/rides/.tools/venv` (pip, no permission issue).
   Note: the Kraków source video on YouTube (cpnOJaZlPaI) now reports a standard licence (`license` NA); the
   Commons copy was licence-reviewed as CC BY in 2025 and CC BY is irrevocable for copies made under it.
 * Productive CC BY channels: **Road** (UC4jJHe_slMO4N_XCE8ODgJg; 2026 uploads, 4K/1440p 50 fps, Poland:
@@ -38,7 +38,7 @@ Catalogue: `docs/RIDES.md`. Times CET (Warsaw local, UTC+1). Videos never go int
 * **Research datasets**: comma2k19 (US), Zenseact ZOD (Europe, registration form), a Kraków object-detection
   image set (licence unstated): none gives continuous open Polish video without an account.
 * Window choice: per candidate a contact sheet (one 360p frame every ~max(45 s, length/40) via the HLS
-  stream, `~/datasets/rides/.tools/sheet.sh`), then `yt-dlp --download-sections` of only the chosen window
+  stream, `<datasets>/rides/.tools/sheet.sh`), then `yt-dlp --download-sections` of only the chosen window
   (1080p or the best <= 1440p), then `tools/make_ride.sh`.
 * Candidates rejected on content: Red Mower winter POV (iE2yK68Fy7Y; a mirror-mount housing blocks ~25 %
   of the frame), Awizonosz car-park video (handheld walk-through), A1 Gajewo -> Gdańsk (M2LjuuKaCPE;
@@ -48,7 +48,7 @@ Catalogue: `docs/RIDES.md`. Times CET (Warsaw local, UTC+1). Videos never go int
   Martwa Wisła tunnel 4K (JZjKxh_E5pw; 2:15, duplicate of DYZJ2Pocpa0).
 
 ### 2. Download and preparation (10:57-11:50 CET)
-* Tools (not in the repo; `~/datasets/rides/.tools/`): `sheet.sh` (contact sheet from the 360p HLS
+* Tools (not in the repo; `<datasets>/rides/.tools/`): `sheet.sh` (contact sheet from the 360p HLS
   stream), `dl.sh` (yt-dlp `--download-sections`, best <= 1080p video only, `--write-info-json`),
   `prep.sh` (make_ride.sh with THREADS=3 in a `systemd-run --user --scope -p MemoryMax=8G -p CPUQuota=400%`
   scope + 3 gridded calibration frames), `meta.py` (camera-replay.json + calib.json from f and the vanishing
@@ -103,7 +103,7 @@ Results (two overlays per ride, judged by eye):
 before each ride (stop below 20 GB). Only `<slug>.mjpeg`, `camera-replay.json`, `calib.json`,
 `SOURCE.txt` go to the phone. The phone's camera source and services were not touched (L8 is measuring).
 Result (12:00-12:55 CET): all 20 new rides copied, 80 files, every md5 equal to the laptop's
-(`~/datasets/rides/.tools/push.log`); phone `~/rides` now 21 rides, 19.0 GB; phone root fs 75.3 GB free.
+(`<datasets>/rides/.tools/push.log`); phone `~/rides` now 21 rides, 19.0 GB; phone root fs 75.3 GB free.
 
 ### 6. Hand-back
 Catalogue and gaps: `docs/RIDES.md`. 21 rides (incl. L5's krakow-2024), 4 h 06 min, MJPEG 20.4 GB on

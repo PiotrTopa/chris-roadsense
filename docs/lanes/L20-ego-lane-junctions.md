@@ -1,6 +1,6 @@
 # L20: which lane am I in; why no junction or roundabout was ever shown
 
-Built 2026-11-18 on the dev box (P52), on the drive-recorder sessions of 12-18 Nov and on ride videos. Nothing
+Built 2026-11-18 on the dev box (laptop), on the drive-recorder sessions of 12-18 Nov and on ride videos. Nothing
 was deployed; the phone and the car were not touched. Branches `v2-l20` in roadsense and in the car repo.
 
 The owner's two complaints:
@@ -199,7 +199,7 @@ slower for this kind of Python (L13), about 2 %. Not measured on the phone.
 # mapd replay of recorded sessions (variants with --set; --fixes for raw fixes in JSON lines with ts_real_ns)
 tools/map_replay.py ~/roadsense-rec/20261117-163836 [--set matcher.class_speed=0 --set gnss_adaptive=false --set matcher.road_confidence=false] [--out MAP.jsonl]
 # ego lane against hand labels
-tools/egolane_replay.py ~/datasets/rides-road-l15/warsaw-city.road.jsonl.gz --labels LABELS/warsaw-city.lanes.csv
+tools/egolane_replay.py <datasets>/rides-road-l15/warsaw-city.road.jsonl.gz --labels LABELS/warsaw-city.lanes.csv
 tools/egolane_replay.py ~/roadsense-rec/20261117-163836 --clock session --labels LABELS/car-20261117-163836.lanes.csv --map-count recorded
 # the whole chain to the MFD (car repo)
 ~/projects/roadsense/.venv-models/bin/python tools/mfd_chain_replay.py ~/roadsense-rec/SESSION --labels LABELS/car-SESSION.junctions.csv [--map MAP.jsonl] --roadsense ~/projects/roadsense

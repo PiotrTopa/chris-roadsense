@@ -5,7 +5,7 @@ Orders: `orders/L48-phone.md` (P0-P3), `orders/L48-envd-phone.md` (envd rows), c
 + car backend `l48-opt` c7a8b81 installed by L49 at 12:01 (new options at their defaults). Frames from the replay
 playlist (one ride per run where the order says so). Fan on its automatic policy (41-46 % in every row). Every row:
 `tools/budget/measure.py` 240 s (envd rows 600 s) after 60 s (120 s) of settling, the stack's units plus the car
-backend by pid. Raw files on the phone in `~user/l48/out` and `~user/l48/lq`. CPU in % of one core, little / big.
+backend by pid. Raw files on the phone in `<phone-home>/l48/out` and `<phone-home>/l48/lq`. CPU in % of one core, little / big.
 
 **Deviation from the orders:** the candidates (P1, P2, envd B/C) ran against an installed stack that already
 carries `v2-l48`'s debug face and the new signd / envd binaries (L49 deployed before measuring, as its brief says).
@@ -120,6 +120,6 @@ configuration kept.
 
 All drop-ins removed (`/run/systemd/system/*.d` empty, removed), replay off (`roadsense-camerad-replay` disabled,
 `roadsense-camerad-dvr` enabled), calib.json back, learned state restored from the copies taken at 12:06 and checked
-by SHA-256, the two recorder sessions of the bench (619 MB) moved to `/home/user/rollback-20261120-l49/rec-bench-l49/`,
+by SHA-256, the two recorder sessions of the bench (619 MB) moved to `<phone-home>/rollback-20261120-l49/rec-bench-l49/`,
 backend mode `auto`. Peak temperature in a measured row 90.3 C (P0 rural, at the start); 94.6 C during the second
 label run (no abort; the 95 C guard did not trip).

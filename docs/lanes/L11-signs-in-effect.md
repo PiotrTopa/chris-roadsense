@@ -134,7 +134,7 @@ to three HUD lines on `/preview` (IN EFFECT / RECENT / AHEAD). Schema in `docs/A
 ### 2. Evaluation protocol (PRE-REGISTERED, committed before any scoring)
 Data: the phone recording above (real pipeline: signd with the L8 verifier, lights, envd), split by ride
 with the `camera` messages (`ride`, `ride_t_s`); frames for labelling are cut from the laptop's copies of the
-rides (`~/datasets/rides/<slug>/<slug>.mjpeg`, CC BY 3.0 per `SOURCE.txt`, never committed) at the
+rides (`<datasets>/rides/<slug>/<slug>.mjpeg`, CC BY 3.0 per `SOURCE.txt`, never committed) at the
 ride times of the recording (contact sheets, one thumbnail every 2 s, plus single frames around events).
 
 Rides (chosen before looking at any engine output on them): **krakow-2024, rural-zloczew, forest-vistula-spit,
@@ -189,7 +189,7 @@ after scoring is disclosed as in-sample.
   height limit without a value, suppressed / 2-frame / other-roadway tracks ignored, repeat refreshes + turn proxy,
   health strings). Whole suite 65/65 (`PYTHON=.venv-models/bin/python tools/smoke_api.sh`, 16 s).
 * `tools/rules_replay.py`: offline runner over a recorded `/ws` stream (raw lines or the recorder's wrapper), split
-  by ride with the camera messages, per-ride focal from `~/datasets/rides/<slug>/camera-replay.json`, prints
+  by ride with the camera messages, per-ride focal from `<datasets>/rides/<slug>/camera-replay.json`, prints
   START/END/PASS/AHEAD/JUNC/IGN events in ride seconds, `--out` writes the intervals for scoring, `--no-lights`.
 * Cost: 13-20 us per message offline (laptop, all topics incl. camera skipped).
 * First look (NOT evaluation rides; used only to catch bugs): `winter-snow-rural` 765-880 s: D-1 with a plate at

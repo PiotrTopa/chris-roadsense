@@ -147,7 +147,7 @@ rule is the switch `objects.lead_radar_only: false`. The L14 radar tests were ad
 
 ## 3. Measurements
 
-Commands in section 7. Recordings: `~/datasets/roadsense-rec/20261119-*`, `road_model` restored to `vision`,
+Commands in section 7. Recordings: `<datasets>/roadsense-rec/20261119-*`, `road_model` restored to `vision`,
 the car's receiver lines merged from the trip logs. Healthy: 104128, 113201 (vehicle feed), 065629 (camera
 only, another calibration). Incident: 151146, 153636, 161325 (camera only).
 
@@ -430,7 +430,7 @@ with a lead at 14-17 m while parked).
 ## 7. Reproducing
 
 ```sh
-cd ~/projects/wt/roadsense-l38; D=~/datasets/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; O=/tmp/l38; mkdir -p $O
+cd ~/projects/wt/roadsense-l38; D=<datasets>/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; O=/tmp/l38; mkdir -p $O
 # tests (aiohttp lives in the models venv on this machine; pytest in the system python); one suite per call
 PP=$(python3 -c "import pytest,os;print(os.path.dirname(os.path.dirname(pytest.__file__)))"); PY=~/projects/roadsense/.venv-models/bin/python
 PYTHONPATH=$PP $PY -m pytest -q -p no:cacheprovider chris-integrator/tests     # 27 passed, about 4 min

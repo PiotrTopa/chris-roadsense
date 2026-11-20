@@ -1,6 +1,6 @@
 # L14: lead-vehicle tracker (topic `lead`), ego relay, position-input reset
 
-Built 2026-11-15 on the dev box (P52). Nothing was deployed to the phone. Times CET. Contract:
+Built 2026-11-15 on the dev box (laptop). Nothing was deployed to the phone. Times CET. Contract:
 docs/ARCHITECTURE.md ("api-derived topic lead", "mapd": `ego.sock`, `reset`, vision odometry default).
 
 Observation that opened the lane: standing in a traffic jam behind a car that does not move, the distance to
@@ -15,7 +15,7 @@ the lead shown in the car flips between about 2 and 3 m.
 * Real lead output therefore comes from the ride library (docs/RIDES.md): `modeld_replay` (supercombo v0.9.7,
   ORT fp32, every frame at 20 fps) over four whole rides with jams and red lights: `a1-s8-rain`,
   `warsaw-city`, `katowice-rain`, `krakow-lights`; 60 min, 71 997 `road` messages, kept (leads, v_ego, pose,
-  plan; 15 MB each) in `~/datasets/rides-road/<slug>.road.jsonl.gz` on the laptop, not in the repo.
+  plan; 15 MB each) in `<datasets>/rides-road/<slug>.road.jsonl.gz` on the laptop, not in the repo.
   How: `ffmpeg -f mjpeg -framerate 20 -i RIDE.mjpeg -vf scale=in_range=full:out_range=full,format=nv12 -f rawvideo - |
   modeld_replay /dev/stdin --width 1280 --height 720 --fps 20 --focal F --calib calib.json --model supercombo-fp32.onnx`
   (in a `systemd-run --user -p MemoryMax=4G` unit; about 12 fps on 2 threads).
@@ -120,7 +120,7 @@ the hold, in which case the output is the filtered value.
 ```sh
 .venv-models/bin/python -m unittest discover -s api/tests -t .      # 114: 88 existing + 24 lead + 2 end to end (lead with a feeder, reset over HTTP)
 python3 -m unittest discover -s mapd/tests -t mapd                  # 55: 50 existing + ego relay (daemon), ego snapshot, default off, reset, synthetic
-tools/lead_replay.py ~/datasets/rides-road/warsaw-city.road.jsonl.gz --ego surrogate --events
+tools/lead_replay.py <datasets>/rides-road/warsaw-city.road.jsonl.gz --ego surrogate --events
 ```
 `api/tests/data/lead_*.csv`: two real stops (numbers only: t, v_ego, prob, x, x_std, v, v_std), replayed at
 20 and 10 Hz with and without the surrogate ego.

@@ -2,9 +2,9 @@
 # The regression bisect by configuration on one ride (default warsaw-city, 900 s with traffic-light stops), through the chain
 # to the MFD director. Calibration: ride = the ride's calib.json; car = that made wrong by the car's error (yaw +3.4, pitch -1.4 deg).
 R=${1:-warsaw-city}
-AC=/home/piotr/datasets/l32/ac; C=/home/piotr/datasets/l32/scripts/chain.sh
-NEWAPI=/home/piotr/projects/roadsense/api; OLDAPI=/home/piotr/projects/wt/roadsense-l32-pre2/api
-NEWCAR=/home/piotr/projects/cyberpank-prius-gen2-computer; OLDCAR=/home/piotr/projects/wt/prius-l32-pre2
+AC=$HOME/datasets/l32/ac; C=$HOME/datasets/l32/scripts/chain.sh
+NEWAPI=$HOME/projects/roadsense/api; OLDAPI=$HOME/projects/wt/roadsense-l32-pre2/api
+NEWCAR=$HOME/projects/cyberpank-prius-gen2-computer; OLDCAR=$HOME/projects/wt/prius-l32-pre2
 {
 for cal in car ride; do
   if [ $cal = car ]; then sc=scpoff; vis=poff; else sc=scoff; vis=off; fi

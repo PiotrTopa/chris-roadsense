@@ -3,10 +3,10 @@
 **Deployed and verified on the phone 2026-10-23** (results under "Measured on the phone").
 
 Everything below was verified on the laptop on 2026-10-22; the phone side is a rebuild
-plus a unit switch. Phone: Poco F1, postmarketOS, user `user`, sudo password in the vault
-(`poco_user_password`), Wi-Fi 192.168.0.86. Dev checkouts live in `~user/roadsense` and
-`~user/roadsense-signs`; models in `~user/roadsense/models`; ncnn built in
-`~user/vulkan-work/ncnn`.
+plus a unit switch. Phone: Poco F1, postmarketOS, user `user` (`user@phone`, see the placeholders in
+docs/WAYS_OF_WORKING.md), sudo password in a secret store, Wi-Fi. Dev checkouts live in `<phone-home>/roadsense` and
+`<phone-home>/roadsense-signs`; models in `<phone-home>/roadsense/models`; ncnn built in
+`<phone-home>/vulkan-work/ncnn`.
 
 ## What the laptop established
 
@@ -43,13 +43,13 @@ scripts/sync-phone.sh                       # tree -> phone ~/roadsense
 scripts/push-models.sh                      # supercombo-fp32.onnx + supercombo-ncnn.* (+ sign models live in roadsense-signs)
 ```
 
-On the phone (`ssh user@192.168.0.86`), as root:
+On the phone (`ssh user@phone`), as root:
 
 ```sh
-cd ~user/roadsense
-CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=/home/user/vulkan-work/ncnn" BUILD=/var/tmp/roadsense-build sh scripts/install-phone.sh
+cd <phone-home>/roadsense
+CMAKE_ARGS="-DROADSENSE_NCNN=ON -DNCNN_DIR=<phone-home>/vulkan-work/ncnn" BUILD=/var/tmp/roadsense-build sh scripts/install-phone.sh
 BUILD=/var/tmp/roadsense-build sh scripts/install-camerad-dvr.sh --enable   # masks camerad, starts camerad-dvr --auto
-cd ~user/roadsense-signs && BUILD=/var/tmp/roadsense-signs-build ROADSENSE_DIR=/home/user/roadsense sh scripts/install-phone.sh
+cd <phone-home>/roadsense-signs && BUILD=/var/tmp/roadsense-signs-build ROADSENSE_DIR=<phone-home>/roadsense sh scripts/install-phone.sh
 systemctl start roadsense.target
 ```
 
@@ -62,9 +62,9 @@ The rebuild also fixes the ring magic for the api. `install-phone.sh` reinstalls
 
 ```sh
 journalctl -u roadsense-camerad-dvr -n 3        # "ring 1280x720 ... 19.x fps", no "reopen" loops
-curl http://192.168.0.86:8080/v1/camera          # "source":"dvr", width 1280, focal_px 975
-curl http://192.168.0.86:8080/v1/health          # camera ~19.5 fps, road > 9/s (GPU backend)
-http://192.168.0.86:8080/                        # preview must show the camera, lanes drawn
+curl http://phone:8080/v1/camera          # "source":"dvr", width 1280, focal_px 975
+curl http://phone:8080/v1/health          # camera ~19.5 fps, road > 9/s (GPU backend)
+http://phone:8080/                        # preview must show the camera, lanes drawn
 ```
 
 ## Measured on the phone (2026-10-23, camera behind the Terminus 1a40:0101 hub)

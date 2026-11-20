@@ -1,6 +1,6 @@
 # L16: the car's own traffic light, junction view, start-up delay
 
-Built 2026-11-17 on the dev box (P52), deployed to the phone the same day (the car was parked). Times CET.
+Built 2026-11-17 on the dev box (laptop), deployed to the phone the same day (the car was parked). Times CET.
 Contract: docs/ARCHITECTURE.md ("light provider", "mapd" junction view, "Running under a host controller").
 
 ## Data: the first recorded drive from the car
@@ -169,7 +169,7 @@ after 10 s of absence (whether a port power cycle brings it back sooner), and th
 ## Deployed
 
 roadsense on the phone 2026-11-17 (api with the lane assignment, mapd with the junction view), rollback
-`/home/user/roadsense-installed-20261117-pre-L16.tgz`. The camera unit's masked state and
+`<phone-home>/roadsense-installed-20261117-pre-L16.tgz`. The camera unit's masked state and
 `/etc/roadsense/recorder.json` are as they were.
 
 ## Open

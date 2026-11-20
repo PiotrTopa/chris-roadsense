@@ -250,6 +250,6 @@ that.
 
 ## Network / access
 
-Wi-Fi only (`ssh user@192.168.0.86` on the home network). `ath10k` needs the
+Wi-Fi only (`ssh user@phone` on the home network). `ath10k` needs the
 retry service on boot. In the car there is no network unless a hotspot or USB
 Ethernet (host mode) is provided.

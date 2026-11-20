@@ -1,7 +1,7 @@
 # Order L1-soak: thermal plateau of the sign stack on the GPU next to modeld
 
-Placed by lane L1 (signs-vulkan), 2026-10-24. Execution lane: Opus. Phone: Poco F1 192.168.0.86
-(user ssh; root via `dotinfra vault exec poco_user_password -- ssh user@192.168.0.86 'sudo -S -p "" CMD'`,
+Placed by lane L1 (signs-vulkan), 2026-10-24. Execution lane: Opus. Phone: Poco F1 (`user@phone`)
+(user ssh; root via `ssh user@phone 'sudo -S -p "" CMD'`,
 password on stdin only, never printed). Background: docs/lanes/L1-signs-vulkan.md (short runs only;
 this order measures what the short runs cannot: the plateau).
 
@@ -14,8 +14,8 @@ been updated to the L1 recommendation (check `systemctl cat roadsense-signd`), r
 unit (`systemctl start roadsense-signd`) for config A and by hand for the others; otherwise run all
 by hand as root with `ROADSENSE_RUNDIR=/run/roadsense ROADSENSE_CONFIG_DIR=/etc/roadsense
 /usr/local/bin/signd --stats 10 ARGS` (binary and models installed by `scripts/install-phone.sh`
-with `NCNN_DIR=/home/user/vulkan-work/ncnn`; fallback: `/home/user/l1/build-signs/signd
---models-dir /home/user/roadsense-signs/models`).
+with `NCNN_DIR=<phone-home>/vulkan-work/ncnn`; fallback: `<phone-home>/l1/build-signs/signd
+--models-dir <phone-home>/roadsense-signs/models`).
 
 | config | signd arguments | expectation from the 70 s runs |
 |---|---|---|
@@ -32,7 +32,7 @@ Run D last and only if the user's fan is on the phone; stop it the moment any th
   (`/sys/class/devfreq/5000000.gpu/cur_freq`), big-core freq (`cpu4/cpufreq/scaling_cur_freq`).
 - signd: fps and detect_ms from its `--stats 10` stderr lines; modeld: runs/s and model_ms from
   `journalctl -u roadsense-modeld -o cat`; camerad-dvr fps if it logs one.
-- GPU busy over each 60 s: `sudo sh /home/user/l1/phone/gpubusy.sh 60 LABEL` (valid only while
+- GPU busy over each 60 s: `sudo sh <phone-home>/l1/phone/gpubusy.sh 60 LABEL` (valid only while
   the GPU stays active; ignore loads > 100 %).
 - The plateau temperature (mean of the last 5 minutes) and whether modeld's `--throttle-temp 80000`
   guard kicked in (modeld logs `effective_hz` < 20 in its stats line).

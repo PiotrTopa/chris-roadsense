@@ -13,7 +13,7 @@ only, never committed); the MJPEG index is ~/l11/frames/SLUG/full/index.npy (L11
 import glob, json, os, subprocess, sys
 import numpy as np
 
-sys.path.insert(0, "/home/piotr/projects/roadsense/chris-integrator")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "chris-integrator"))
 from chris_integrator.trackers import signctx  # noqa: E402
 
 slug, rec, out = sys.argv[1:4]

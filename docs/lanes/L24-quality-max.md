@@ -66,7 +66,7 @@ Without the api (or with `"enabled": false`) the caps file goes stale after 10 s
 configured: the governor can only ever take load away, and its absence is the old behaviour minus the two
 private guards.
 
-Phone: the lane's binaries were built in `/home/user/l24` (build 21:41-21:43 CET, from the sources of commit
+Phone: the lane's binaries were built in `<phone-home>/l24` (build 21:41-21:43 CET, from the sources of commit
 5cfc0b9; the later policy changes are Python only). Nothing was run with them: the phone lock was held by lane
 L25 until the laptop went down.
 
@@ -166,7 +166,7 @@ for the phone traces.
 frame number no longer names the same picture as in the reference and the content comparison is void (the
 tool printed 0.3-0.9 m line errors, which measure the misalignment). Rates and latencies are valid.
 
-Reproduce (dev box; builds of `v2` with the system ONNX Runtime in `~/datasets/l24gov/build-rs`, `build-signs`):
+Reproduce (dev box; builds of `v2` with the system ONNX Runtime in `<datasets>/l24gov/build-rs`, `build-signs`):
 
 ```
 PY=~/roadsense-maps/.venv/bin/python; N="--out OUT --nominal 6.2,3.6,3.3,0.66 --road-hz 6.8 --quota0 300 --seconds 360"
@@ -225,16 +225,16 @@ Readings:
 
 ## 5. Pending: the proof on the phone (runbook)
 
-Preconditions: phone reachable (`ssh user@10.42.0.1`), `/run/phone-lane.lock` absent (create it with `L24`,
+Preconditions: phone reachable (`ssh user@phone`), `/run/phone-lane.lock` absent (create it with `L24`,
 remove it at the end), `prius-netwatch` masked for the duration (`systemctl mask --runtime --now`; whoever
 finishes last unmasks and restarts it), clock right (`date`), nothing of L24 left running
 (`systemctl list-units 'l21-*' 'l24-*'`; the low-priority build unit `l24-build` had finished at 21:43).
-Root: `dotinfra vault exec poco_user_password -- ssh user@10.42.0.1 "sudo -S -p '' <cmd>"`. Safety stop:
+Root: `ssh user@phone "sudo -S -p '' <cmd>"`. Safety stop:
 `trace.py` brings the stack down when the hottest zone stays above 95 C for 3 s.
 
 1. Sources and tools (the C++ binaries in `~/l24/build-rs`, `~/l24/build-signs` are current; only Python and
    scripts changed):
-   `tar czf - -C /home/piotr/projects/wt/roadsense-v2 api tools | ssh user@10.42.0.1 'cd ~/l24/roadsense && tar xzf - && cp tools/governor/*.py tools/governor/*.sh tools/budget/stack.sh ~/l24/'`
+   `tar czf - -C ~/projects/wt/roadsense-v2 api tools | ssh user@phone 'cd ~/l24/roadsense && tar xzf - && cp tools/governor/*.py tools/governor/*.sh tools/budget/stack.sh ~/l24/'`
 2. Functional check, 2 min, fan 100 %: `sudo sh ~/l24/cond.sh smoke 6 100 90` then
    `python3 compare.py out/smoke.jsonl`: signs and lights at 2.5 a second and marked `shed`, `view` at 5, `env`
    once in 5 s, road at its full rate, `governor_level` 6 in `road`.
@@ -257,7 +257,7 @@ Root: `dotinfra vault exec poco_user_password -- ssh user@10.42.0.1 "sudo -S -p 
    settles at and the rail W, and repeat with F one step higher. If the governor oscillates, record the events
    and raise `restore_at_k`.
 8. Leave the phone as found: `python3 ~/l24/host.py fan_auto`, `python3 ~/l24/host.py roadsense_mode
-   '{"mode":"auto"}'`, `sudo L21_HOME=/home/user/l24 sh ~/l24/stack.sh down`, remove the lock, unmask and start
+   '{"mode":"auto"}'`, `sudo L21_HOME=<phone-home>/l24 sh ~/l24/stack.sh down`, remove the lock, unmask and start
    `prius-netwatch` if no other lane holds the phone.
 
 Also still to do on the phone: thermal time constants (the dwell and hold times are sized for a response of

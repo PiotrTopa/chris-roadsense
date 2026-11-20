@@ -548,7 +548,7 @@ options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 model_data = convert_fp16_to_fp32(path)     # initializers, I/O and Constant tensors fp16 -> fp32
 ```
 
-### 5.3 Measured latency on this laptop (P52, Intel i7-8850H, 6C/12T, AVX2; ORT 1.31.0 CPU EP, Python)
+### 5.3 Measured latency on this laptop (Intel i7-8850H, 6C/12T, AVX2; ORT 1.31.0 CPU EP, Python)
 
 Zero inputs, 3 warm-up runs, median of 20 runs, `ORT_ENABLE_ALL`, sequential, memory-capped unit. Output
 finite; `|hidden_state| = 1.000`.

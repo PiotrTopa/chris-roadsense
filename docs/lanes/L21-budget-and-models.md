@@ -201,7 +201,7 @@ tracker needs the detector's own rate). The next recorded drive with the new mod
 
 ## 5. Newer openpilot models (evaluated on the dev box, not built)
 
-A sub-lane (Opus, dev box only; scripts in `tools/models_survey/`, files in `~/datasets/openpilot-models/`).
+A sub-lane (Opus, dev box only; scripts in `tools/models_survey/`, files in `<datasets>/openpilot-models/`).
 
 | | supercombo v0.9.7 (installed) | v0.11.1 `driving_vision.onnx` |
 |---|---|---|
@@ -344,7 +344,7 @@ stacks stay under 90 C on the bench with the fan left to itself, and the differe
 ## 8. Phone
 
 Left as found: transient units stopped, clock pins released, fan automatic, roadsense mode `auto`. The
-lane's files are in `/home/user/l21` (sources, builds, profiles, results in `out/`, replay frames in `lf/`,
+lane's files are in `<phone-home>/l21` (sources, builds, profiles, results in `out/`, replay frames in `lf/`,
 1.4 GB). Side effects: every start of the host's mode `on` and every watchdog restart of the installed target
 opened a bench recorder session in `/var/lib/roadsense/rec` (five, `20261118-185123` to `20261118-202334`; left in place).
 No reset, no drop from the network; hottest reading 85 C at fan 100 %, 89 C with the fan in automatic mode.

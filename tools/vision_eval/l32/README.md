@@ -1,7 +1,7 @@
 # Lane L32 tools (docs/lanes/L32-lead-lateral.md)
 
 The scripts as they were run on the laptop; paths of the laptop are in the `.sh` drivers (rides in
-`~/datasets/rides`, outputs in `~/datasets/l32`, the car repo and the pre-2.0 worktrees). The Python tools take
+`<datasets>/rides`, outputs in `<datasets>/l32`, the car repo and the pre-2.0 worktrees). The Python tools take
 their paths as arguments.
 
 | what | files |

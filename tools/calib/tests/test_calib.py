@@ -1,6 +1,6 @@
 """Calibration tools on synthetic data with known answers (lane L33).
 
-    /home/piotr/datasets/l33/venv/bin/python -m unittest discover -s tools/calib/tests -v      (everything)
+    <datasets>/l33/venv/bin/python -m unittest discover -s tools/calib/tests -v      (everything)
     python3 -m unittest discover -s tools/calib/tests -v     (without OpenCV: the lens and picture tests are skipped)
 """
 import gzip

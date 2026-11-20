@@ -16,7 +16,7 @@ another lane). Rule: same quality SHOWN after the consumers, never assumed.
 ## 1. Method (candidate A: rate)
 - Per-frame embeddings by the real C++ pipeline (`envd_replay --nv12 --emb`, probe class file as installed on
   the phone) on all **21 rides** of the library (246 min) on a 2 Hz grid (frames 0, 10, 20, ... of 20 fps),
-  plus 32x18 Y/U/V thumbnails at 4 Hz (`tools/envd/rate_extract.py`); cache `~/datasets/envd-cache/l48/`.
+  plus 32x18 Y/U/V thumbnails at 4 Hz (`tools/envd/rate_extract.py`); cache `<datasets>/envd-cache/l48/`.
 - The car's **own recordings** (8 drives of 2026-11-19; 6 finished in the simulation, 70 min with frames,
   the two longest drives 20261119-104128 / -135622 not finished): the phone's own 1 Hz per-frame scores,
   replayed with the recorded `road` / `signs` / `ego` / `lights` / `map` streams.
@@ -48,7 +48,7 @@ another lane). Rule: same quality SHOWN after the consumers, never assumed.
 | event E3 (5 s + trigger dy30/dh.5/dc10, burst 6 s) | 0.25 | 5.92 | 3.55 | 5.16 | 1.80 | 0.76 | 2.52 | 2 / 21 |
 | event E5 (3 s + trigger, burst 6 s) | 0.37 | 4.13 | 2.56 | 3.82 | 1.70 | 0.69 | 1.91 | 1 / 21 |
 
-Label-change delays (median / p90 / worst s; full tables `~/datasets/envd-cache/l48/report_rides.md`):
+Label-change delays (median / p90 / worst s; full tables `<datasets>/envd-cache/l48/report_rides.md`):
 place: noise 0.5/2.5/56.5, 2 s 0.5/3.5/57.5, 3 s 0.5/5.0/58.5, 5 s 2.5/13.5/59.5. **Tunnel entry** (place):
 noise 0.5/0.5/1.5, 2 s 1.0/2.0/7.0, 5 s 2.0/5.5/30, E3 -1.2/2.8/3.5, E5 -1.0/2.7/12. Car tunnel rule entry:
 2 s 0.5/2.0/7.0, E1 -1.5/0.8/2.0 (the trigger makes it *earlier* than 1 Hz). Area prior: 2 s every change

@@ -4,7 +4,7 @@ Lane opened 2026-10-26 22:15 CET (Opus, code + measurement). Goal: win back road
 when signd's detector and modeld collide on the Adreno 630, without lowering the sign rate (speed-first
 ruling). Objective in order: road runs/s (signs >= 5/s), modeld latency p90, signs/s.
 Baseline (L3, docs/lanes/L3-speed.md): 13.2 road/s, 5.0 signs/s, model 74 ms mean, 16.3 road/s without signd.
-Times CET (Warsaw local, UTC+1). Root via `dotinfra vault exec poco_user_password -- ssh user@192.168.0.86 'sudo -S -p "" ...'`.
+Times CET (Warsaw local, UTC+1). Root via `ssh user@phone 'sudo -S -p "" ...'`.
 Scratch on the phone: `~/l4/` (sources `~/l4/roadsense{,-signs}`, builds `~/l4/build-rs`, `~/l4/build-signs`,
 scripts, `live/` results).
 

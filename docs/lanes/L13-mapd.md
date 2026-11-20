@@ -1,6 +1,6 @@
 # L13: map layer (mapd, position input, map packs, fusion)
 
-Built 2026-11-15 on the dev box (P52). Nothing was deployed to the phone and no real position source
+Built 2026-11-15 on the dev box (laptop). Nothing was deployed to the phone and no real position source
 exists yet: every number below comes from a synthetic position feed (`tools/synth_drive.py`) over the
 real Poland pack, or from unit tests on a hand-made network. Contract: docs/ARCHITECTURE.md ("mapd",
 "api-derived topic fused"); packs: docs/MAPS.md.

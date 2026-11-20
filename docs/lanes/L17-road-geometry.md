@@ -79,7 +79,7 @@ total share); without a position source the fusion's cost is the camera part alo
 ## Deployed
 
 roadsense on the phone 2026-11-17 (mapd with `ahead.geometry` and `turn_signal`, api with `roadgeom`),
-rollback `/home/user/roadsense-installed-20261117-pre-L17.tgz`. The camera unit's masked state and
+rollback `<phone-home>/roadsense-installed-20261117-pre-L17.tgz`. The camera unit's masked state and
 `/etc/roadsense/recorder.json` are as they were. The stack was not started (it runs under the car's host
 controller).
 

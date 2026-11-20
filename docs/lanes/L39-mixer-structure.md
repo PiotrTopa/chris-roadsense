@@ -388,7 +388,7 @@ Verified by reading its code at 748546b. Nothing was changed there.
 ## 7. Reproducing
 
 ```sh
-cd ~/projects/wt/roadsense-l39; D=~/datasets/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; O=/tmp/l39; mkdir -p $O
+cd ~/projects/wt/roadsense-l39; D=<datasets>/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; O=/tmp/l39; mkdir -p $O
 PP=$(python3 -c "import pytest,os;print(os.path.dirname(os.path.dirname(pytest.__file__)))"); PY=~/projects/roadsense/.venv-models/bin/python
 # tests (aiohttp lives in the models venv on this machine; pytest in the system python); one suite per call
 (cd chris-integrator && PYTHONPATH=$PP $PY -m pytest -q -p no:cacheprovider tests)     # 288 passed, about 6 min

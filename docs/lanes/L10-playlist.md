@@ -79,21 +79,21 @@ from HEAD, 1 thread), api (port 18110), a socket monitor (`camerad.sock`, `model
 
 ### 4. Phone deploy (13:20-13:34 CET)
 * `git archive HEAD` of `camerad-replay/main.cc`, `camerad/ring.h`, `scripts/use-replay.sh`,
-  `systemd/roadsense-camerad-replay.service`, `docs/RIDES.md` into `~user/roadsense` (the phone tree is
+  `systemd/roadsense-camerad-replay.service`, `docs/RIDES.md` into `<phone-home>/roadsense` (the phone tree is
   otherwise older than HEAD in api/modeld files; those are installed elsewhere by their lanes and were
   not touched). The installed api (`/usr/local/lib/roadsense/api`) was identical to HEAD (md5) before.
 * envd rebuilt as user in L3's build dir (`~/l3/build-envd`, `make envd`, ncnn on, sources = HEAD,
   ring.h with the reopen fix), installed to `/usr/local/bin/envd` (old binary kept as
   `envd.pre-l10`). The build heated the phone to 94.9 C for a minute (the stack was running); waited
   until < 88 C (75.8 C) before switching.
-* Root `~user/l10/deploy.sh`: envd install, api backup `/usr/local/lib/roadsense/api.pre-l10` + the two
-  new api files + api restart, then `sh scripts/use-replay.sh --playlist /home/user/rides`: compiled
+* Root `<phone-home>/l10/deploy.sh`: envd install, api backup `/usr/local/lib/roadsense/api.pre-l10` + the two
+  new api files + api restart, then `sh scripts/use-replay.sh --playlist <phone-home>/rides`: compiled
   camerad-replay (`c++`), kept `replay-prev-source` = dvr and the existing `calib.json.pre-replay`
   (from L5, the DVR calibration), wrote the 21-ride `/etc/roadsense/replay-playlist.txt`
   (catalogue order), restarted camerad-replay, try-restarted modeld/envd/signd. All units active.
   First ride opened in 2.3 s (cold page cache for 1.5 GB).
 * Quick check with test windows (`REPLAY_ARGS=--max-seconds-per-ride 45`, 13:23-13:33, rides 1-13):
-  socket monitor as root (`~user/l10/mon.py`; the sockets are root-only) over 160 s, 4 changes:
+  socket monitor as root (`<phone-home>/l10/mon.py`; the sockets are root-only) over 160 s, 4 changes:
 
 | ride (index) | ring focal | modeld calib after the change (pitch / yaw / h / f) | camera | road | signs | lights | first road after 1st frame | road max gap | env | temp |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -133,10 +133,10 @@ Socket monitor (root) for 27 min plus api snapshots from the laptop:
 ### 6. State left (14:10 CET)
 Playlist RUNNING on the phone: 21 rides in `docs/RIDES.md` order, 4 h 06 min of video plus ~3-5 s per
 ride change (2.5 s gap + 0.4-2.3 s file indexing), i.e. a loop of ~4 h 08 min, forever. Commands
-(root on the phone, from `~user/roadsense`):
+(root on the phone, from `<phone-home>/roadsense`):
 * status: `sh scripts/use-replay.sh --status`
-* playlist (again / other dir / shuffled): `sh scripts/use-replay.sh --playlist [/home/user/rides] [--shuffle]`
-* one ride: `sh scripts/use-replay.sh --enable /home/user/rides/<slug>/<slug>.mjpeg`
+* playlist (again / other dir / shuffled): `sh scripts/use-replay.sh --playlist [<phone-home>/rides] [--shuffle]`
+* one ride: `sh scripts/use-replay.sh --enable <phone-home>/rides/<slug>/<slug>.mjpeg`
 * back to the DVR camera + the original calib.json: `sh scripts/use-replay.sh --disable`
 * skip to the next ride: restart starts from ride 1; to change the order edit
   `/etc/roadsense/replay-playlist.txt` (re-read at every wrap) or restart after editing.

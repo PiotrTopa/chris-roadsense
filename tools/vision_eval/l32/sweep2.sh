@@ -1,5 +1,5 @@
 #!/bin/sh
-S=/home/piotr/datasets/l32/scripts/sweep.sh
+S=$HOME/datasets/l32/scripts/sweep.sh
 {
 echo "$S a1-night 60 60 supercombo base 0 0"
 echo "$S a1-night 60 60 supercombo yaw+2 2 0"

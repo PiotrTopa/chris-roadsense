@@ -1,6 +1,6 @@
 # L37: the data integrator
 
-Lane L37, 2026-11-19, P52 only (phone and car read-only; nothing deployed). Branch `v2-l37` from `v2-l35`
+Lane L37, 2026-11-19, laptop only (phone and car read-only; nothing deployed). Branch `v2-l37` from `v2-l35`
 (be05cf0). Design: `docs/INTEGRATOR.md`. Contract: `docs/ARCHITECTURE.md` ("The data integrator: api-derived
 topic `ego_state`"). Builds on the audit `docs/lanes/L35-ego-fusion-audit.md`.
 
@@ -116,7 +116,7 @@ default). The integrator gates what is made from the camera's geometry.
 
 ## 3. Measurements
 
-Sessions `~/datasets/roadsense-rec/20261119-*`; `road_model` restored to `vision` in every replay. Commands in
+Sessions `<datasets>/roadsense-rec/20261119-*`; `road_model` restored to `vision` in every replay. Commands in
 section 5. Good: 104128, 113201 (vehicle feed), 065629 (camera only). Bad: 151146, 153636 (vehicle feed),
 161325 (camera only, same knocked camera). Parked only: 135622, 145155.
 
@@ -303,7 +303,7 @@ Message additions the car may read: topic `ego_state` (ARCHITECTURE.md), `lead.v
 ## 5. Reproducing
 
 ```sh
-cd ~/projects/wt/roadsense-l37; D=~/datasets/roadsense-rec; O=/tmp/l37; mkdir -p $O
+cd ~/projects/wt/roadsense-l37; D=<datasets>/roadsense-rec; O=/tmp/l37; mkdir -p $O
 ALL="$D/20261119-104128 $D/20261119-113201 $D/20261119-065629 $D/20261119-151146 $D/20261119-153636 $D/20261119-161325"
 systemd-run --user --collect -p MemoryMax=8G --wait -- bash -c "cd $PWD &&
   python3 tools/integrator_replay.py characterise $ALL > $O/characterise.txt;

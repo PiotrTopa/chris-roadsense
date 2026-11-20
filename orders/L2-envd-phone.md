@@ -1,7 +1,7 @@
 # Order L2-envd-phone: envd on the Poco F1 (build, cost, 30-min run next to the stack)
 
-Placed by lane L2 (envd), 2026-10-26. Execution lane: Opus. Phone: Poco F1 192.168.0.86 (user ssh;
-root via `dotinfra vault exec poco_user_password -- ssh user@192.168.0.86 'sudo -S -p "" CMD'`,
+Placed by lane L2 (envd), 2026-10-26. Execution lane: Opus. Phone: Poco F1 (`user@phone`; user ssh;
+root via `ssh user@phone 'sudo -S -p "" CMD'`,
 password on stdin only, never printed). Background: docs/lanes/L2-envd.md (laptop numbers only;
 the user's thermal stress test `rs-stress-signd` occupied the phone during the lane).
 
@@ -13,18 +13,18 @@ order the moment any thermal zone passes 95 C (`cat /sys/class/thermal/thermal_z
 ```
 # laptop: sync the committed tree and push the envd model files
 scripts/sync-phone.sh                                   # ~/roadsense on the phone
-scp models/envd-image.onnx models/envd-classes.json user@192.168.0.86:~/roadsense/models/
-# the probe-anchored class file (not committed, trained on BDD/DAWN): ~/datasets/envd-cache/envd-classes-probe.json on the P52
-# TinyCLIP fallback (row F): ~/datasets/envd-cache/onnx/tinyclip40m.onnx + classes_tinyclip40m.json, renamed as in row F
+scp models/envd-image.onnx models/envd-classes.json user@phone:~/roadsense/models/
+# the probe-anchored class file (not committed, trained on BDD/DAWN): <datasets>/envd-cache/envd-classes-probe.json on the laptop
+# TinyCLIP fallback (row F): <datasets>/envd-cache/onnx/tinyclip40m.onnx + classes_tinyclip40m.json, renamed as in row F
 # optional GPU backend: also models/envd-image-ncnn.param/.bin (tools/envd/make_ncnn.sh; see the lane report
 # for whether the ncnn conversion of the chosen tower was verified)
 # phone, as user: build only envd (keeps the installed modeld/camerad untouched)
 cmake -S ~/roadsense/envd -B ~/l2/build-envd -DCMAKE_BUILD_TYPE=Release \
-      -DROADSENSE_NCNN=ON -DNCNN_DIR=/home/user/vulkan-work/ncnn && make -C ~/l2/build-envd -j4
+      -DROADSENSE_NCNN=ON -DNCNN_DIR=<phone-home>/vulkan-work/ncnn && make -C ~/l2/build-envd -j4
 # phone, as root: install the binary, model files and unit; leave the unit stopped
-install -m 755 ~user/l2/build-envd/envd ~user/l2/build-envd/envd_replay /usr/local/bin/
-install -m 644 ~user/roadsense/models/envd-image.onnx ~user/roadsense/models/envd-classes.json /var/lib/roadsense/models/
-install -m 644 ~user/roadsense/systemd/roadsense-envd.service /etc/systemd/system/ && systemctl daemon-reload
+install -m 755 <phone-home>/l2/build-envd/envd <phone-home>/l2/build-envd/envd_replay /usr/local/bin/
+install -m 644 <phone-home>/roadsense/models/envd-image.onnx <phone-home>/roadsense/models/envd-classes.json /var/lib/roadsense/models/
+install -m 644 <phone-home>/roadsense/systemd/roadsense-envd.service /etc/systemd/system/ && systemctl daemon-reload
 ```
 (If `scripts/install-phone.sh` is run instead, it does all of the above but also rebuilds and
 reinstalls modeld/camerad-dvr: fine when the stack is stopped, otherwise prefer the steps above.)
@@ -44,7 +44,7 @@ hottest zone before / after:
 | C (big cores) | `--backend ort --threads 2 --cpus 4-7 --max-hz 1` |
 | D (GPU, only if the ncnn model is installed) | `--backend ncnn --cpus 0-3 --max-hz 1` |
 | E (uncapped, 30 frames, cost ceiling) | A with `--max-hz 0` and `--frames 30` |
-| F (TinyCLIP-40M fallback, 3x cheaper, -4 macro points) | A with `--model ~user/roadsense/models/envd-tinyclip40m.onnx --classes ~user/roadsense/models/envd-classes-tinyclip40m.json` |
+| F (TinyCLIP-40M fallback, 3x cheaper, -4 macro points) | A with `--model <phone-home>/roadsense/models/envd-tinyclip40m.onnx --classes <phone-home>/roadsense/models/envd-classes-tinyclip40m.json` |
 
 Expectation from the laptop (docs/lanes/L2-envd.md section 1b: 89 ms at 2 threads on an i7):
 A should land in the 500-1000 ms range on the A55s, i.e. at the 1 s period; B/C ~half of that;

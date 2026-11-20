@@ -11,8 +11,8 @@ taken on the camera host (the phone; standard-library Python, nothing to install
 laptop. The laptop needs OpenCV once:
 
 ```sh
-python3 -m venv ~/datasets/l33/venv && ~/datasets/l33/venv/bin/pip install numpy pillow opencv-contrib-python-headless
-PY=~/datasets/l33/venv/bin/python          # used below; cd to the roadsense checkout
+python3 -m venv <datasets>/l33/venv && <datasets>/l33/venv/bin/pip install numpy pillow opencv-contrib-python-headless
+PY=<datasets>/l33/venv/bin/python          # used below; cd to the roadsense checkout
 ```
 
 Order matters: the mounting angles are angles *for a given lens calibration*. The mounting may still be done
@@ -53,7 +53,7 @@ second: `lens.py solve SESSION`), a video (`lens.py solve FILE.mp4 --every 10`),
 **Solving** (laptop):
 
 ```sh
-scp -r user@192.168.0.86:calib-shots ~/calib/shots
+scp -r user@phone:calib-shots ~/calib/shots
 $PY tools/calib/lens.py solve ~/calib/shots --board charuco:8x5 --square-mm 34.5 \
     --out ~/calib/lens.json --debug-dir ~/calib/lens-debug
 ```
@@ -70,7 +70,7 @@ means the distortion out there is extrapolated; add corner pictures if you can.
 Record a drive with the recorder on (`recorder.json`, docs/ARCHITECTURE.md "Drive recorder"): a **straight, level
 road, steady speed above 25 km/h (50-90 is best), 3-5 minutes of straight driving in total**, the car loaded as
 usual, staying in the lane. Curves, junctions and stops in between do not hurt; the tool cuts them out. Clear lane
-lines help the second method. Copy the session to the laptop (`scp -r user@192.168.0.86:/var/lib/roadsense/rec/<session> ~/roadsense-rec/`), then:
+lines help the second method. Copy the session to the laptop (`scp -r user@phone:/var/lib/roadsense/rec/<session> ~/roadsense-rec/`), then:
 
 ```sh
 $PY tools/calib/mount.py ~/roadsense-rec/<session> --frames --lens ~/calib/lens.json --out ~/calib/mount.json
@@ -104,7 +104,7 @@ unusual ones; `--vehicle FILE` checks them against a vehicle description (docs/V
 First look, without changing anything (laptop; a copy of the phone's `/etc/roadsense` in `~/calib/etc`):
 
 ```sh
-scp user@192.168.0.86:/etc/roadsense/{calib.json,camera-dvr.json} ~/calib/etc/
+scp user@phone:/etc/roadsense/{calib.json,camera-dvr.json} ~/calib/etc/
 $PY tools/calib/apply.py --config-dir ~/calib/etc --camera-file camera-dvr.json \
     --lens ~/calib/lens.json --mount ~/calib/mount.json \
     --height-m 1.25 --camera-to-front-m 1.60 --lateral-offset-m 0.00 \

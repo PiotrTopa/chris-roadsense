@@ -3,7 +3,7 @@
 Lane opened 2026-10-26 ~19:10 CET (Opus, execution). User ruling 2026-10-26 ~18:40: thermal headroom
 is ample with the fan (plateau ~80 C); optimise for speed and responsiveness; lane safety stop at
 95 C sustained (any zone). Times CET (Warsaw local, UTC+1). Root on the phone via
-`dotinfra vault exec poco_user_password -- ssh user@192.168.0.86 'sudo -S -p "" sh SCRIPT'`.
+`ssh user@phone 'sudo -S -p "" sh SCRIPT'`.
 Supersedes orders/L1-soak.md and folds orders/L2-envd-phone.md.
 
 ## 0. Starting point (19:14 CET)
@@ -17,10 +17,10 @@ The phone has no curl (busybox ash); python3 urllib is used for the API.
 ## 1. envd on the phone (orders/L2-envd-phone.md), 19:15-19:29 CET
 
 Install: `scripts/sync-phone.sh`; scp of `models/envd-image.onnx`, `models/envd-classes.json`, the probe class
-file (`~/datasets/envd-cache/envd-classes-probe.json` -> phone models dir, not committed), the ncnn
-conversion (`~/datasets/envd-cache/ncnn/vitb32_openai.*` -> `envd-image-ncnn.*`) and the TinyCLIP-40M pair
+file (`<datasets>/envd-cache/envd-classes-probe.json` -> phone models dir, not committed), the ncnn
+conversion (`<datasets>/envd-cache/ncnn/vitb32_openai.*` -> `envd-image-ncnn.*`) and the TinyCLIP-40M pair
 (row F). Build as user: `cmake -S ~/roadsense/envd -B ~/l3/build-envd -DCMAKE_BUILD_TYPE=Release
--DROADSENSE_NCNN=ON -DNCNN_DIR=/home/user/vulkan-work/ncnn && make -j4` (clean). Root: envd + envd_replay to
+-DROADSENSE_NCNN=ON -DNCNN_DIR=<phone-home>/vulkan-work/ncnn && make -j4` (clean). Root: envd + envd_replay to
 /usr/local/bin, models to /var/lib/roadsense/models, `roadsense-envd.service` + `roadsense.target` to
 /etc/systemd/system, the api tree replaced by the current one (`/v1/env`; the old copy kept as
 /usr/local/lib/roadsense/api.old), `/etc/roadsense/envd.json` = config/envd.json plus

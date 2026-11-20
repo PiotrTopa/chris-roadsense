@@ -1,15 +1,15 @@
 # L35: ego-motion and input audit (for the all-data integrator)
 
-Lane L35, 2026-11-19, P52 only (phone and car repo read-only; nothing deployed). Times are Warsaw local
+Lane L35, 2026-11-19, laptop only (phone and car repo read-only; nothing deployed). Times are Warsaw local
 (CET). Scope as changed by the owner during the lane: **audit only**; the integrator is built by a later lane
 from this report. A first prototype of an ego-state estimator with a vision gate, written before the scope
 change, is parked unintegrated on branch `l35-prototype-estimator` (commit 88afd13, `api/roadsense_api/egostate.py`;
 not for merge, mentioned in section 7 only because its replay numbers inform the thresholds).
 
-Data: recorder sessions copied from the phone to `~/datasets/roadsense-rec/20261119-*` (good: 104128, 113201,
+Data: recorder sessions copied from the phone to `<datasets>/roadsense-rec/20261119-*` (good: 104128, 113201,
 065629; bad: 151146, 153636; also 135622, 145155 (parked, standstill only), 161325 (no vehicle feed)), and the
 feeder's GNSS messages extracted from the car computer's trip logs (`grep '"dir":"POS"'
-~/cyberpunk/logs/trips/trip_20261119_*.ndjson` on the phone -> `~/datasets/roadsense-rec/trip-pos/pos_20261119.txt`,
+~/cyberpunk/logs/trips/trip_20261119_*.ndjson` on the phone -> `<datasets>/roadsense-rec/trip-pos/pos_20261119.txt`,
 7172 lines). Analysis tool: `tools/ego_audit.py` (added in this lane; analysis only, nothing in the stack uses it).
 
 ## 0. Findings in one page
@@ -204,7 +204,7 @@ and 76-94 ms (p95) past the frame's time: a lower bound of the road message's de
 
 ### 4.3 GNSS (head unit, via the feeder's trip-log lines)
 
-`tools/ego_audit.py gnss SESSION... --pos ~/datasets/roadsense-rec/trip-pos/pos_20261119.txt` and the
+`tools/ego_audit.py gnss SESSION... --pos <datasets>/roadsense-rec/trip-pos/pos_20261119.txt` and the
 repeat / displacement check in section 6:
 
 | session | msgs | repeated speed / course / position | best lag vs CAN speed (speed field) | bias, robust sigma at that lag (m/s) | displacement speed: lag, sigma | GNSS speed while the car stands p95 / p99 | course-rate gain in turns |
@@ -314,10 +314,10 @@ Constraints a builder must respect:
 ```sh
 # copy (phone read-only)
 for d in 20261119-104128 20261119-065629 20261119-113201 20261119-151146 20261119-153636; do
-  mkdir -p ~/datasets/roadsense-rec/$d; scp user@10.200.0.14:/var/lib/roadsense/rec/$d/messages.jsonl.gz ~/datasets/roadsense-rec/$d/; done
-ssh user@10.200.0.14 'cd ~/cyberpunk/logs/trips && for f in trip_20261119_*.ndjson; do grep "\"dir\":\"POS\"" $f | sed "s/^/$f /"; done' \
-  > ~/datasets/roadsense-rec/trip-pos/pos_20261119.txt
-D=~/datasets/roadsense-rec; S="$D/20261119-104128 $D/20261119-065629 $D/20261119-113201 $D/20261119-151146 $D/20261119-153636"
+  mkdir -p <datasets>/roadsense-rec/$d; scp user@phone:/var/lib/roadsense/rec/$d/messages.jsonl.gz <datasets>/roadsense-rec/$d/; done
+ssh user@phone 'cd ~/cyberpunk/logs/trips && for f in trip_20261119_*.ndjson; do grep "\"dir\":\"POS\"" $f | sed "s/^/$f /"; done' \
+  > <datasets>/roadsense-rec/trip-pos/pos_20261119.txt
+D=<datasets>/roadsense-rec; S="$D/20261119-104128 $D/20261119-065629 $D/20261119-113201 $D/20261119-151146 $D/20261119-153636"
 systemd-run --user --collect -p MemoryMax=3G --wait -- bash -c "cd ~/projects/wt/roadsense-l35 &&
   python3 tools/ego_audit.py rates $S > /tmp/rates.txt; python3 tools/ego_audit.py vision $S > /tmp/vision.txt;
   python3 tools/ego_audit.py incident $S > /tmp/incident.txt;

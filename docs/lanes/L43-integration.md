@@ -595,7 +595,7 @@ What the split still needs:
 ## 9. Reproducing
 
 ```sh
-cd ~/projects/wt/roadsense-l43; D=~/datasets/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; O=/tmp/l43; mkdir -p $O
+cd ~/projects/wt/roadsense-l43; D=<datasets>/roadsense-rec; P=$D/trip-pos/pos_20261119.txt; O=/tmp/l43; mkdir -p $O
 L38=~/projects/wt/roadsense-l38; L39=~/projects/wt/roadsense-l39; CAR=~/projects/cyberpank-prius-gen2-computer
 PP=$(python3 -c "import pytest,os;print(os.path.dirname(os.path.dirname(pytest.__file__)))"); PY=~/projects/roadsense/.venv-models/bin/python
 # tests

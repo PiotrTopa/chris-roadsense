@@ -97,8 +97,8 @@ produced message, the recorder's lines and digests of the socket's and the subsc
 compares two dumps.
 
 The capture used throughout: 200 s from 07:58 CET, 9849 messages, 3035 road frames
-(`~/datasets/roadsense-rec/l46/bench.cap.gz` on the laptop is incomplete: the phone's LTE uplink gave up at
-2.8 of 15 MB; the whole file is on the phone, `~user/l46/bench.cap.gz`).
+(`<datasets>/roadsense-rec/l46/bench.cap.gz` on the laptop is incomplete: the phone's LTE uplink gave up at
+2.8 of 15 MB; the whole file is on the phone, `<phone-home>/l46/bench.cap.gz`).
 
 ### 2.2 `chris-integrator/tools/cost_live.py`
 
@@ -194,7 +194,7 @@ Unit tests added (346 pass in chris-integrator; api 22, chris-mapper 22):
 Commands:
 
 ```sh
-cd ~/projects/wt/roadsense-l46; PY=~/projects/roadsense/.venv-models/bin/python; O=/tmp/l46; D=~/datasets/roadsense-rec
+cd ~/projects/wt/roadsense-l46; PY=~/projects/roadsense/.venv-models/bin/python; O=/tmp/l46; D=<datasets>/roadsense-rec
 export PYTHONHASHSEED=0; PACK=~/roadsense-maps/packs/poland-20261114-f2.rsmap
 (cd chris-integrator && CHRIS_TEST_CAR_REPO=~/projects/cyberpank-prius-gen2-computer PYTHONPATH=/usr/lib/python3/dist-packages $PY -m pytest -q -p no:cacheprovider tests)
 for s in 104128 113201 151146; do      # inside systemd-run --user -p MemoryMax=12G
@@ -317,19 +317,19 @@ provisioning removes).
   = `be75eec7dc44075983a1679474d6ac7d629f02656b79bb21fd46a1020678e3f1` (the same command in
   `chris-integrator/` of this branch gives the same). Marker `/usr/local/lib/chris/.deployed-commit-chris_integrator`.
   The 6054373 package and `chris_mapper` together hashed `4bd790b7...0a00` before (plain `sort`, both packages).
-* The phone's source tree `~user/d1/roadsense` got this branch's `chris-integrator/`, `scripts/install-phone.sh`,
+* The phone's source tree `<phone-home>/d1/roadsense` got this branch's `chris-integrator/`, `scripts/install-phone.sh`,
   the two docs and the api unit file (comments); `.deployed-commit` says 9a9ba27.
 * Checked live after the deployment: the car backend receives all its topics at the camera's rate; a
   WebSocket client gets exactly the topics it asks for (and everything without `?topics=`); `integrator.sock`
   greets with the last `ego_state`, `tracks`, `lead` and narrows on `{"subscribe": [...]}`; `GET /v2/road`
   returns modeld's whole line (22 plan members, the lines' `z`, `meta`); the recorder's session reads back
   with the reduced `road` (plan `x y z held age_ms`); the daemon stops cleanly on SIGTERM and saves its state.
-* **Undo** (as root; also in `/home/user/rollback-20261120-l46/RESTORE.txt`): stack off through the backend
+* **Undo** (as root; also in `<phone-home>/rollback-20261120-l46/RESTORE.txt`): stack off through the backend
   (`roadsense_mode off`), `mv /usr/local/lib/chris/chris_integrator{,.l46}`, `tar xzf
-  /home/user/rollback-20261120-l46/chris-lib-6054373.tar.gz -C / usr/local/lib/chris/chris_integrator`,
+  <phone-home>/rollback-20261120-l46/chris-lib-6054373.tar.gz -C / usr/local/lib/chris/chris_integrator`,
   `roadsense_mode auto`. The folder (root 0700) also holds the replaced source-tree files
   (`d1-roadsense-replaced-files-6054373.tgz`), the state files as found and the bench's recorder sessions.
-* CMDB: `~/.infra/servers/poco.md` updated in place (package, hashes, cost, rollback, install variables),
+* CMDB: the phone's entry updated in place (package, hashes, cost, rollback, install variables),
   `dotinfra lint` clean, synced; event 8.
 
 **The state the phone was left in (10:59 CET):** as found. `roadsense_mode auto`, the stack running on the
@@ -342,7 +342,7 @@ The recordings folder holds the 82 sessions it held at 07:39; the seven sessions
 (333 MB) are in the rollback folder under `rec-bench-l46/`. No backend setting was changed (the replay
 source keeps the camera daemon connected, so the bench restart setting was not needed); no reboot; no
 package installed. Highest temperature of the lane 88.3 C (cpu7; a guard that stops the stack at 95 C ran
-during the long comparison). Battery gauge 74 % at both ends. The lane's working files are in `~user/l46`
+during the long comparison). Battery gauge 74 % at both ends. The lane's working files are in `<phone-home>/l46`
 (42 MB: the capture, the car slice, both trees, result files, scripts) and can be deleted.
 
 Seen and left alone: now and then the daemon logs `Task exception was never retrieved ... KeyboardInterrupt`

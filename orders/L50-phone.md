@@ -2,14 +2,14 @@
 
 Placed by lane L50, 2026-11-20. Background: `docs/lanes/L50-native.md` (section 6), `chris-integrator/docs/NATIVE.md`.
 Phone: the car computer (Poco F1) on the bench, reached and handled as in its CMDB entry; root through the vault
-(`dotinfra vault exec poco_user_password -- ssh HOST 'sudo -S -p "" CMD'`, password on stdin only). One lane on
+(`ssh HOST 'sudo -S -p "" CMD'`, password on stdin only). One lane on
 the phone at a time. Nothing is installed with `apk`; nothing is compiled on the phone. Never reboot, never
 touch USB / VBUS. Stop the stack the moment a thermal zone passes 95 C. Times in CET.
 
 A replay pollutes learned state: before step 2 copy `/var/lib/chris/integrator.json`, `/var/lib/chris/signs.jsonl`,
 `/var/lib/roadsense/{camera-calibration.json,signs.jsonl,vehicle-calibration.json}`, `/etc/roadsense/calib.json`
 with their checksums and the list of `/var/lib/roadsense/rec`, and restore them at the end (L46 section 7,
-`~user/l46/restore_l46.sh` is the pattern).
+`<phone-home>/l46/restore_l46.sh` is the pattern).
 
 ## 1. Trees and the self-test (as user; nothing is changed on the system)
 
@@ -23,22 +23,22 @@ cd ~/l50/final/chris-integrator
 cp native/dist/linux-aarch64-musl/_chris_native.abi3.so chris_integrator/native/
 sha256sum chris_integrator/native/_chris_native.abi3.so; cat native/dist/linux-aarch64-musl/BUILD.txt
 python3 -m chris_integrator.native            # must print: self-test ok ...; exit status 0
-DESTDIR=/home/user/l50/inst sh scripts/install.sh --no-systemctl | grep 'native core'     # IN USE (...), under busybox ash
+DESTDIR=<phone-home>/l50/inst sh scripts/install.sh --no-systemctl | grep 'native core'     # IN USE (...), under busybox ash
 ```
 
 **Stop here if the self-test fails**: report its lines; the phone stays as it is.
 
 ## 2. The per-message path off line, quiet little core (stack off through the backend: `roadsense_mode off`)
 
-Inputs: L46's, on the phone: `~user/l46/bench.cap.gz` (the phone's own input, 3,035 road frames) and
-`~user/l46/car113201-slice` (a drive with vehicle feed; with the map pack). As user, `sh ~/l50/quiet.sh`:
+Inputs: L46's, on the phone: `<phone-home>/l46/bench.cap.gz` (the phone's own input, 3,035 road frames) and
+`<phone-home>/l46/car113201-slice` (a drive with vehicle feed; with the map pack). As user, `sh ~/l50/quiet.sh`:
 
 ```sh
 #!/bin/sh
 cd ~/l50 || exit 1
 rm -f quiet.done
 B=final/chris-integrator/tools/cost_bench.py
-P=/home/user/roadsense-maps/poland-20261114-f2.rsmap
+P=<phone-home>/roadsense-maps/poland-20261114-f2.rsmap
 CAP=$HOME/l46/bench.cap.gz; CAR=$HOME/l46/car113201-slice
 C=${CORE:-1}
 cost() { CHRIS_NATIVE=$2 PYTHONHASHSEED=0 taskset -c $C python3 $B run $4 $5 --tree $3 --json $1.json > $1.out 2>&1; }
@@ -74,9 +74,9 @@ difference beyond rounding, stop: the phone stays on pure Python**, and the diff
 
 ```sh
 # root, stack off
-R=/home/user/rollback-20261120-l50; mkdir -p $R; chmod 700 $R
+R=<phone-home>/rollback-20261120-l50; mkdir -p $R; chmod 700 $R
 tar czf $R/chris-lib-before.tar.gz -C / usr/local/lib/chris/chris_integrator usr/local/lib/chris/.deployed-commit-chris_integrator
-LIB=/usr/local/lib/chris; SRC=/home/user/l50/final/chris-integrator/chris_integrator
+LIB=/usr/local/lib/chris; SRC=<phone-home>/l50/final/chris-integrator/chris_integrator
 cp -r $SRC $LIB/chris_integrator.l50new && find $LIB/chris_integrator.l50new -name __pycache__ -type d -prune -exec rm -rf {} \;
 chown -R root:root $LIB/chris_integrator.l50new; chmod -R go-w $LIB/chris_integrator.l50new
 mv $LIB/chris_integrator $R/chris_integrator-replaced; mv $LIB/chris_integrator.l50new $LIB/chris_integrator
@@ -104,6 +104,6 @@ worse. Otherwise leave `CHRIS_NATIVE=0` in `integrator.env` and say so.
 ## 4. As found, and the record
 
 Replay off, DVR source enabled, learned state restored by checksum, the bench's recorder sessions moved out
-of the recordings folder into the rollback folder, backend mode `auto`. `~/.infra/servers/poco.md` updated in
+of the recordings folder into the rollback folder, backend mode `auto`. the phone's CMDB entry updated in
 place (package, module checksum, `native` in health, cost, rollback, the `CHRIS_NATIVE` switch), `dotinfra
 lint` clean. Results into `docs/lanes/L50-native.md` sections 0, 4 and 6.

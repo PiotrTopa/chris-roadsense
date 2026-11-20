@@ -1,5 +1,5 @@
 #!/bin/sh
-A=/home/piotr/datasets/l32/scripts/ac.sh; O=/home/piotr/datasets/l32/ac; ST=/home/piotr/datasets/l32/ac/state; mkdir -p $ST
+A=$HOME/datasets/l32/scripts/ac.sh; O=$HOME/datasets/l32/ac; ST=$HOME/datasets/l32/ac/state; mkdir -p $ST
 while read slug s d; do
   rm -f $ST/$slug.json $ST/$slug.p.json
   sh $A $slug $s $d off $O 0 0                                             # before: the ride's calib.json as it is

@@ -40,7 +40,7 @@ jobs:
           python -m pip install ".[test]"
           if [ "${{ matrix.mapper }}" = "true" ]; then python -m pip install ./_deps/chris-mapper; fi
       - name: implementation in use
-        run: cd "$RUNNER_TEMP" && python -m chris_integrator.native
+        run: cd "$RUNNER_TEMP" && python -m chris_integrator.native || true   # exit 3 = pure Python in use, which is what this job tests
       - name: tests (the installed package, pure Python)
         env:
           CHRIS_NATIVE: "0"

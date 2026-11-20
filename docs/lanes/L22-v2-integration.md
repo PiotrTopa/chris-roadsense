@@ -1,6 +1,6 @@
 # L22: roadsense 2.0 as one line: the merged branches, one display contract, the open quality points
 
-Built 2026-11-18 on the dev box (P52). Nothing was deployed; the phone and the car were not touched. Branches
+Built 2026-11-18 on the dev box (laptop). Nothing was deployed; the phone and the car were not touched. Branches
 `v2` in roadsense and in the car computer (both unpushed), made from `main` by merging `v2-l19` (display
 channel, live lead) and `v2-l20` (ego-lane filter, weak-receiver mapd, junction schematic). Contract:
 docs/ARCHITECTURE.md ("view.road: the road as one picture", "roadsense 2.0: what changed since 1.x"); car side:
@@ -256,7 +256,7 @@ tools/map_replay.py ~/roadsense-rec/SESSION --pack ~/roadsense-maps/packs/poland
 tools/view_replay.py ~/roadsense-rec/SESSION/messages.jsonl.gz --map MAP.jsonl --ws WS.jsonl.gz
 tools/view_replay.py ~/roadsense-rec/SESSION/messages.jsonl.gz --set line_motion=true      # the ego-motion variant
 # ego lane against hand labels (labels are kept outside the repository)
-tools/egolane_replay.py ~/datasets/rides-road-l15/krakow-night-tunnel.road.jsonl.gz --labels LABELS/krakow-night-tunnel.lanes.csv
+tools/egolane_replay.py <datasets>/rides-road-l15/krakow-night-tunnel.road.jsonl.gz --labels LABELS/krakow-night-tunnel.lanes.csv
 # car repo: what the glass shows, and the junction chain
 .venv-fe/bin/python tools/scene_feed_replay.py WS.jsonl.gz [--strip T:N:PNG]
 python3 tools/mfd_chain_replay.py ~/roadsense-rec/SESSION --labels LABELS/car-SESSION.junctions.csv --map MAP.jsonl --roadsense ~/projects/wt/roadsense-v2

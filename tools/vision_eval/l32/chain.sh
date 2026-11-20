@@ -3,8 +3,8 @@
 # road stream -> api State -> car backend SceneBuilder -> MFD frontend director; table by own speed at every stage
 set -eu
 N=$1; ROAD=$2; API=$3; BE=$4; FE=$5; shift 5
-D=/home/piotr/datasets/l32/chain; S=/home/piotr/datasets/l32/scripts
-PA=/home/piotr/projects/roadsense/.venv-models/bin/python; PF=/home/piotr/projects/cyberpank-prius-gen2-computer/.venv-fe/bin/python
+D=$HOME/datasets/l32/chain; S=$HOME/datasets/l32/scripts
+PA=$HOME/projects/roadsense/.venv-models/bin/python; PF=$HOME/projects/cyberpank-prius-gen2-computer/.venv-fe/bin/python
 $PA $S/chain_api.py "$ROAD" $D/$N.ws.jsonl.gz --api "$API" "$@" 2>/dev/null
 $PF $S/chain_backend.py $D/$N.ws.jsonl.gz $D/$N.scenes.jsonl.gz --repo "$BE" 2>/dev/null >/dev/null
 $PF $S/chain_frontend.py $D/$N.scenes.jsonl.gz $D/$N.ws.jsonl.gz $D/$N.rows.jsonl.gz --repo "$FE" 2>/dev/null >/dev/null

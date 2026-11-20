@@ -116,7 +116,7 @@ GPU, 5 runs a second) is the only other detector: 25 % of the GPU's time and the
 15 instead of 19-20 runs a second (each detector run costs about one road run, L4). Question: can it go, or run
 rarely, with the light detector's sign boxes (through the same classifier and verifier) carrying the tracker?
 
-Tooling of L24-S (roadsense-signs `tools/signs_eval/`, caches in `~/datasets/l24s/cache`): cached detections of
+Tooling of L24-S (roadsense-signs `tools/signs_eval/`, caches in `<datasets>/l24s/cache`): cached detections of
 both detectors on six labelled rides -> signd's own tracker (`signs_track_replay`) -> the rules engine -> L11's
 human labels; and the "detector at its best" reference on three rides. New here: `variant.py --no-det` (no
 sign-detector frames at all). The rules engine and its 5 Hz hit thresholds were not changed.
@@ -146,7 +146,7 @@ falls and is already outside the noise at 2.5 Hz (matched -2, false +4). The sig
 nothing else does. Kept as it is. (The direction that did gain in L24-S, proposals in addition to the 5 Hz
 detector, costs no detector run and is still an open A/B from that lane.)
 
-Reproduce: `EVAL_DIR=~/datasets/l48/eval tools/signs_eval/eval_variant.sh lo "0 1" "--no-det --lights LW,LZ"`,
+Reproduce: `EVAL_DIR=<datasets>/l48/eval tools/signs_eval/eval_variant.sh lo "0 1" "--no-det --lights LW,LZ"`,
 `... l2 "0 2" "--hz 2 --lights LW,LZ"` (roadsense-signs `l48-opt`), then `compare_rules.py`.
 
 ### 3.2 The light detector while no light is tracked
@@ -271,14 +271,14 @@ Not proven in this lane; each needs the stated proof before it is believed.
 * Budget (phone, read only): `ssh HOST sh -s 40 < tools/budget/snap_ro.sh > snap.txt && python3
   tools/budget/snap_ro.py snap.txt`; daemon stats: `journalctl -u roadsense-modeld -u roadsense-signd -u
   roadsense-envd -n 6 --no-pager`.
-* Message sizes and rates: the recorded drive `~/datasets/roadsense-rec/20261119-161325/messages.jsonl.gz`
+* Message sizes and rates: the recorded drive `<datasets>/roadsense-rec/20261119-161325/messages.jsonl.gz`
   (count and bytes by `type`; `json.loads` / `json.dumps` over 2,000 `road` lines).
 * Sign variants (3.1): roadsense-signs `l48-opt`, `tools/signs_eval/eval_variant.sh` with
-  `EVAL_DIR=~/datasets/l48/eval`, variants `lo` (`--no-det --lights LW,LZ`), `l1`, `l2`, `l25` (`--hz N --lights
-  LW,LZ`), baseline `r5` and `ls` of L24-S in `~/datasets/l24s/eval`; `compare_rules.py`; reference:
-  `score_ref.py` on `~/datasets/l48/v/`.
-* Light variants (3.2): `~/datasets/l48/lights/var.sh`, `var2.sh`, `var3.sh` (roadsense-signs `l48-opt`
-  `lights_replay --idle P`, build `~/datasets/l48/build-signs`), `tools/lights/replay_score.py` against
-  `~/datasets/l24s/lights/ref_*`.
+  `EVAL_DIR=<datasets>/l48/eval`, variants `lo` (`--no-det --lights LW,LZ`), `l1`, `l2`, `l25` (`--hz N --lights
+  LW,LZ`), baseline `r5` and `ls` of L24-S in `<datasets>/l24s/eval`; `compare_rules.py`; reference:
+  `score_ref.py` on `<datasets>/l48/v/`.
+* Light variants (3.2): `<datasets>/l48/lights/var.sh`, `var2.sh`, `var3.sh` (roadsense-signs `l48-opt`
+  `lights_replay --idle P`, build `<datasets>/l48/build-signs`), `tools/lights/replay_score.py` against
+  `<datasets>/l24s/lights/ref_*`.
 * Debug face (3.3): `python -m unittest discover -s api/tests`; the timing loop is in the commit message of
   f777ee6.

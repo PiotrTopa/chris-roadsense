@@ -7,7 +7,7 @@
 
 PICTURES: picture files (jpg, png, pgm), folders of them, a recorder session (its frames/), or a video (every
 --every-th frame). The board is the one drawn by tools/calib/board.html: `charuco:COLSxROWS` (squares) or
-`checker:COLSxROWS`. Needs OpenCV with the aruco module (laptop: /home/piotr/datasets/l33/venv, docs/CALIBRATION.md);
+`checker:COLSxROWS`. Needs OpenCV with the aruco module (laptop: <datasets>/l33/venv, docs/CALIBRATION.md);
 the pictures are taken on the camera host with tools/calib/capture.py.
 
 `solve` reports focal length, picture centre, distortion (k1, k2; OpenCV's model, tools/calib/geom.py), the

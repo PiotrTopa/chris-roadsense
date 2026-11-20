@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """evidence.py CAND RIDE : lane evidence maps (640x360 uint8 per frame) of a learned candidate on the extracted
-5 fps frames -> /mnt/win/linux-scratch/l29/evid/RIDE.CAND.u8 ; prints ms per frame (1 thread).
+5 fps frames -> $SCRATCH/l29/evid/RIDE.CAND.u8 ; prints ms per frame (1 thread).
 CAND: twinlite | yolop640 | yolop320 | ufld"""
 import importlib.util
 import os
@@ -10,8 +10,8 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 DL = os.environ.get("L29_DL", os.path.expanduser("~/datasets/l29/dl"))        # the candidates' files (docs/lanes/L29-display-lanes.md)
-FR = os.environ.get("L29_FRAMES", "/mnt/win/linux-scratch/l29/frames")
-EV = os.environ.get("L29_EVID", "/mnt/win/linux-scratch/l29/evid")
+FR = os.environ.get("L29_FRAMES", os.path.join(os.environ.get("SCRATCH", os.path.expanduser("~/scratch")), "l29", "frames"))
+EV = os.environ.get("L29_EVID", os.path.join(os.environ.get("SCRATCH", os.path.expanduser("~/scratch")), "l29", "evid"))
 W, H, EW, EH = 1280, 720, 640, 360
 MEAN = np.array([0.485, 0.456, 0.406], np.float32).reshape(3, 1, 1)
 STD = np.array([0.229, 0.224, 0.225], np.float32).reshape(3, 1, 1)
