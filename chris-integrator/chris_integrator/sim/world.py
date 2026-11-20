@@ -16,7 +16,7 @@ import numpy as np
 
 NS = 1_000_000_000
 G = 9.80665
-LAT0, LON0 = 52.0000, 21.0000           # an arbitrary origin of the simulated world (no real route)
+LAT0, LON0 = 54.4000, 18.5000
 R_EARTH = 6378137.0
 CAM_TO_AXLE = 1.5                # the car frame's origin (reference camera) is this far ahead of the rear axle
 
