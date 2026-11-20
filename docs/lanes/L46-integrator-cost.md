@@ -1,6 +1,6 @@
 # L46: what chris-integrator costs on the phone, and what was taken out of it
 
-Lane L46, 2026-11-20 07:35-11:xx CET, Poco F1 on the bench (no camera attached; frames from the replay
+Lane L46, 2026-11-20 07:35-11:00 CET, Poco F1 on the bench (no camera attached; frames from the replay
 playlist), laptop for the equivalence runs. Branch `v2-l46` from `main` 6054373. Not pushed, not merged.
 The owner's rule for this lane: the outputs stay the same; only work that changes nothing is removed.
 
@@ -10,6 +10,7 @@ The owner's rule for this lane: the outputs stay the same; only work that change
 |---|---|---|
 | CPU per road frame, whole per-message path, quiet little core (replayed capture, 2.1) | 21.4 ms | **16.6 ms** (-22 %) |
 | the same, median / 99th percentile / worst frame | 18.8 / 23.7 / 112 ms | 14.3 / 19.5 / 70 ms |
+| a recorded drive with vehicle feed, receiver and map box, quiet little core (section 6) | 24.7 ms | 22.0 ms (-11 %) |
 | live, full stack running, share of one little core (section 5) | 47.0 / 48.3 % | **38.7 / 39.3 %** |
 | live, CPU per road frame | 31.1 / 32.1 ms | **25.5 / 26.3 ms** (-18 %) |
 | latency added by the integrator (road -> lead / road -> lanes) | 15.5 / 19.2 ms | 9.5 / 12.7 ms |
@@ -18,12 +19,17 @@ The owner's rule for this lane: the outputs stay the same; only work that change
 
 Every stream a plug-in produces, the recorder's file, what the WebSocket subscriber receives and the socket's
 greeting lines are byte-identical before and after, on three car recordings (one of them also with the map
-box) and on a capture of the phone's own input.
+box), and on the phone itself on a capture of its own input and on a recorded drive with the map box.
 
-The reduction is smaller than the brief hoped for, and the reason is in section 1: nothing in the daemon was
-grossly wasteful except the recorder. The cost is Python on a little core: a JSON number costs 1-1.6 us to
-read or write, a rounding 2.1 us, a numpy call on a small array 5-18 us, and the stack does about 1500 + 2000
-+ 1000 + 600 of these per camera frame. What is left is listed in section 6 with what each part would take.
+**Bad news first.** The reduction is a fifth, not a half. Nothing in the daemon was grossly wasteful except
+the recorder (section 1); the rest is the unit price of Python on a little core: 1 us to read a JSON number
+and 1.5 us to write one, 2.1 us for a `round()`, 5-18 us for a numpy call on a small array, and the stack
+reads about 1500 numbers, writes about 2000, rounds about 1000 and makes several hundred numpy calls per
+camera frame. **In the car it will cost more than on the bench**: with the vehicle's feed the estimator, which
+this lane did not touch, is half of the cost; a recorded drive replayed on the phone gives 22 ms per frame
+on a quiet core against 16.6 for the bench input, about 45-50 % of a little core live (section 6). System
+time rose by 0.2-0.7 ms a frame and the cause is not pinned down (section 5). What is left, and what each
+part would take, is section 6.
 
 ## 1. Where the 29 ms went (before)
 
@@ -167,7 +173,7 @@ SHA-256 of what the WebSocket subscriber received per topic equal; the socket's 
 | 20261119-113201 (15 min, vehicle-fed, healthy) | laptop | 9760 | IDENTICAL |
 | 20261119-151146 (the incident drive) | laptop | 17720 | IDENTICAL |
 | 20261119-113201 with the map box in process (`map` stream too) | laptop | 9760 | IDENTICAL |
-| 20261119-113201 with the map box | phone | CAR_FRAMES | CAR_EQUIV |
+| 20261119-113201 with the map box (vehicle feed, receiver, map: the phone's Python and numpy on those paths) | phone | 9745 | IDENTICAL |
 
 Two runs of the baseline tree on the phone give the same dump (SHA-256 `8ba4a2e0...9e69`), so the comparison
 is not passing by accident of a noisy reference.
@@ -225,7 +231,12 @@ fan 0 %, little cores at 1.77 GHz throughout, governor level 0 except run 1 at 3
 * **Worst single call since start** (the mixer's `max_ms`): estimator 52-59 -> 62-63 ms (the first frames
   after start; unchanged), lanes 48 -> 15 ms, view 41 -> 41 ms. Off line the worst whole frame went from
   112 to 70 ms, the 99th percentile from 23.7 to 19.5 ms.
-* **System time rose** by 0.3-0.7 ms a frame (2.6-2.9 -> 3.2-3.3), inside the totals above. SYS_NOTE
+* **System time rose** by 0.3-0.7 ms a frame (2.6-2.9 -> 3.2-3.3), inside the totals above. It shows off line too (0.18 -> 0.42 ms a frame in the bench), so it
+  is the new code and not the sockets: the likely cause is memory, the batches allocate arrays, lists and
+  byte strings of a few kB where the old code made many small ones, and musl gives blocks of that size back
+  to the kernel. Keeping the rounding helpers' work arrays between calls did not change it (0.39 ms; taken
+  out again, commits 1c6cc16 and 9a9ba27), so the source is elsewhere (the trimmed line's pieces, the lanes
+  batch) and was not chased further: 0.2 ms.
 * **Memory** +7 MB (3.3). **Temperatures** 85-88 C peak (cpu7) in all four runs: the integrator's 9 % of a
   little core does not show against signd and envd on the big cores. 0 plug-in errors in every run.
 * The first measurement of this lane (07:48 CET, 42.6 %, 28.9 ms) and the first after the deployment (09:30
@@ -237,7 +248,27 @@ quiet core.** What limits it is section 6.
 
 ## 6. What remains expensive, and why
 
-CAR_SECTION
+**First, what the bench does not show: the car.** The bench has no vehicle feed, no receiver and no map
+position. A recorded drive with all three (20261119-113201, 15 min, 9745 road frames, 26544 input messages,
+the map box in process) replayed through the same harness **on the phone**:
+
+| | before | after |
+|---|---|---|
+| CPU per road frame, quiet little core | 24.7 ms | 22.0 ms (-11 %) |
+| estimator | 11.7 ms (5.0 ms a call, 2.3 calls a frame) | 11.5 ms |
+| lanes / view / rules | 2.6 / 0.9 / 2.2 ms | 1.8 / 0.8 / 2.2 ms |
+| recorder / socket / WebSocket output | 3.8 / 1.1 / 0.3 ms | 2.8 / 0.05 / 0.7 ms |
+| median / 99th percentile / worst frame | 21.1 / 30.1 / 53 ms | 18.3 / 27.6 / 52 ms |
+| filter entries re-run because of late rows | 25074 (2.6 a frame) | the same |
+
+(The input is a recorder session: its `road` is already the reduced form, so reading it costs 1.0 ms instead
+of the 1.4-1.9 of a live line, and the recording holds `ego` at no more than 25 a second.) With the live
+overhead measured in section 5 on top, the integrator in the car is to be expected at about **45-50 % of a
+little core** after this lane (50-55 % before), not the 39 % of the bench: **with the car's feed the estimator
+is half of the cost**, and this lane did not touch it. Every wheel and gyro sample is a filter insertion with a
+prediction and its updates, and every camera frame, stamped 100 ms earlier than it arrives, makes the filter
+run again over the two or three samples that arrived in between. This is an estimate from a replay, not a
+measurement in the car: the first drive should read `cost_live.py`.
 
 In order of size (bench input, ms per road frame of 16.6):
 
@@ -248,7 +279,7 @@ In order of size (bench input, ms per road frame of 16.6):
   `ego_state` message. No part is more than a quarter of it and none is waste. With numpy call overhead of
   5-18 us on this core, a 26-state filter in Python cannot be made much cheaper without changing its
   arithmetic (results then differ at rounding level and would have to be shown after the trackers) or a
-  native core. With the car feeding wheel and gyro samples this box grows further (above).
+  native core. With the car feeding wheel and gyro samples it is 11.4 ms (above).
 * **JSON, 4.2 ms** in four places: reading the inputs 1.4; the recorder's `road` line 1.9 and its other topics
   0.5; `lanes`, `view` and `lead` for the WebSocket consumer 1.3. The table technique of 3.2 would take about
   0.6 off `lanes` and `view` (their lists are already rounded); it was not done: it needs each tracker to hand
@@ -275,7 +306,48 @@ Three larger steps exist and none was taken, because each needs a decision of th
 
 ## 7. On the phone now, and how to undo it
 
-DEPLOY_SECTION
+**Deployed** (the owner authorised bench deployments for this night): the `chris_integrator` package of this
+branch in `/usr/local/lib/chris/chris_integrator`, put there at 09:27 CET with the stack stopped (the way
+`scripts/install.sh` swaps a package; no unit, no configuration and no other package was touched, and the
+install script was not run on the live system: it would re-create the unit's `WantedBy` link that the car's
+provisioning removes).
+
+* Content: the package of branch head (code last changed in d0885a8; 9a9ba27 has the same package). Check:
+  `cd /usr/local/lib/chris && find chris_integrator -name '*.py' | LC_ALL=C sort | xargs sha256sum | sha256sum`
+  = `be75eec7dc44075983a1679474d6ac7d629f02656b79bb21fd46a1020678e3f1` (the same command in
+  `chris-integrator/` of this branch gives the same). Marker `/usr/local/lib/chris/.deployed-commit-chris_integrator`.
+  The 6054373 package and `chris_mapper` together hashed `4bd790b7...0a00` before (plain `sort`, both packages).
+* The phone's source tree `~user/d1/roadsense` got this branch's `chris-integrator/`, `scripts/install-phone.sh`,
+  the two docs and the api unit file (comments); `.deployed-commit` says 9a9ba27.
+* Checked live after the deployment: the car backend receives all its topics at the camera's rate; a
+  WebSocket client gets exactly the topics it asks for (and everything without `?topics=`); `integrator.sock`
+  greets with the last `ego_state`, `tracks`, `lead` and narrows on `{"subscribe": [...]}`; `GET /v2/road`
+  returns modeld's whole line (22 plan members, the lines' `z`, `meta`); the recorder's session reads back
+  with the reduced `road` (plan `x y z held age_ms`); the daemon stops cleanly on SIGTERM and saves its state.
+* **Undo** (as root; also in `/home/user/rollback-20261120-l46/RESTORE.txt`): stack off through the backend
+  (`roadsense_mode off`), `mv /usr/local/lib/chris/chris_integrator{,.l46}`, `tar xzf
+  /home/user/rollback-20261120-l46/chris-lib-6054373.tar.gz -C / usr/local/lib/chris/chris_integrator`,
+  `roadsense_mode auto`. The folder (root 0700) also holds the replaced source-tree files
+  (`d1-roadsense-replaced-files-6054373.tgz`), the state files as found and the bench's recorder sessions.
+* CMDB: `~/.infra/servers/poco.md` updated in place (package, hashes, cost, rollback, install variables),
+  `dotinfra lint` clean, synced; event 8.
+
+**The state the phone was left in (10:59 CET):** as found. `roadsense_mode auto`, the stack running on the
+DVR camera source with no camera attached (the backend's five-minute restart loop of the bench goes on as
+before this lane, one small recorder session per start). Replay off (`roadsense-camerad-replay` disabled,
+`roadsense-camerad-dvr` enabled, `calib.json` back). The learned state restored from the copies taken at
+07:39 and verified by checksum: `/var/lib/chris/integrator.json`, `/var/lib/chris/signs.jsonl`,
+`/var/lib/roadsense/camera-calibration.json`, `signs.jsonl`, `vehicle-calibration.json`, `/etc/roadsense/calib.json`.
+The recordings folder holds the 82 sessions it held at 07:39; the seven sessions of this lane's replay runs
+(333 MB) are in the rollback folder under `rec-bench-l46/`. No backend setting was changed (the replay
+source keeps the camera daemon connected, so the bench restart setting was not needed); no reboot; no
+package installed. Highest temperature of the lane 88.3 C (cpu7; a guard that stops the stack at 95 C ran
+during the long comparison). Battery gauge 74 % at both ends. The lane's working files are in `~user/l46`
+(42 MB: the capture, the car slice, both trees, result files, scripts) and can be deleted.
+
+Seen and left alone: now and then the daemon logs `Task exception was never retrieved ... KeyboardInterrupt`
+when it is stopped (both versions; the state file is written all the same). The 82 sessions in the
+recordings folder include about 40 empty ones of the no-camera restart loop since 04:19.
 
 ## 8. The install scripts' variable (also in this lane)
 
@@ -294,7 +366,8 @@ the consolidated API collide".
   `DEBUG_API_PORT=8093 CHRIS_API_PORT=8094` -> 8093 / 8094 with the integrator's link following the debug
   face; `API_PORT=8090` -> refused before anything is written (a real collision with the default 8090);
   chris-integrator's script alone with the old names and with the new name taking precedence.
-  PHONE_INSTALL_TEST
+  The same on the phone under its busybox ash, from the updated source tree, into scratch prefixes that were
+  removed afterwards: the same four results.
 * The daemon's built-in default port stays 8080 on all interfaces: it is what a stand-alone start by hand on
   a development machine or a single-purpose box expects, and every installed unit sets 8090 on loopback
   through its environment, so the default is never used on the car. Documented in
