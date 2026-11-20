@@ -104,10 +104,6 @@ class MapMatchSource(Source):
             ctx.integ.fdi.findings.pop(key, None)
         return bool(mem.get("conflict"))
 
-    def on_new_position(self, ctx):
-        for k in ("cq", "cfix", "conflict"):
-            ctx.mem.pop(k, None)
-
     def report(self, ctx):
         m = ctx.mem
         return {"matched": m.get("matched"), "match_confidence": m.get("conf"), "used": m.get("used", 0), "held": m.get("held"),

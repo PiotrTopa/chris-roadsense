@@ -187,6 +187,66 @@ def cmd_diff(a):
     return 0 if ok and oa == ob else 1
 
 
+def _leaves(o, pre=""):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield from _leaves(v, pre + "." + str(k) if pre else str(k))
+    elif isinstance(o, list):
+        if len(o) <= 4:
+            for i, v in enumerate(o):
+                yield from _leaves(v, "%s[%d]" % (pre, i))
+    else:
+        yield pre, o
+
+
+def cmd_stats(a):
+    """Frame by frame, by `seq`: how two runs differ in numbers (lane L43: another estimator under the same
+    trackers). Per topic: messages paired, identical, agreement of `valid` / `present`, and the numeric fields
+    that differ most (share of pairs differing, p50 / p95 / max of the absolute difference)."""
+    import statistics
+    A, B = {}, {}
+    for X, f in ((A, a.a), (B, a.b)):
+        for t, l in load(f):
+            m = json.loads(l)
+            X.setdefault(t, {})[m.get("seq")] = (l, m)
+    for t in (a.topics.split(",") if a.topics else ("lead", "lanes", "view")):
+        xa, xb = A.get(t, {}), B.get(t, {})
+        common = [k for k in xa if k in xb]
+        if not common:
+            print("%-6s no common messages" % t)
+            continue
+        same = sum(1 for k in common if xa[k][0] == xb[k][0])
+        print("%-6s %d / %d messages, paired %d, identical %.1f %%" % (t, len(xa), len(xb), len(common), 100.0 * same / len(common)))
+        diffs, flags = {}, {}
+        for k in common:
+            la, lb = dict(_leaves(xa[k][1])), dict(_leaves(xb[k][1]))
+            for key in ("valid", "present", "mode", "reason", "integrity"):
+                if key in la or key in lb:
+                    f = flags.setdefault(key, [0, 0, {}])
+                    f[0] += 1
+                    if la.get(key) != lb.get(key):
+                        f[1] += 1
+                        tr = "%s -> %s" % (la.get(key), lb.get(key))
+                        f[2][tr] = f[2].get(tr, 0) + 1
+            for key, va in la.items():
+                vb = lb.get(key)
+                if isinstance(va, (int, float)) and isinstance(vb, (int, float)) and not isinstance(va, bool) and not key.startswith("ts_") \
+                        and "age" not in key and key != "seq":
+                    d = diffs.setdefault(key, [0, []])
+                    d[0] += 1
+                    if va != vb:
+                        d[1].append(abs(va - vb))
+        for key, (n, bad, tr) in flags.items():
+            print("       %-10s differs in %.2f %% of %d%s" % (key, 100.0 * bad / n, n, "" if not bad else "  " + "; ".join(
+                "%s: %d" % (k[:70], v) for k, v in sorted(tr.items(), key=lambda x: -x[1])[:4])))
+        rows = sorted(((k, n, d) for k, (n, d) in diffs.items() if d), key=lambda x: -len(x[2]) / x[1])[:a.fields]
+        for key, n, d in rows:
+            d.sort()
+            print("       %-34s differs in %5.1f %% of %6d: |diff| p50 %.3g p95 %.3g max %.3g" % (key[:34], 100.0 * len(d) / n, n,
+                  statistics.median(d), d[int(0.95 * (len(d) - 1))], d[-1]))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -207,8 +267,13 @@ def main():
     p.add_argument("--topics")
     p.add_argument("--show", action="store_true")
     p.add_argument("--drop", help="comma-separated keys removed from every message before comparing")
+    p = sub.add_parser("stats")
+    p.add_argument("a")
+    p.add_argument("b")
+    p.add_argument("--topics")
+    p.add_argument("--fields", type=int, default=8)
     a = ap.parse_args()
-    sys.exit(cmd_run(a) if a.cmd == "run" else cmd_diff(a))
+    sys.exit({"run": cmd_run, "diff": cmd_diff, "stats": cmd_stats}[a.cmd](a))
 
 
 if __name__ == "__main__":

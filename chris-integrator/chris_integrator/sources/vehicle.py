@@ -135,6 +135,11 @@ class VehicleSource(Source):
             r = float(r)
             s0, s1 = YAW_SIGMA.get(ysrc, YAW_SIGMA["steering"])
             sg = s0 + s1 * abs(r)
+            if ysrc == "wheel_speeds":               # the feed's yaw rate is the rear wheels' difference, relayed
+                ws = msg.get("wheel_speeds_mps")
+                if isinstance(ws, (list, tuple)) and ws and all(fin(w) for w in ws) and min(ws) < WHEEL_FLOOR:
+                    return out                       # under the wheel sensors' floor: no yaw measurement
+                sg = math.hypot(sg, WHEEL_YAW_SLOW)
             if ysrc == "yaw_rate":
                 i_g = np.array([E.W, isg, ibg], dtype=np.intp)
 

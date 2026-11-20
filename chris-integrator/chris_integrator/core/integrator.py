@@ -543,27 +543,6 @@ class Integrator:
                 m.reset_data()
         self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
 
-    def new_position_source(self, why):
-        """The absolute positions now come from somewhere that is not a continuation of before (another receiver,
-        a simulated drive beginning or ending, a host's `reset`): the position, the heading and the local frame
-        are forgotten and anchored anew; speed, yaw rate and every calibration state stay."""
-        self.anchored = False
-        self._anchor_first = None
-        self._lost = False
-        self._pos_high_t = None
-        self.origin = None
-        self.abs_latest = None
-        self.frame_id += 1
-        for k, m in self.nis.items():
-            if k[1] in ("pos", "heading", "alt", "map_cross", "map_heading"):
-                m.reset_data()
-        if self.gates("innovation"):
-            self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
-        for sp in self.specs:
-            if hasattr(sp, "on_new_position"):
-                sp.on_new_position(self.ctx[sp.id])
-        self.fdi.event("position", "new_source", None, "position forgotten and anchored anew: %s" % why, quantity="position")
-
     def _anchor(self, e, n, psi, sigma, tau, itau=None):
         """Place the local frame on a fix. The position is the fix carried forward by speed x delay along the
         heading, so it inherits the uncertainty of the delay (along the track) and of the heading (across it),
@@ -887,9 +866,8 @@ class Integrator:
 
     # ---- L43-V: the feeder's `reset` (vehicle input API 5.3). One method, appended; nothing above changed. -------
     def new_position_source(self, why):
-        """(Name and signature agreed with the integration lead's branch, which has its own body: at the merge keep
-        the lead's body and check it also drops what this one drops, or merge the two.)
-        Forget the position (a synthetic drive ended, the receiver was swapped): the input so far must not live
+        """Forget the position (a host's `reset`: a synthetic drive ended; the receiver was swapped, see the receiver
+        source): the input so far must not live
         on as the car's position. Dropped: the local frame (origin, anchor), position, heading and altitude with
         their covariance, the states and memories of the absolute sources (receiver delay and correlated error, the
         map's lane offset, the receiver's track), their monitors and arrival history. Kept: the motion (speed,
@@ -916,6 +894,7 @@ class Integrator:
         self._anchor_first = None
         self._lost = False
         self._pos_high_t = None
+        self.abs_latest = None
         self.frame_id += 1
         groups = {s.group for s in absolute}
         for s in absolute:
@@ -927,7 +906,7 @@ class Integrator:
                 m.reset_data()
         self.ekf.set_quarantine(k for k in self.ekf.quarantine if k[0] not in groups
                                 and k[1] not in ("pos", "heading", "alt", "map_cross", "map_heading"))
-        self.fdi.event("position", "reset", None, "the feeder reset the position (%s): position, heading and the "
+        self.fdi.event("position", "reset", None, "position forgotten and anchored anew (%s): position, heading and the "
                        "receiver's states dropped, calibration of the car's sensors kept" % (why or "requested"),
                        quantity="position")
         self._cache()

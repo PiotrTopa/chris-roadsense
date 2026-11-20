@@ -58,21 +58,17 @@ class GnssSource(Source):
         if "receiver_tag" in mem and tag == mem["receiver_tag"]:
             return
         first = "receiver_tag" not in mem
+        if not first:
+            ctx.integ.new_position_source("receiver changed to %s" % (tag or "an unnamed one"))
+        mem = ctx.mem                                # (forgetting the position clears this source's memory)
         mem["receiver_tag"] = tag
         table = dict(self.delays, **{k: tuple(v) for k, v in (ctx.cfg.get("gnss_delay") or {}).items()})
-        a = self.aux[0]
-        d, sd = table.get(tag, (a.x0, a.sigma0))
-        if first and tag not in table:
-            return                                   # the default receiver from the start: the state is at its prior
-        ctx.integ.reset_aux(self.ix["tau"], d, sd)
-        if not first:
-            for k in ("scale2", "scale_k", "turn_t", "key"):
-                mem.pop(k, None)
-            ctx.integ.new_position_source("receiver changed to %s" % (tag or "an unnamed one"))
+        if tag in table:
+            ctx.integ.reset_aux(self.ix["tau"], *table[tag])
 
     def measure(self, msg, ctx):
-        mem = ctx.mem
         self._receiver(msg, ctx)
+        mem = ctx.mem
         rep = _repeat(msg, mem)
         mem["fix"], mem["hacc"], mem["receiver"] = msg.get("fix"), msg.get("hacc_m"), msg.get("source")
         lat, lon = msg.get("lat"), msg.get("lon")
