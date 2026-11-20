@@ -81,7 +81,9 @@ explicitly in the environment is replaced, every other line stays.
 * `chris-integrator.service`: `Slice=roadsense.slice`, `PartOf=roadsense.target`, `[Install]
   WantedBy=roadsense.target`. `install.sh` enables it into `roadsense.target` (the link
   `/etc/systemd/system/roadsense.target.wants/chris-integrator.service`; a link under `multi-user.target.wants`
-  from an earlier version is removed). This works whether or not the target itself is enabled at boot:
+  from an earlier version is removed). A host that states the membership itself, with a drop-in of
+  `roadsense.target` that says `Wants=chris-integrator.service`, keeps its way: the script then makes no link.
+  This works whether or not the target itself is enabled at boot:
   `systemctl start roadsense.target` pulls the integrator in (`Wants=` through the `.wants/` link),
   `systemctl stop roadsense.target` and `restart` carry it (`PartOf=`). The unit is not started at boot by itself.
   A host that adds its own drop-ins with the same `PartOf=` / `Slice=` lines, or a `roadsense.target.d/` drop-in

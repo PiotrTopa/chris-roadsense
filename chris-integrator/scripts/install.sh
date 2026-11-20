@@ -272,15 +272,27 @@ fi
 # roadsense.target.wants/chris-integrator.service. It works whether or not the target itself is enabled:
 # `systemctl start roadsense.target` pulls the unit in (Wants), `systemctl stop roadsense.target` stops it
 # (PartOf). An earlier version was WantedBy=multi-user.target: that link is removed.
-if [ "$SYSTEMCTL" = 1 ]; then
+# A host that manages the membership itself (a drop-in of roadsense.target with Wants=chris-integrator.service,
+# as the reference car's provisioning writes, which also removes the wants link) keeps its way: the link is
+# not created again (before L50 every run of this script re-created it and the host had to disable the unit).
+HOST_WANTS=0
+for f in "$UNITS"/roadsense.target.d/*.conf; do
+    [ -f "$f" ] && grep -q '^Wants=.*chris-integrator\.service' "$f" && HOST_WANTS=1
+done
+if [ "$HOST_WANTS" = 1 ]; then
+    [ "$SYSTEMCTL" = 1 ] && systemctl daemon-reload
+    rm -f "$UNITS/multi-user.target.wants/chris-integrator.service"
+    note "chris-integrator.service: roadsense.target wants it through the host's own drop-in (roadsense.target.d/): no wants link made, PartOf the target"
+elif [ "$SYSTEMCTL" = 1 ]; then
     systemctl daemon-reload
     systemctl reenable chris-integrator.service >/dev/null 2>&1 || die "systemctl reenable chris-integrator.service failed"
+    note "chris-integrator.service: wanted by roadsense.target (roadsense.target.wants/), PartOf it; not enabled at boot by itself"
 else
     rm -f "$UNITS/multi-user.target.wants/chris-integrator.service"
     mkdir -p "$UNITS/roadsense.target.wants"
     ln -sfn /etc/systemd/system/chris-integrator.service "$UNITS/roadsense.target.wants/chris-integrator.service"
+    note "chris-integrator.service: wanted by roadsense.target (roadsense.target.wants/), PartOf it; not enabled at boot by itself"
 fi
-note "chris-integrator.service: wanted by roadsense.target (roadsense.target.wants/), PartOf it; not enabled at boot by itself"
 # the legacy mapd estimates a position of its own: out of roadsense.target, disabled and stopped (not
 # masked: `systemctl enable --now roadsense-mapd.service` undoes it)
 T=$UNITS/roadsense.target
