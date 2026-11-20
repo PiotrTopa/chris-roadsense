@@ -36,7 +36,7 @@ Environment (all optional):
 
 | variable | effect | default |
 |---|---|---|
-| `API_PORT`, `API_HOST` | the consolidated API's port and bind address (`CHRIS_API_PORT`, `CHRIS_API_HOST` in `integrator.env`) | `8090`, `127.0.0.1` |
+| `CHRIS_API_PORT`, `CHRIS_API_HOST` | the consolidated API's port and bind address (the same keys in `integrator.env`). `API_PORT` / `API_HOST` are read when these are not set; roadsense's `scripts/install-phone.sh` names the debug face `DEBUG_API_PORT` / `DEBUG_API_HOST` and never passes its own `API_PORT` on | `8090`, `127.0.0.1` |
 | `ROADSENSE_HTTP` | the camera instance's debug face, to which `/preview`, `/v2/frame.jpg`, `/v2/camera`, `/v2/governor` are forwarded (`CHRIS_ROADSENSE_HTTP`) | `http://127.0.0.1:8091` |
 | `MAP_PACK` | `CHRIS_MAP_PACK` in `integrator.env` | `/var/lib/chris/maps/current.rsmap` |
 | `CPUS` | `CPUAffinity=` of the unit, as a drop-in | none |
@@ -71,16 +71,22 @@ explicitly in the environment is replaced, every other line stays.
   with `Wants=chris-integrator.service`, duplicates these harmlessly (list settings are merged, `Slice=` is the
   same value; `systemd-analyze verify` is clean with such drop-ins), and either mechanism alone is enough.
 * Ports: the consolidated API on **8090** (loopback by default), the camera instance's debug face on **8091**.
+  These are the installed values (`CHRIS_API_PORT` / `CHRIS_API_HOST` in the unit and in `integrator.env`). The
+  daemon's built-in default, used only when it is started by hand without that environment
+  (`python3 -m chris_integrator`), is port **8080 on all interfaces**: the port a stand-alone roadsense API always
+  had, right for a development machine and a single-purpose box, not for a host whose own service owns 8080 (the
+  reference car: its backend); there the unit's environment decides, never the built-in default.
 * No watchdog, no start timeout a hot and throttled CPU could trip; `Restart=always` every 2 s, and
   `StartLimitIntervalSec=0` so that a restart loop (e.g. while another process still holds the port during a
   switch-over) never gives up. `MemoryMax=768M` is a backstop against a leak, not a throttle (no `MemoryHigh`):
-  the daemon is about 70 MB resident with the map box (a real-pace replay on a laptop).
+  the daemon is about 70-75 MB resident with the map box and the recorder (measured on the reference phone).
 * `systemctl stop` sends SIGTERM; the daemon then saves its carried state and exits with status 0.
 
 ### CPU placement and priority
 
 The integrator is in the measurement path: it produces `lead` (and `lanes`, `view`) for every camera frame, about
-3-4 ms of one laptop core per frame for the whole stack (more on a phone core). Choices for a host that shares
+3-4 ms of one laptop core per frame for the whole stack; on the reference phone about 25 ms of a little core per
+frame with a recorder and one WebSocket consumer, 39 % of that core at 15 frames a second (docs/DESIGN.md 14.7). Choices for a host that shares
 its cores with a camera pipeline:
 
 * **Nice -2** (in the unit). systemd does not enable the cpu controller inside `roadsense.slice` unless a unit in

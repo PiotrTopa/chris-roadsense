@@ -81,7 +81,8 @@ class Api:
         self.feed = feed                   # callable(list of feeder messages) -> {"accepted", "rejected"}
         self.recorder = recorder
         self.objects = {}                  # range sensor id -> its last `objects` message
-        self.subscribers = set()           # callables(stream, line)
+        self.subscribers = set()           # callables(stream, line) that take every public stream
+        self._by_topic = {}                # stream -> [callable(stream, line)]: subscribers of named streams
         self.history = collections.deque(maxlen=HISTORY_MAX)
         self.history_file = os.path.join(datadir, "signs.jsonl") if datadir and os.path.isdir(datadir) else None
         sc = self.mixer.plugin("sign_context")
@@ -92,13 +93,35 @@ class Api:
     def latest(self, name):
         return self.bus.get(name)
 
+    def subscribe(self, cb, topics=None):
+        """`cb(stream, line)` for every message of the public streams `topics` (None: of all of them). A message
+        is serialised only when a subscriber of its stream is there."""
+        if not topics:
+            self.subscribers.add(cb)
+            return
+        for t in topics:
+            self._by_topic.setdefault(t, []).append(cb)
+
+    def unsubscribe(self, cb):
+        self.subscribers.discard(cb)
+        for t in [t for t, cbs in self._by_topic.items() if cb in cbs]:
+            self._by_topic[t].remove(cb)
+            if not self._by_topic[t]:
+                del self._by_topic[t]
+
     def _on_envelope(self, env):
-        if env.stream == "objects":
+        stream = env.stream
+        if stream == "objects":
             self.objects[env.msg.get("sensor")] = env.msg
         if self.subscribers:
             line = env.line
             for cb in list(self.subscribers):
-                cb(env.stream, line)
+                cb(stream, line)
+        named = self._by_topic.get(stream)
+        if named:
+            line = env.line
+            for cb in tuple(named):
+                cb(stream, line)
 
     def _sign_ended(self, e):
         self.history.append(e)

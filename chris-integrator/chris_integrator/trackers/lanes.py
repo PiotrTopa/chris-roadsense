@@ -101,6 +101,20 @@ def _arr(v, n):
     return a
 
 
+def _median(a):
+    """float(np.median(a)) of a 1-D float array, without np.median's general machinery (0.14 ms a call on a
+    phone core, three calls a frame): the middle element of the sorted values, or the mean of the two middle
+    ones, which is what np.median computes. Empty or with a NaN: np.median itself."""
+    n = a.size
+    if n == 0:
+        return float(np.median(a))
+    s = np.sort(a)
+    if s[-1] != s[-1]:
+        return float(np.median(a))
+    h = n // 2
+    return float(s[h]) if n % 2 else float((s[h - 1] + s[h]) / 2.0)
+
+
 def map_prior(map_msg, now_ns, cfg=DEFAULT_CFG):
     """Lane-count prior for the two outer lines from a mapd `map` message, or None when the map says nothing
     usable (no message, stale, not available, a doubtful match, an assumed count).
@@ -201,11 +215,30 @@ class RoadGeometryTracker:
         prob = np.zeros(N_LINES)
         ok = np.zeros(N_LINES, bool)
         near = (x >= c["edge_std_x"][0]) & (x <= c["edge_std_x"][1])
+        srcs = [ll[i] if i < N_LANE and i < len(ll) else re[i - N_LANE] if i >= N_LANE and i - N_LANE < len(re) else None
+                for i in range(N_LINES)]
+        # the usual frame: six lines with n offsets and n deviations each. All twelve lists become one array (one
+        # conversion and one finiteness test instead of twelve of each); anything else goes line by line
+        rows = fin = None
+        if all(isinstance(d, dict) and isinstance(d.get("y"), list) and isinstance(d.get("y_std"), list)
+               and len(d["y"]) == n and len(d["y_std"]) == n for d in srcs):
+            try:
+                rows = np.array([d["y"] for d in srcs] + [d["y_std"] for d in srcs], float)
+            except (TypeError, ValueError):
+                rows = None
+            if rows is not None and rows.shape == (2 * N_LINES, n):
+                fin = np.isfinite(rows).all(axis=1)
+            else:
+                rows = None
         for i in range(N_LINES):
-            src = ll[i] if i < N_LANE and i < len(ll) else re[i - N_LANE] if i >= N_LANE and i - N_LANE < len(re) else None
+            src = srcs[i]
             if not isinstance(src, dict):
                 continue
-            yi, si = _arr(src.get("y"), n), _arr(src.get("y_std"), n)
+            if rows is not None:
+                yi = rows[i] if fin[i] else None
+                si = rows[N_LINES + i] if fin[N_LINES + i] else None
+            else:
+                yi, si = _arr(src.get("y"), n), _arr(src.get("y_std"), n)
             if yi is None:
                 continue
             if si is None:
@@ -215,7 +248,7 @@ class RoadGeometryTracker:
                 p = src.get("prob")
                 prob[i] = min(1.0, max(0.0, float(p))) if _fin(p) else 0.0
             else:
-                sd = float(np.median(si[near])) if near.any() else float(np.median(si))
+                sd = _median(si[near]) if near.any() else _median(si)
                 prob[i] = min(1.0, max(0.0, (c["edge_std_bad"] - sd) / (c["edge_std_bad"] - c["edge_std_good"])))
             ok[i] = True
         return x, y, s, prob, ok
@@ -371,7 +404,8 @@ class RoadGeometryTracker:
             self.p[i] = np.minimum(self.p[i] + q, cap)
 
     # ---- output ----------------------------------------------------------
-    def _line(self, i, prob, ok):
+    def _line(self, i, prob, ok, ys=None, sds=None):
+        """ys, sds: the rounded offsets and deviations of all lines as lists (made once per message)."""
         if not (self.present[i] and self.have[i]):
             return {"present": False, "mode": "none", "conf": round(float(self.conf[i]), 3),
                     "prob": round(float(prob[i]), 3) if ok[i] else None, "y": None, "y_std": None}
@@ -379,18 +413,23 @@ class RoadGeometryTracker:
                 "conf": round(float(self.conf[i]), 3),
                 "prob": round(float(prob[i]), 3) if ok[i] else None,
                 "age_s": round(self.ts - float(self.since[i]), 2),
-                "y": np.round(self.y[i], 2).tolist(),
-                "y_std": np.round(np.sqrt(self.p[i]), 2).tolist()}
+                "y": np.round(self.y[i], 2).tolist() if ys is None else ys[i],
+                "y_std": np.round(np.sqrt(self.p[i]), 2).tolist() if sds is None else sds[i]}
 
     def _message(self, road, prob, ok, v, vsrc, yaw, prior):
         c = self.cfg
         valid, reason, inputs = getattr(self, "_validity", (True, None, {}))
-        lines = [self._line(i, prob, ok) for i in range(N_LINES)]
+        ys = sds = None
+        if np.count_nonzero(self.present & self.have) > 1:      # element-wise, so the same numbers as line by line
+            ys = np.round(self.y, 2).tolist()
+            with np.errstate(invalid="ignore"):
+                sds = np.round(np.sqrt(self.p), 2).tolist()
+        lines = [self._line(i, prob, ok, ys, sds) for i in range(N_LINES)]
         width = None
         if lines[1]["present"] and lines[2]["present"]:
             m = (self.x >= c["width_x"][0]) & (self.x <= c["width_x"][1])
             if m.any():
-                width = round(float(np.median(self.y[2][m] - self.y[1][m])), 2)
+                width = round(_median(self.y[2][m] - self.y[1][m]), 2)
         return {
             "type": "lanes", "seq": road.get("seq"), "ts_mono_ns": road.get("ts_mono_ns"),
             "ts_real_ns": road.get("ts_real_ns"),

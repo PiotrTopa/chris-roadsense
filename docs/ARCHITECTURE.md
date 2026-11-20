@@ -1132,9 +1132,9 @@ cores; a sign provider puts `Slice=roadsense.slice` in its unit too. A host may
 add a slice drop-in (e.g. `AllowedCPUs=`) to keep the stack off cores it
 reserves. The debug face's port and bind address are `ROADSENSE_API_PORT` /
 `ROADSENSE_API_HOST` (`/etc/roadsense/api.env`, written by
-`API_PORT=N API_HOST=ADDR scripts/install-phone.sh`; defaults 8091 / 127.0.0.1;
+`DEBUG_API_PORT=N DEBUG_API_HOST=ADDR scripts/install-phone.sh`; defaults 8091 / 127.0.0.1;
 a loopback bind also removes the nftables opening). `scripts/install-phone.sh` then runs
-`chris-integrator/scripts/install.sh` (the consolidated API on 8090, `chris-integrator.service` in
+`chris-integrator/scripts/install.sh` (the consolidated API on 8090: `CHRIS_API_PORT` / `CHRIS_API_HOST`; `chris-integrator.service` in
 `roadsense.target`, the legacy mapd disabled; `chris-integrator/docs/INSTALL.md`).
 
 ## Running under a host controller (the car computer)

@@ -155,5 +155,28 @@ class RecorderTest(unittest.TestCase):
         self.assertEqual([m["seq"] for m in self.lines(r)], [1, 2, 3])
 
 
+class TestRoadLine(unittest.TestCase):
+    """The recorder's `road` line made from number tables is json.dumps of the reduced message."""
+
+    def test_line_is_dumps_of_slim(self):
+        import random
+        from chris_integrator.io.recorder import slim_road_line
+        rnd = random.Random(9)
+        for k in range(200):
+            m = road(k)
+            for ln in m["lane_lines"] + m.get("road_edges", []):
+                ln["x"] = [0, 3, 12] + [rnd.uniform(0, 250) for _ in range(30)]
+                ln["y"] = [rnd.choice((rnd.uniform(-40, 40), -0.0004, 0.0625, 0)) for _ in range(33)]
+                ln["y_std"] = [rnd.uniform(0, 3) for _ in range(33)]
+            m["plan"] = {"x": [-0] + [rnd.uniform(0, 400) for _ in range(32)], "y": [rnd.gauss(0, 1e-3) for _ in range(33)],
+                         "z": [rnd.uniform(-2, 2) for _ in range(33)], "t": [0.1] * 33, "held": True, "age_ms": 12.5}
+            m["leads"] = [{"prob": 0.5, "t_offset": 0, "t": [0, 2, 4, 6, 8, 10], "x": [rnd.uniform(0, 200) for _ in range(6)]}]
+            if k % 50 == 7:
+                m["road_model"] = "\x01"                    # a string equal to the marker: the plain path
+            if k % 50 == 9:
+                m["lane_lines"][0]["y"][3] = None
+            self.assertEqual(slim_road_line(m), json.dumps(slim_road(m), separators=(",", ":")))
+
+
 if __name__ == "__main__":
     unittest.main()

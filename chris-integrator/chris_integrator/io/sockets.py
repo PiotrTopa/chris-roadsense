@@ -5,16 +5,46 @@ import json
 import logging
 import os
 
+from ..fastjson import loads_road_trimmed
+
 log = logging.getLogger("chris_integrator.io")
 LINE_LIMIT = 16 * 1024 * 1024
 BACKLOG = 1 << 20
 
 
+def parse_line(raw):
+    """One received line (bytes) -> (message, line as text); (None, None) when it is empty or not a JSON object.
+    Raises ValueError on bad JSON. What every source socket's line goes through (tools/cost_bench.py times it)."""
+    line = raw.decode("utf-8", "replace").strip()
+    if not line:
+        return None, None
+    msg = json.loads(line)
+    return (msg, line) if isinstance(msg, dict) else (None, None)
+
+
+def parse_line_trimmed(raw):
+    """`parse_line` for a stack that runs only the default boxes: a `road` message is parsed without the members
+    none of them reads (fastjson.trim_road); the line handed on is the whole one."""
+    if not raw.startswith(_ROAD):
+        return parse_line(raw)
+    line = raw.decode("utf-8", "replace").strip()
+    try:
+        msg = loads_road_trimmed(raw)
+    except ValueError:                     # (bytes that are not UTF-8 land here too)
+        msg = json.loads(line)
+    return (msg, line) if isinstance(msg, dict) else (None, None)
+
+
+_ROAD = b'{"type":"road"'
+
+
 class Reader:
     """One source socket: connects, reconnects, hands every line to `on_line(msg, line)`."""
 
-    def __init__(self, path, on_line, name=None, backoff_max=3.0):
+    def __init__(self, path, on_line, name=None, backoff_max=3.0, parse=None):
+        """parse: bytes -> (message, line), `parse_line` by default."""
         self.path, self.on_line, self.name, self.backoff_max = path, on_line, name or os.path.basename(path), backoff_max
+        self.parse = parse or parse_line
         self.connected = False
         self.last = None                   # loop time of the last message
         self.n = 0
@@ -37,15 +67,12 @@ class Reader:
                     raw = await reader.readline()
                     if not raw:
                         break
-                    line = raw.decode("utf-8", "replace").strip()
-                    if not line:
-                        continue
                     try:
-                        msg = json.loads(line)
+                        msg, line = self.parse(raw)
                     except ValueError:
-                        log.warning("%s: bad JSON line (%d bytes)", self.name, len(line))
+                        log.warning("%s: bad JSON line (%d bytes)", self.name, len(raw))
                         continue
-                    if isinstance(msg, dict):
+                    if msg is not None:
                         self.last = loop.time()
                         self.n += 1
                         self.on_line(msg, line)
@@ -68,7 +95,7 @@ class LineServer:
     def __init__(self, path, streams=None, greet=None):
         self.path, self.streams, self.greet = path, None if streams is None else tuple(streams), greet
         self.clients = {}                  # writer -> set of streams or None
-        self.last = {}
+        self.last = {}                     # stream -> its last line (bytes), or the envelope it is made from
         self.out_bytes = 0
         self.server = None
 
@@ -89,8 +116,8 @@ class LineServer:
 
     async def _client(self, reader, writer):
         self.clients[writer] = None
-        for data in list(self.last.values()):
-            writer.write(data)
+        for data in list(self.last.values()):          # bytes, or an envelope whose line is made now
+            writer.write(data if isinstance(data, bytes) else data.line.encode() + b"\n")
         try:
             while True:
                 raw = await reader.readline()

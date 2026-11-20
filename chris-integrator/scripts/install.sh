@@ -7,10 +7,14 @@
 #   DESTDIR=/scratch/dir sh scripts/install.sh              into a scratch prefix (no root, no systemctl):
 #                                                           DESTDIR/run.sh then starts the daemon from there
 # Environment (all optional):
-#   API_PORT, API_HOST, ROADSENSE_HTTP   the consolidated API's port / bind address and the camera instance's
+#   CHRIS_API_PORT, CHRIS_API_HOST, ROADSENSE_HTTP
+#                                        the consolidated API's port / bind address and the camera instance's
 #                                        debug face; written to <etc>/chris/integrator.env (defaults 8090,
 #                                        127.0.0.1, http://127.0.0.1:8091). An existing file is kept: only
 #                                        missing keys are added, a key given here explicitly is replaced.
+#                                        (API_PORT / API_HOST, the earlier names, are read when the CHRIS_
+#                                        ones are not set. roadsense's scripts/install-phone.sh uses its own
+#                                        names for the debug face and does not pass those two on.)
 #   MAP_PACK                             CHRIS_MAP_PACK in integrator.env (default: <data>/maps/current.rsmap)
 #   CPUS                                 CPUAffinity of the unit (a drop-in), e.g. CPUS=0-2; unset: none
 #   PYTHON                               the interpreter checked and used by run.sh (default python3); the unit
@@ -66,6 +70,8 @@ fi
 if [ -n "${CPUS:-}" ]; then
     case "$CPUS" in *[!0-9,-]*) die "CPUS=$CPUS: a CPU list like 0-2 or 0,1,2" ;; esac
 fi
+API_PORT=${CHRIS_API_PORT:-${API_PORT:-}}
+API_HOST=${CHRIS_API_HOST:-${API_HOST:-}}
 # the effective ports (what integrator.env will say): the API's and the camera debug face's must differ
 envval() { [ -f "${D}/etc/chris/integrator.env" ] && sed -n "s/^$1=//p" "${D}/etc/chris/integrator.env" | tail -n 1; true; }
 EFF_PORT=${API_PORT:-$(envval CHRIS_API_PORT)}; EFF_PORT=${EFF_PORT:-8090}
