@@ -133,13 +133,13 @@ ended, the receiver was swapped). It goes through the mixer as the stream `posit
 
 | who | what is dropped | what is kept |
 |---|---|---|
-| estimator (`Integrator.forget_position`) | the local frame (origin, anchor), position, heading and altitude with their covariance; the states of the absolute sources (receiver delay `gnss.tau`, its correlated error `gnss.be` / `bn`, the map's lane offset `map.off`) back to their priors; those sources' memories (receiver tag, noise scale, track points), arrival history and position monitors | speed, yaw rate, accelerations, grade; every calibration state of the car's own sensors and of the cameras (speed scale, gyro bias and scale, wheel-yaw scale, accelerometer offsets, mounts); faults; the object layer; the odometer |
+| estimator (`Integrator.new_position_source`) | the local frame (origin, anchor), position, heading and altitude with their covariance; the states of the absolute sources (receiver delay `gnss.tau`, its correlated error `gnss.be` / `bn`, the map's lane offset `map.off`) back to their priors; those sources' memories (receiver tag, noise scale, track points), arrival history and position monitors | speed, yaw rate, accelerations, grade; every calibration state of the car's own sensors and of the cameras (speed scale, gyro bias and scale, wheel-yaw scale, accelerometer offsets, mounts); faults; the object layer; the odometer |
 | map box (`plugins/mapper.py`) | match, matcher, position state: `map.state` `no_source`, `map.input.synthetic` false | the pack |
 | the store | the record of which receiver fed the position | signals, description, sensors, feeders |
 
 Without camera frames the estimator sends an `ego_state` without the position at once, and the map box answers
 it with `no_source`, so a consumer sees the reset without waiting for the next sample. `map.input.resets` /
-`last_reset` and `vehicle.input.resets` / `last_reset` say what happened. The next usable fix anchors the position
+`last_reset` (present after the first reset) and `vehicle.input.resets` / `last_reset` say what happened. The next usable fix anchors the position
 again (a new frame id).
 
 As in mapd, a `gnss` message whose `source` changes between synthetic (`synthetic...`) and real (or back) resets

@@ -746,8 +746,10 @@ class Integrator:
         return es, tr, ld
 
     # ---- L43-V: the feeder's `reset` (vehicle input API 5.3). One method, appended; nothing above changed. -------
-    def forget_position(self, reason=None):
-        """Forget the position (a synthetic drive ended, the receiver was swapped): the input so far must not live
+    def new_position_source(self, why):
+        """(Name and signature agreed with the integration lead's branch, which has its own body: at the merge keep
+        the lead's body and check it also drops what this one drops, or merge the two.)
+        Forget the position (a synthetic drive ended, the receiver was swapped): the input so far must not live
         on as the car's position. Dropped: the local frame (origin, anchor), position, heading and altitude with
         their covariance, the states and memories of the absolute sources (receiver delay and correlated error, the
         map's lane offset, the receiver's track), their monitors and arrival history. Kept: the motion (speed,
@@ -786,6 +788,6 @@ class Integrator:
         self.ekf.set_quarantine(k for k in self.ekf.quarantine if k[0] not in groups
                                 and k[1] not in ("pos", "heading", "alt", "map_cross", "map_heading"))
         self.fdi.event("position", "reset", None, "the feeder reset the position (%s): position, heading and the "
-                       "receiver's states dropped, calibration of the car's sensors kept" % (reason or "requested"),
+                       "receiver's states dropped, calibration of the car's sensors kept" % (why or "requested"),
                        quantity="position")
         self._cache()

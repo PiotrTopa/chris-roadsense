@@ -47,7 +47,7 @@ class Estimator(Plugin):
     def on_input(self, stream, msg, ctx):
         I = self.integ
         if stream == self.RESET:
-            I.forget_position(msg.get("reason"))
+            I.new_position_source(msg.get("reason"))
             ts = msg.get("ts_mono_ns")
             if I.now is not None and isinstance(ts, int) and I.camera_silent():
                 # no camera frames to carry the news: an ego state without the position goes out now

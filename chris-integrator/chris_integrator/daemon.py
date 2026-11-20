@@ -174,8 +174,9 @@ class Daemon:
             vin.disconnect(writer)
             writer.close()
 
-    async def vehicle_ticks(self, period=0.25):
-        """The `vehicle` topic also without feeder messages (twice a second; `present: false` without a feeder)."""
+    async def vehicle_ticks(self, period=0.05):
+        """The `vehicle` topic also without feeder messages (twice a second; `present: false` without a feeder), and a
+        change that the 20-a-second limit held back goes out within `period`."""
         while True:
             m = self.vin.tick(self.mono_ns(), time.time_ns())
             if m is not None:

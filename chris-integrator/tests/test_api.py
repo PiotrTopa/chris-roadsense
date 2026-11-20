@@ -279,7 +279,7 @@ class ApiTest(unittest.TestCase):
         req = urllib.request.Request(self.base + "/v2/vehicle", data=body, method="POST")
         with urllib.request.urlopen(req, timeout=5) as r:
             self.assertEqual(json.loads(r.read())["accepted"], 2)
-        self.assertTrue(self.get("/v2/vehicle")["controls"]["brake"])
+        self.wait(lambda: self.get("/v2/vehicle")["controls"]["brake"], 2)   # a change goes out within 50 ms
 
         def brake_in_lead():                                                 # the brake reaches lead.ego (as with mapd)
             with urllib.request.urlopen(urllib.request.Request(self.base + "/v2/vehicle", method="POST",

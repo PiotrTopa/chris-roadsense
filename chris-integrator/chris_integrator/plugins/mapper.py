@@ -8,7 +8,7 @@ In process the box is wrapped here; out of process it speaks the plug-in wire co
 stack runs without map streams and says so.
 
 The feeder's `reset` (stream `position_reset`) drops the box's state (match, matcher, position state): the map is
-`no_source` until the estimator has a position again; `map.input.resets` / `last_reset` say so. An out-of-process
+`no_source` until the estimator has a position again; after a reset `map.input.resets` / `last_reset` say so. An out-of-process
 box does not declare that input: it sees the estimator's position go and its new frame id, and drops its match
 from those (state `unknown` instead of `no_source`)."""
 import logging
@@ -39,7 +39,7 @@ class Mapper(Plugin):
             msg = es
         out = self.box.on_ego_state(msg)
         if out is not None:
-            if isinstance(out.get("input"), dict):
+            if self.resets and isinstance(out.get("input"), dict):     # (only after a reset: else the box's own message)
                 out["input"].update(resets=self.resets, last_reset=self.last_reset)
             ctx.emit("map", out)
 
