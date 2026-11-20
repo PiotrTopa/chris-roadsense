@@ -11,6 +11,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-integrator"))
+from chris_integrator.replay import read_lines  # noqa: E402
 from chris_integrator.trackers.speedlimit import SpeedLimit, load_rules  # noqa: E402
 
 
@@ -27,36 +28,34 @@ def main():
     t0 = last_status = None
     n_changes = 0
     seen = set()
-    with open(a.jsonl) as f:
-        for line in f:
-            msg = json.loads(line)
-            ts = msg.get("ts_mono_ns")
-            if ts is None:
-                continue
-            t0 = t0 if t0 is not None else ts
-            t = (ts - t0) / 1e9
-            changed = sl.on_message(msg)
-            for i in sl.ignored:
-                if id(i) not in seen:
-                    seen.add(id(i))
-                    print(f"{t:7.1f}s  ignored #{i['track_id']} {i['cls']}: {i['reason']}")
-            if changed:
-                n_changes += 1
-                s = sl.snapshot(full=True)
-                ev = s["recent_changes"][0]["event"] if s["recent_changes"] else ""
-                src = s["source"]
-                what = f"{src['sign']} #{src['track_id']}" if src["kind"] == "sign" else f"{src['kind']}:{src.get('rule')}"
-                if a.json:
-                    print(json.dumps({"t": round(t, 1), **s}))
-                else:
-                    print(f"{t:7.1f}s  odo {s['odometer_m']:7.0f} m  LIMIT {s['limit_kmh']}  conf {s['confidence']:.2f}  "
-                          f"{what}  area {s['area']['type']}({s['area']['source']})  zone {s['zone']['type']}  "
-                          f"road {s['road_class']}  [{ev}]")
-            if a.every and (last_status is None or t - last_status >= a.every):
-                last_status = t
-                s = sl.snapshot()
-                print(f"{t:7.1f}s  .. {s['limit_kmh']} conf {s['confidence']:.2f} v {s['v_ego_kmh']} km/h "
-                      f"pending {[(p['sign'], p['value_kmh'], p['hits']) for p in s['pending']]}")
+    for msg in read_lines(a.jsonl):     # plain or gzip JSONL (a recorder session too; a cut gzip: what is complete)
+        ts = msg.get("ts_mono_ns")
+        if ts is None:
+            continue
+        t0 = t0 if t0 is not None else ts
+        t = (ts - t0) / 1e9
+        changed = sl.on_message(msg)
+        for i in sl.ignored:
+            if id(i) not in seen:
+                seen.add(id(i))
+                print(f"{t:7.1f}s  ignored #{i['track_id']} {i['cls']}: {i['reason']}")
+        if changed:
+            n_changes += 1
+            s = sl.snapshot(full=True)
+            ev = s["recent_changes"][0]["event"] if s["recent_changes"] else ""
+            src = s["source"]
+            what = f"{src['sign']} #{src['track_id']}" if src["kind"] == "sign" else f"{src['kind']}:{src.get('rule')}"
+            if a.json:
+                print(json.dumps({"t": round(t, 1), **s}))
+            else:
+                print(f"{t:7.1f}s  odo {s['odometer_m']:7.0f} m  LIMIT {s['limit_kmh']}  conf {s['confidence']:.2f}  "
+                      f"{what}  area {s['area']['type']}({s['area']['source']})  zone {s['zone']['type']}  "
+                      f"road {s['road_class']}  [{ev}]")
+        if a.every and (last_status is None or t - last_status >= a.every):
+            last_status = t
+            s = sl.snapshot()
+            print(f"{t:7.1f}s  .. {s['limit_kmh']} conf {s['confidence']:.2f} v {s['v_ego_kmh']} km/h "
+                  f"pending {[(p['sign'], p['value_kmh'], p['hits']) for p in s['pending']]}")
     print(f"changes {n_changes}, odometer {sl.odo:.0f} m")
 
 

@@ -17,7 +17,7 @@ def main():
     ap.add_argument("--rules", default=os.environ.get("ROADSENSE_RULES", "pl"),
                     help="unused since api 3 (the rules engine is chris-integrator's)")
     ap.add_argument("--host", default=os.environ.get("ROADSENSE_API_HOST", "0.0.0.0"))
-    ap.add_argument("--port", type=int, default=int(os.environ.get("ROADSENSE_API_PORT", 8081)))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("ROADSENSE_API_PORT", 8091)))
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,

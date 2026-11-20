@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import time
 
 from .io.feed import Feed, hello
@@ -214,7 +215,12 @@ def main(argv=None):
     sources = [(d, socks if i == 0 else list(ROADSENSE_SOCKETS)) for i, d in enumerate(a.roadsense or ["/run/roadsense"])]
     d = Daemon(a.rundir, sources, cfg, a.datadir, a.config_dir, (a.host, a.http_port) if a.http_port else None,
                a.roadsense_http, mapper=None if a.no_mapper else "auto")
-    asyncio.run(d.run())
+    # systemd stops a unit with SIGTERM: end as on Ctrl-C, so that run()'s `finally` saves the carried state
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+    try:
+        asyncio.run(d.run())
+    except KeyboardInterrupt:
+        log.info("chris-integrator: stopped")
 
 
 if __name__ == "__main__":

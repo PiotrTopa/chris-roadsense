@@ -113,7 +113,10 @@ class TurnLanes(unittest.TestCase):
             R.Pack(bad)
 
     def test_builder_tags(self):
-        import roadsense_maps as B
+        try:                                         # the pack builder is chris-roadsense's tools/roadsense_maps.py
+            import roadsense_maps as B
+        except ImportError:
+            self.skipTest("the pack builder (chris-roadsense tools/roadsense_maps.py) is not next to this tree")
         at = B.way_attrs({"highway": "primary", "oneway": "yes", "turn:lanes": "left|through|through; right"})
         self.assertEqual((at[5], at[6], at[-2], at[-1]), (3, 3, "left|through|through;right", ""))
         at = B.way_attrs({"highway": "secondary", "turn:lanes:forward": "left|", "turn:lanes:backward": "|right"})
