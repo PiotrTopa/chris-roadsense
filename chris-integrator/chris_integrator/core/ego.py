@@ -95,6 +95,13 @@ class EgoModel:
             self._clamp.append((i, aux.lo, aux.hi))
         return i
 
+    def set_clamp(self, i, lo=None, hi=None):
+        """The bounds of one calibration state, changed at run time (a source whose prior was replaced: another
+        receiver has another delay, and the bounds of the old one would clip it)."""
+        self._clamp = [c for c in self._clamp if c[0] != i]
+        if lo is not None or hi is not None:
+            self._clamp.append((i, lo, hi))
+
     def initial(self):
         x = np.concatenate([X0, [a.x0 for _, a in self.aux]])
         p0 = P0_DIAG.copy()

@@ -5,7 +5,8 @@ talk to. Its shape is an **audio mixer**: input channels, a bus, plug-in transfo
 from the bus and put named streams back, output channels. Sections 1-8 and 10-13 describe the estimator box
 (one ego estimate with a full state, the object layer, sources that plug in without touching the core);
 section 9 is the cut of the whole stack; **section 14 is the mixer**: channels, the bus, the plug-in contract,
-and the boxes of the stack; section 15 the map box; section 16 object classes. Sections marked "(as built)"
+and the boxes of the stack; section 15 the map box; section 16 object classes. Sections 3a (the receiver),
+4a (gaps of all input) and 15a (the loop estimator - map box) are lane L47's. Sections marked "(as built)"
 were corrected after the code and the replays.
 
 ```
@@ -104,8 +105,8 @@ only appends them to the state vector and propagates them. This stack's sources 
 |---|---|
 | vehicle | gyro bias `b_g` and scale `s_g`; wheel-difference yaw scale `s_wy`; accelerometer offsets `b_ax` (longitudinal, with grade), `b_ay` (lateral: bank and bias) |
 | vision | time delay `tau` (the image pair, prior 0.125 s); speed scale `s`; yaw-rate scale `s_w`; two Gauss-Markov errors of the speed, `m` (0.45 m/s, 3.5 s) and `mf` (0.38 m/s, 0.35 s), fitted to the autocorrelation of the car's residuals (0.80 at one frame, 0.42 at 1 s, 0.21 at 3 s: hardly any of the error is white); mount yaw and pitch against the calibration in use (`dyaw`, `dpitch`) |
-| gnss | time delay `tau` (prior 2 s, sigma 1.5 s); east / north error correlated over 20 s (Gauss-Markov) |
-| map match | the car's offset from the matched road's centre line (Gauss-Markov, 120 s): a thousand matches must not pretend to know the position across the road to centimetres |
+| gnss | time delay `tau` (prior 2 s, sigma 0.6 s, measured: section 3a); the slowly varying position error, east / north, Gauss-Markov over 20 s, in units of the receiver's present error level (`ue`, `un`: the level may change from fix to fix) |
+| map match | the car's offset from the matched road's centre line (`off`, Gauss-Markov, 120 s): a thousand matches must not pretend to know the position across the road to centimetres; which of the candidate roads the car is on (`amb`, unit variance, in units of the spread of their lines; never corrected by the map's own rows: section 15a) |
 | radar (each) | mount yaw misalignment `dyaw`; time delay `tau` |
 
 Observability, stated rather than assumed: `sv` is observable only against an absolute source (GNSS
@@ -141,7 +142,9 @@ forward by speed x delay along the heading: at constant speed the receiver's del
 position are one quantity. The anchor therefore gives the position the delay's uncertainty along the track
 and the heading's across it, correlated with those states; the filter learns the delay when the speed
 changes and the stated position uncertainty is honest until it does. (The first build anchored with an
-uncorrelated 7 m and became overconfident by 15-35 m along the track.)
+uncorrelated 7 m and became overconfident by 15-35 m along the track.) Since L47 the anchor also carries the
+receiver's slowly varying error, fully anti-correlated with the position placed on it (the fix is the sum of
+the two), and the delay is measured by a row of its own (section 3a).
 
 **Time delays as states.** A measurement stamped `t` by a source with delay `tau` is `h(x(t - tau))`. It is
 inserted into the buffer at `t - tau_hat` (the current estimate) and its Jacobian carries
@@ -198,8 +201,8 @@ sparse Jacobian)` supplied by the source's model. Rows carry a noise class:
 |---|---|
 | vehicle | speed `v` (0.03 + 0.002 v, exact); gyro `(1+s_g) w + b_g` (0.004 + 0.03 abs(w)); rear wheel difference `(1+s_wy) w` (0.02 + 0.05 abs(w), robust); accelerometer long `a + g sin(th) + b_ax` (0.25); lateral `v w + b_ay` (0.5); standstill rows; mean wheel speed (monitor); warm-up after a feed silence (L37) |
 | vision | speed `(1+s) v + m` at `t - tau` (max of characterised and stated sigma for the white part, robust); yaw rate `w` (0.007 + 0.25 abs(w), robust); `vy`, `vz` (mount rows, robust, at speed) |
-| gnss | position east, north at `t - tau` (hacc x adaptive scale, robust); course while moving straight (robust, 15 degrees); altitude (robust); speed field (monitor) |
-| map match | cross-track distance to the matched road = 0 (sigma: lane geometry, at least 2.5 m, robust); heading = road bearing while moving (8 degrees, robust); only when matched, not ambiguous, confidence >= 0.5 |
+| gnss | position east, north at `t - tau`: 1.5 m white about the slowly varying error states x the receiver's level (robust; a step the receiver made alone is subtracted while it is held back); the delay as measured from the receiver's own motion (robust); course while moving straight and the receiver steady (robust, 15 degrees); altitude (robust); speed field (monitor). Section 3a |
+| map match | cross-track distance to the share-weighted line of the matched road and of the candidates parallel to it = 0 (1 m about the lane offset state and the hypothesis state, robust); heading = road bearing while moving straight (8 degrees and the road's change of direction around the match, robust; not while candidates of another direction hold 15 % or the heading is known worse than 20 degrees). Section 15a |
 | radar | ego speed and yaw rate from the range rates of stationary detections (robust fit per scan; section 6) |
 
 **Adaptive noise.** A source whose stated accuracy is not to be believed (the head unit's `hacc`) gets a scale
@@ -211,6 +214,57 @@ speed) are never both fused: one is fused, the other monitors (family rule, L37)
 are modelled by Gauss-Markov states (camera speed). Where the object layer fuses two tracks of unknown
 cross-correlation (track-to-track across sensors that share the camera's ego motion) it uses covariance
 intersection (section 6).
+
+## 3a. The receiver: what a fix is, and what its own motion says (L47)
+
+A fix is `position(t - delay) + slowly varying error + white noise`. On the reference car (four drives of one
+day; `tools/integrator_eval.py gnss`, `tools/mapper_eval.py real`, lane report L47):
+
+* From one fix to the next the receiver moves as the odometer says to 0.75-1.55 m (robust sigma): the white
+  part is small. Raw fixes lie 7-10 m (median) beside the road they are on, the same way for 5-20 s: the
+  error is slowly varying. Fused as white noise of `hacc x 1..8` (before L47), twenty fixes average it to a
+  quarter: the stated position uncertainty was 4-5 m where held-out fixes lay 10-19 m away (normalised 3-19
+  where 2 is expected). The slowly varying error is now what `hacc` is taken to describe: two Gauss-Markov
+  states (20 s) in units of `sigma_b = level x hacc x scale`, entering the rows multiplied by `sigma_b`.
+  `level` is measured, raw against raw, where there is a map: the distance of raw fixes from the line of a
+  confidently matched single road on straights, robustly, over the last 60 such fixes (prior 2 for a
+  receiver nobody has measured). `scale` (1-2.5) is the realised second moment of those states: where the
+  filter finds the error larger than its level says, the level rises. On the car `sigma_b` comes out at
+  5-9 m (median per drive) with 5-10 satellites and at 14-20 m with 3-5.
+* The receiver's own motion against the car's, raw against raw: the displacement from one fix to the next
+  against the distance the car drove (its speed sensors) and the direction of the receiver's own earlier
+  track turned by the yaw the car made since (its yaw sensors). The estimator's heading and position are not
+  asked: they may be the wrong party. Three things come out of it.
+  - *The delay.* The lag at which the receiver's step lengths fit the distances driven, over the last
+    minute of steps, is a measurement of the delay state that involves neither position nor map (a row,
+    with a sigma from how sharply the steps determine it; nothing while the speed hardly varied). On the
+    car: 1.75-2.5 s on three drives, 7.25 s on the fourth. The delay is a property of how the receiver is
+    tracking at the time, not a constant of the device: with 3-5 satellites it reports a smoothed track.
+    When the satellite count falls to 5 or fewer the delay state's uncertainty is opened to 1.5 s until
+    the measurement narrows it.
+  - *Unsteady.* Two steps in three off by more than 2.5 m/s (healthy: 0.5-1 m/s; with few satellites
+    4-7 m/s for 10-20 s at a time, e.g. 13 s of 4-7 m/s after the wheels stood still): the receiver is
+    not moving as the car does. What it moves beyond the car's own motion is held back from its fixes
+    (decaying over 45 s) and counted into `sigma_b`; such fixes do not teach the delay.
+  - *A jump.* One step beyond 8 m + half the car's own step: the receiver left the truth, or returned to it.
+    The step is held back the same way, and the position's own covariance takes the step in (if the
+    receiver returned to the truth, the position that had followed it is the one that is wrong). Held-back
+    steps beyond 250 m in all (mirrored coordinates, a position somewhere else): the receiver is not
+    used until its fixes come back to the estimate, or until dead reckoning has run out and the receiver
+    has moved as the car does ten fixes running.
+* The heading at an anchoring is the direction of the receiver's own track (two pieces in a row that agree,
+  driven forwards) carried to now by the yaw the car made since; the course field only when the yaw sensors
+  were alive since the time it describes and the car has not turned since. Never the chord between two
+  fixes (it points backwards while the car reverses: a three-point turn anchored the heading 180 degrees
+  wrong). A heading more than 57 degrees off the direction a steady receiver moves in, three times running
+  on a straight, is placed anew: position rows do not mend that through a linearisation.
+* While the car stands and the receiver has come to rest, a position that is not placed is put on the fix
+  with the heading unknown (said so: `heading.valid` false); the heading follows when the car moves.
+
+What is still wrong with this model: the level is measured across the road only, and on the two drives with
+good reception the stated uncertainty is right in the median and still 1.1-1.4 times too small in sigma in the
+mean; the measured delay is noisy (0.9-4.4 s on one drive); with a trailing receiver at constant speed nothing
+shows how far it trails.
 
 ## 4. Time
 
@@ -231,6 +285,25 @@ intersection (section 6).
   Nothing is delayed for it and nothing is predicted to "now": measurement topics refer to the frame.
 * **Linearisation.** The process model is mildly non-linear (heading into position); the re-run re-linearises
   at the current estimate on every pass (an iterated fixed-lag filter in effect).
+
+## 4a. Gaps of all input (L47)
+
+On the reference car the whole input stops for 5-13 s at a time (camera frames, vehicle samples and fixes
+together: 20, 9, 5 and 0 times on the four drives), and the car turns inside some of those gaps. Without any
+measurement of speed and yaw rate for more than 1.5 s the heading is not known afterwards. What the filter
+did with that (before L47): its white-jerk model stated hundreds of metres after 6 s, the first row after the
+gap was applied through a linearisation about the old heading, and a road's bearing (a line) locked the
+heading the other way round with 8 degrees stated. Now:
+
+* No position or heading row whose time lies in such a gap is used.
+* When the car's motion is measured again and it moves, position and heading are placed anew: the position is
+  stated to `0.5 T^2 + 0.5 v T` (at least 40 m; what a car does in T s, and it may have turned), put on the
+  receiver's next fix give or take what the car drives in the fix's age, and the heading comes from the
+  receiver's own track once two pieces of it were driven after the gap (section 3a). Until then the heading
+  is published invalid and the position wide; neither is guessed.
+* `Integrator.yaw_between(t0, t1)` and `dist_between(t0, t1)` give the heading change and the distance the
+  car's own sensors measured between two times (None across a gap): what the receiver's motion is compared
+  with, whatever the heading and position themselves are believed to be.
 
 ## 5. Fault detection and isolation
 
@@ -332,7 +405,7 @@ reached as a fraction of its firing level (`checks[].peak`): how near a healthy 
 | `speed.track` | a receiver's track as a third opinion on the speed: its own verdicts and its votes | as above |
 | `innovation` | a row class whose innovations are far beyond the stated uncertainty (position, heading, altitude, map rows, the mount's yaw row) | that row class, while it lasts |
 | `position.lost` | absolute positions set aside for 8 s | re-anchors the position |
-| `map.conflict` | the matched road's line against the receiver's recent fixes, raw against raw (median of 8 fixes beyond 12 m) | the map's rows |
+| `map.conflict` | the lines the matcher offers against the receiver's recent fixes, raw against raw (median of 8 fixes; beyond 12 m and beyond even odds that the receiver, with its present error, is the one that is right: section 15a) | the map's rows |
 
 Never gating by construction: stale / absent sources (a fact, not a verdict), the feed's warm-up after a
 silence, the timing and trend findings, repeats and outliers, the mount's findings, the sign rows.
@@ -504,9 +577,9 @@ for replay and tests: the same mixer and plug-ins on a clock that follows the me
 
 **The position is estimated once.** The map box (section 15) reads the ego state's position and returns
 `match` as a constraint measurement. What returns is the *map's geometry* (cross-track
-to a road, the road's bearing), not the position that was sent, so the loop is not incestuous; lock-in on a
-wrong road is bounded by the robust weighting, by a lane-offset state, by using only unambiguous matches and
-by setting the map rows aside while their innovations are far off (section 5).
+to a road, the road's bearing), not the position that was sent; what keeps the loop from confirming itself
+(which road it is stays a hypothesis with a share; the receiver's delay is measured outside the loop) is
+section 15a.
 
 **Consumers through the transition.** The consolidated API keeps today's message shapes, paths and topic
 names (additive fields; `ego_state` api 3, new topic `tracks`). The MFD repoints an endpoint and the car
@@ -600,6 +673,13 @@ position only in mapd -> position in the integrator, the map as a measurement.
   the injected radars.
 * Thresholds of the monitors rest on the drives of one day (L37 section 6); the simulator covers what the car
   cannot show, and no threshold is tuned to the drives without the report saying so.
+* One absolute source. A slow drift of the receiver along the road is followed (across the road the map holds);
+  a step is held back for the best part of a minute and then followed. With the receiver gone or distrusted the
+  position is dead reckoning with the map across the road and at turns, and its stated uncertainty grows along
+  the road until a turn or the receiver ends that (docs/FAULTS.md, "The receiver distrusted").
+* The numbers of sections 3a, 4a and 15a (noise floor of the receiver's steps, the level, the satellite count
+  at which the delay is opened) come from four drives of one day with one receiver, two of them with 3-5
+  satellites; they are class attributes of the receiver's source.
 * Python + numpy: the cost on the phone is an estimate from laptop measurements until measured there.
 
 ## 14. The mixer: channels, bus, plug-ins
@@ -793,14 +873,44 @@ face (`plugins/mapper.py`, 50 lines).
   off the road with a match that says so. When the estimator anchors its position anew the box starts the
   match anew.
 
-The loop estimator -> map box -> estimator is declared (`map` is a feedback input of the estimator). It is
-not incestuous: what returns is the road's line and bearing, not the pose that went in; the pull of a wrong
-road is bounded by the robust rows, by the lane-offset state, by using only unambiguous matches and by the
-innovation monitor.
+The loop estimator -> map box -> estimator is declared (`map` is a feedback input of the estimator); section
+15a is how it is kept from confirming itself.
 
 In process by default; `mapper.json` `{"remote": {"cmd": ["python3", "-m", "chris_mapper", "--plugin"]}}` runs
 it as its own process behind the same contract (the outputs are the same message for message; test and lane
 report).
+
+## 15a. The loop estimator - map box (L47)
+
+The match is made from the estimate it then corrects. Measured before L47 on the drive with the fewest
+satellites: through the box the delay state walked to 4.6 s, the box matched nearer its road (2 m against
+12 m) and with higher confidence than the legacy matcher, and held-out fixes lay 63 m from the estimate. What
+was wrong, and what is done about each:
+
+| what | why it is wrong | now |
+|---|---|---|
+| The delay and the along-track position are one quantity at constant speed, and the map says nothing along the road. With the map's rows stiff across the road and the receiver's error modelled as white, every along-track residual of a receiver that trails went into the delay state. | Nothing in the loop measures the delay. | The delay is measured outside the loop, from the receiver's step lengths against the odometer (section 3a); the receiver's slowly varying error is a pair of states of honest size; position rows do not teach the delay while the receiver is unsteady. |
+| A match with share >= 0.7 was fused with 1 m; the pose then sat on that line, which made the line fit better. The matcher's confidence was the pose's own distance returned. | The choice of road was counted as certain, and each match as independent of the last. | The matcher reports the candidates with their shares (`match.weight`, `match.alternatives`: from the fit alone, with a mild preference for continuity instead of the matcher's own strong one). The row's target is the share-weighted line of the winner and the candidates parallel to it; the spread of those lines multiplies a state `amb` of unit variance that the map's rows carry and never correct (a consider state). The position across the road stays as uncertain as the choice between the roads, however many matches agree. |
+| An ambiguous match (share < 0.7) gave no row at all. | "One of these two roads 8 m apart" is information. | The same row, with the spread. Candidates that are not parallel to the winner (a crossing road, the piece after a corner) take weight from the row (their share is the probability that this line does not constrain the car), and below half the row is not made. |
+| The heading row took the bearing at the matched point. | In a bend that bearing is only as good as the position along the road; a road is a line, and which way along it the car drives has to be known already. | Its sigma grows with the road's change of direction 15 m either side of the match; no heading row while candidates of another direction hold 15 %, or while the heading is known worse than 20 degrees. |
+| `map.conflict` set the map aside when the receiver's fixes lay 12 m beside the matched road. | With a receiver whose slowly varying error is 10-17 m that is 1 sigma: the map was set aside for 16-21 % of healthy driving, and in simulation a correct map was taken away from a receiver 30 m off. Below 12 m a parallel road was not seen at all. | Odds: how likely the offset is for the receiver's present error (its measured level) against how likely a wrong match is at all (3 %, anywhere within 60 m either side). Above even odds the map's rows are set aside; below, "the receiver is right and this road is wrong" is one more candidate line in the spread. What a receiver can tell apart is about 3 of its own sigmas (12 m for a 3 m receiver, 35-40 m for the car's with few satellites); below that the answer is the stated uncertainty, and the matcher's own candidates. |
+
+Where the map does tell the position along the road: at a turn. The new piece's line constrains what was
+along-track before the turn, and the turn is where the gyro says it is. That needs nothing special, only a
+covariance that is honest along the track before the turn (then the matcher's search reaches the new piece,
+and the row pulls). Measured on the hand-made network: the east error's stated sigma falls from 3-8 m before a
+90 degree turn to 2.2-2.5 m after it, the error itself to under 1 m.
+
+Alternatives looked at, and why not: (1) a second position filter without the map's rows, to give the matcher
+a pose the map has not touched: exact, but the position would be estimated twice, against the ruling this
+component is built on. (2) Covariance intersection of the map row with the state: it assumes nothing about
+the correlation and therefore throws away the one thing that is known about it (it is the choice of road,
+which is constant between junctions); the consider state says exactly that. (3) A matcher that carries
+several road hypotheses through time (an HMM over raw fixes and odometry): the right matcher for a pose
+source that cannot be trusted, and the next step if the candidates' shares prove too crude at junctions; it
+needs the fixes inside the map box, which today reads the ego estimate only. (4) Bounding the delay state
+(to 3.5 s) and nothing else: built first; in simulation with a receiver that trails by 8 s it left the position
+39 m behind with 9 times the stated variance.
 
 ## 16. Object classes: non-critical metadata
 

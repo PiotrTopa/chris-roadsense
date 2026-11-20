@@ -13,6 +13,8 @@ Metres east (x) / north (y) of ORIGIN; the main road runs east along y = 0 and c
     service road "Access" parallel to the main road 15 m south of it, x = 200 .. 900, joined at both ends
     a one-way pair far north (y = 2000): motorway "A9" eastbound, 2 lanes, no maxspeed   -> implicit 140
     a living street, expressway pieces (motorroad; highway=motorway with S refs) for the implicit-limit table
+    far north (y = 6000): "Twin", a road with a parallel twin 8 m beside it for 1.2 km; (y = 7000): "Corner", a road
+    that turns 90 degrees left at a junction where "Straight On" continues
 """
 import math
 import os
@@ -72,6 +74,17 @@ def edges():
               ref="S7;S9"),
         _edge("t0", "t1", [(0, 4400), (500, 4400)], "tertiary", lanes=3, lanes_fwd=2, lanes_bwd=1,
               flags2=R.F2_LANES_SPLIT),
+        # lane L47: a road with a twin 8 m north of it between x = 300 and 1500 (joined at both ends), and a road
+        # that turns north at a junction where another one goes straight on
+        _edge("w0", "w300", [(0, 6000), (150, 6000), (300, 6000)], "secondary", name="Twin"),
+        _edge("w300", "w1500", [(300, 6000), (900, 6000), (1500, 6000)], "secondary", name="Twin"),
+        _edge("w1500", "w2400", [(1500, 6000), (2000, 6000), (2400, 6000)], "secondary", name="Twin"),
+        _edge("w300", "v300", [(300, 6000), (300, 6008)], "secondary", name="Twin North"),
+        _edge("v300", "v1500", [(300, 6008), (900, 6008), (1500, 6008)], "secondary", name="Twin North"),
+        _edge("v1500", "w1500", [(1500, 6008), (1500, 6000)], "secondary", name="Twin North"),
+        _edge("c0", "c800", [(0, 7000), (400, 7000), (800, 7000)], "tertiary", name="Corner"),
+        _edge("c800", "c_n", [(800, 7000), (800, 7300), (800, 7700)], "tertiary", name="Corner"),
+        _edge("c800", "c_e", [(800, 7000), (1200, 7000), (1700, 7000)], "tertiary", name="Straight On"),
     ]
     return out
 

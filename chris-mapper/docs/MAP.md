@@ -28,6 +28,25 @@ Since lane L20 it is the confidence of the **road**: candidate edges that are pi
 (connected, same class and the same `ref` or `name`) are not rivals (`road_confidence`), so it no longer dips
 where the road is split into edges at a side road (median while moving on the recorded drives 0.45 -> 0.56).
 
+**The match as a measurement** (lane L47). The winner is chosen with a strong preference for continuity, and a
+pose source that takes "the car is on this line" from the match alone confirms its own pose (the pose is pulled
+onto the line, the line then fits better). So the match also says what else the car may be on:
+
+* `weight`: the winner's share among all candidates, and `alternatives`: up to 4 other candidates (share >=
+  0.02) as `{lat, lon, bearing_deg, weight}`: the nearest point of that road and its bearing there. The shares
+  come from the fit alone (distance, heading, class prior) with a mild preference (`alt_penalty`, e^-1) for
+  roads connected to the match instead of the matcher's own penalty (e^-7): an unconnected parallel road is
+  not a jump of the car, it is the possibility that the match has been on the wrong one of the two. A pose
+  source should target the share-weighted line of the candidates parallel to the winner and carry their spread
+  as uncertainty that repeated matches do not reduce; candidates of another direction (a crossing road, the
+  piece after a corner) mean the winner's line may not constrain the car at all.
+* `fit` (0..1): how well the winner itself fits the pose (distance and heading against the pose's own
+  uncertainty), without the share.
+* `bearing_span_deg`: how much the matched road's direction changes from 15 m before to 15 m after the matched
+  point: in a bend `bearing_deg` is only as good as the position along the road.
+
+`confidence` and `ambiguous` are what they were (consumers of the map context read those).
+
 **Message** (2 per second, `--hz`; the last one is sent to a client when it connects):
 
 ```
@@ -46,7 +65,9 @@ where the road is split into edges at a side road (median while moving on the re
              "confidence":0.96,"source":"gnss|dead_reckoning","fix_age_s":0.4,"dr_distance_m":0.0,
              "motion_source":"vehicle","odometer_m":18234.5},                                      // null in no_source / unknown
 "match": {"matched":true,"confidence":0.97,"ambiguous":false,"distance_m":1.8,"heading_diff_deg":0.6,
-          "lat":..,"lon":..,"bearing_deg":92.6,"edge":"11bb1a2c:531","dir":1,"offset_m":212.4,"candidates":3},
+          "lat":..,"lon":..,"bearing_deg":92.6,"edge":"11bb1a2c:531","dir":1,"offset_m":212.4,"candidates":3,
+          "fit":0.98,"weight":0.86,"bearing_span_deg":0.4,                                         // the match as a measurement (above)
+          "alternatives":[{"lat":..,"lon":..,"bearing_deg":92.9,"weight":0.14}]},
 "road": {"class":"primary",               // motorway, motorway_link, trunk, trunk_link, primary .. tertiary(_link), unclassified, residential, living_street, service
          "name":"Wrocławska","ref":"DK46","oneway":false,
          "lanes":{"total":2,"forward":1,"backward":1,"source":"tagged|tagged_total|assumed"},     // forward = the car's direction

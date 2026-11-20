@@ -12,6 +12,16 @@ The transition term is what keeps the match from jumping to a parallel road: a r
 from the current one has to fit far better at once, or clearly better over some distance (250 m), before it
 wins. Confidence is the
 winner's share of exp(score) over all candidate roads, scaled down when the winner itself fits poorly.
+
+The match as a measurement (L47). The winner is one road, chosen with a strong preference for continuity; a
+pose source that takes "the car is on this line" from it must also be told what else the car may be on, or
+the choice confirms itself (the pose is pulled onto the line, the line then fits better). `weight` is the
+winner's share and `alternatives` are the other candidates' lines with their shares, computed from the fit
+alone (distance, heading, road class) with only a mild preference for the road the match was on
+(`alt_penalty`): an unconnected parallel road is not a jump of the car, it is the possibility that the match
+has been on the wrong one of the two. `fit` says how well the winner itself fits the pose, and
+`bearing_span_deg` how much the road's direction changes around the matched point (in a bend the bearing at
+the matched point is only as good as the position along the road).
 """
 import math
 
@@ -23,7 +33,7 @@ CLASS_PRIOR = {"service": -1.0, "track": -1.5}
 
 class Match:
     __slots__ = ("edge", "dir", "s", "dist", "lat", "lon", "bearing", "heading_diff", "confidence", "ambiguous",
-                 "candidates", "share")
+                 "candidates", "share", "fit", "weight", "alternatives", "bearing_span")
 
     def as_dict(self):
         return {"matched": True, "confidence": round(self.confidence, 3), "ambiguous": self.ambiguous,
@@ -31,7 +41,10 @@ class Match:
                 "heading_diff_deg": None if self.heading_diff is None else round(self.heading_diff, 1),
                 "lat": round(self.lat, 7), "lon": round(self.lon, 7), "bearing_deg": round(self.bearing, 1),
                 "edge": "%08x:%d" % self.edge.ref, "dir": self.dir, "offset_m": round(self.s, 1),
-                "candidates": self.candidates}
+                "candidates": self.candidates, "fit": round(self.fit, 3), "weight": round(self.weight, 3),
+                "bearing_span_deg": round(self.bearing_span, 1),
+                "alternatives": [{"lat": round(a[0], 7), "lon": round(a[1], 7), "bearing_deg": round(a[2], 1),
+                                  "weight": round(a[3], 3)} for a in self.alternatives]}
 
 
 class MapMatcher:
@@ -46,7 +59,11 @@ class MapMatcher:
                  # lane L20: confidence of the ROAD: candidates that are pieces of the matched road (the same
                  # edge in the other direction does not count; the next edge of the same named road does) are
                  # not rivals, so the confidence does not dip where the road is split at a side road
-                 road_confidence=True)
+                 road_confidence=True,
+                 # lane L47: the match as a measurement: the preference for the road the match was on when the
+                 # candidates' shares are computed for the pose source, alternatives below `alt_min` are not
+                 # listed (at most `alt_n`), the road's direction is looked at `span_m` either side
+                 alt_penalty=1.0, alt_min=0.02, alt_n=4, span_m=15.0)
         c.update(cfg or {})
         self.cfg = c
         self.pack = pack
@@ -197,6 +214,17 @@ class MapMatcher:
         m.edge, m.dir, m.s, m.dist, m.bearing, m.heading_diff = e, direction, s, d, b, hd
         m.lat, m.lon, _ = e.at(s)
         m.share = share
+        m.fit = fit
+        # the candidates as a pose source needs them: shares from the fit alone, a mild preference for continuity
+        # (one candidate per edge: the winner's edge is the winner itself, in the direction that was chosen)
+        ws = [(math.exp(max(-60.0, x[8] - (0.0 if x[7] else c["alt_penalty"]) - best[8])), x)
+              for x in [best] + [r for r in ranked if r[1].ref != e.ref]]
+        tot_w = sum(w for w, _ in ws) or 1.0
+        m.weight = next((w for w, x in ws if x is best), 0.0) / tot_w
+        alts = sorted(((w / tot_w, x) for w, x in ws if x is not best and w / tot_w >= c["alt_min"]), key=lambda a: -a[0])
+        m.alternatives = [x[1].at(x[3])[:2] + (x[5], w) for w, x in alts[:c["alt_n"]]]
+        b0, b1 = e.at(s - c["span_m"])[2], e.at(s + c["span_m"])[2]
+        m.bearing_span = abs(geo.ang_diff(b0, b1))
         m.confidence = max(0.0, min(1.0, share * fit))
         m.ambiguous = share < 0.7
         m.candidates = len(ranked)

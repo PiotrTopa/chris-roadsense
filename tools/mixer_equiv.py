@@ -2,6 +2,7 @@
 """Lane L39: the consolidated side before and after the move, message by message.
 
     tools/mixer_equiv.py run SESSION --pos POS --out OUT.jsonl.gz [--tree OLD_TREE] [--limit N] [--mapper box|recorded]
+                             [--start S --seconds N]   (L47: a slice of the session, started cold)
     tools/mixer_equiv.py diff A.jsonl.gz B.jsonl.gz [--topics lead,lanes,...] [--drop class,cls]
 
 `run` feeds a recorder session (inputs only: `road`, `calib`, `camera`, `env`, `lights`, `signs`, `map`, `ego`,
@@ -63,9 +64,16 @@ def session(a, tree):
     import replay_lib as rl
     pos = rl.load_pos(a.pos) if a.pos else None
     n = 0
+    t0 = None
     for m in rl.read_session(a.session, road_model=a.road_model, pos=pos):
         if m.get("type") not in INPUTS:
             continue
+        ts = m.get("ts_mono_ns")
+        if isinstance(ts, int) and (a.start or a.seconds):         # a slice, started cold (as a daemon started there)
+            t0 = ts if t0 is None else t0
+            if (ts - t0) / 1e9 < a.start or (a.seconds and (ts - t0) / 1e9 >= a.start + a.seconds):
+                if m.get("type") != "calib":
+                    continue
         if m.get("type") == "road":
             n += 1
             if a.limit and n > a.limit:
@@ -256,6 +264,8 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--tree")
     p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--start", type=float, default=0.0, help="replay only from this many seconds into the session (a cold start there)")
+    p.add_argument("--seconds", type=float, default=0.0, help="... for this long")
     p.add_argument("--road-model", default="vision")
     p.add_argument("--mapper", choices=("recorded", "box", "remote", "none"), default="recorded",
                    help="where `map` comes from: the session's own messages (as the old api had them), the map box in "
