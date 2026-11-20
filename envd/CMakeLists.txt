@@ -76,3 +76,8 @@ else()
 endif()
 
 install(TARGETS envd envd_replay RUNTIME DESTINATION bin)
+
+# trigger_test: the scene-change trigger (trigger.h) on synthetic frames; --nv12 dumps thumbnails for the
+# parity check against tools/envd/rate_sim.py (lane L48-E)
+add_executable(trigger_test trigger_test.cc)
+target_include_directories(trigger_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
