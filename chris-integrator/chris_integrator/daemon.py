@@ -4,8 +4,10 @@
       each chris-roadsense instance's run directory: camerad.sock (`camera`), modeld.sock (`road`, `calib`),
         signd.sock (`signs`), lightd.sock (`lights`), envd.sock (`env`), laned.sock (`display_lanes`),
         api.sock (`governor`)
-      <run dir>/feed.sock   the car backend (vehicle input API: `motion`, `gnss`, `controls`, `body`, `objects`);
-                            also under the name position.sock
+      <run dir>/feed.sock   the car backend (vehicle input API 1.1, docs/VEHICLE_INPUT.md: `gnss`, `motion`, `reset`,
+                            `controls`, `body`, `vehicle`, `objects`; error replies as mapd gave them); also under
+                            the name position.sock. Store and validation: io/vehicle_input.py
+                            (<config dir>/vehicle_input.json); the `vehicle` topic twice a second and on changes
       POST /v2/vehicle      the same over HTTP
       --legacy-mapd         also a roadsense mapd's relays (ego.sock, vehicle.sock) while a car still feeds it
     plug-ins                the stack (`chris_integrator.stack`): estimator, map box, trackers, decisions, view
@@ -25,7 +27,7 @@ import os
 import signal
 import time
 
-from .io.feed import Feed, hello
+from .io.vehicle_input import VehicleInput
 from .io.sockets import LINE_LIMIT, LineServer, Reader
 from .stack import build
 
@@ -46,15 +48,20 @@ def load_config(path):
 
 class Daemon:
     def __init__(self, rundir, sources, cfg=None, datadir=None, config_dir=None, http=None, roadsense_http=None,
-                 mapper="auto", out_streams=OUT, record="config"):
+                 mapper="auto", out_streams=OUT, record="config", feed_cfg=None, mono_ns=None):
         """sources: list of (run directory of a roadsense instance, [socket names]); the first is the default
         instance, a further one's streams are suffixed with its directory's name (`road@rear`).
-        cfg: the estimator's configuration (integrator.json). http: (host, port) or None."""
+        cfg: the estimator's configuration (integrator.json). http: (host, port) or None.
+        feed_cfg: overrides of the vehicle input store's configuration (<config dir>/vehicle_input.json).
+        mono_ns: the clock the feed's stamps are checked against and the `vehicle` topic is stamped with (default
+        CLOCK_MONOTONIC; a simulation on its own clock passes its own)."""
         self.rundir, self.sources, self.datadir, self.http, self.roadsense_http = rundir, sources, datadir, http, roadsense_http
         self.stack = build(cfg={"estimator": cfg or {}}, config_dir=config_dir, datadir=datadir, mapper=mapper)
         self.mixer = self.stack.mixer
         self.integ = self.mixer.plugin("estimator").integ
-        self.feed = Feed()
+        vcfg = dict(load_config(os.path.join(config_dir, "vehicle_input.json")) if config_dir else {}, **(feed_cfg or {}))
+        self.vin = VehicleInput(vcfg, calibration=self._calibration)
+        self.mono_ns = mono_ns or time.monotonic_ns
         self.readers = {}
         self.out = LineServer(os.path.join(rundir, "integrator.sock"), streams=None)
         self.out_default = set(out_streams)
@@ -109,34 +116,73 @@ class Daemon:
             log.exception("the mixer failed on a %s message", msg.get("type"))
         self.stats["cpu_s"] += time.process_time() - c
 
+    def _calibration(self):
+        """The estimator's calibration for the `vehicle` topic (its newest `ego_state`)."""
+        e = self.mixer.bus.latest.get("ego_state")
+        return (e.msg or {}).get("calibration") if e is not None else None
+
+    def feed_message(self, m, key=None):
+        """One feeder message: None, or the reason it was rejected (the error reply)."""
+        outs, err = self.vin.on_message(m, self.mono_ns(), time.time_ns(), key)
+        for im in outs:
+            self.on_message(im)
+        return err
+
     def feed_messages(self, msgs):
-        """Feeder messages (vehicle input API) from HTTP: {"accepted", "rejected"}."""
+        """Feeder messages (vehicle input API) from HTTP: {"accepted", "rejected": [{"index", "reason"}]}."""
         rejected = []
         for k, m in enumerate(msgs):
-            out = self.feed.convert(m)
-            if not out and m.get("type") not in ("hello", "reset", "vehicle"):
-                rejected.append({"index": k, "reason": "unknown type %r" % (m.get("type"),)})
-            for im in out:
-                self.on_message(im)
+            err = self.feed_message(m)
+            if err is not None:
+                rejected.append({"index": k, "reason": err})
         return {"accepted": len(msgs) - len(rejected), "rejected": rejected}
 
     async def feed_client(self, reader, writer):
-        writer.write(json.dumps(hello(), separators=(",", ":")).encode() + b"\n")
+        """One feeder connection, line for line as mapd's position.sock: a hello reply to the feeder's hello, an
+        error line `{"type":"error","line":n,"reason":...}` for every rejected line (n counts the lines of this
+        connection from 1), nothing for an accepted one; the connection stays open."""
+        vin = self.vin
+
+        def reply(obj):
+            writer.write(json.dumps(obj, separators=(",", ":")).encode() + b"\n")
+        vin.connect(writer, self.mono_ns())
+        n = 0
         try:
             while True:
                 raw = await reader.readline()
                 if not raw:
                     break
-                try:
-                    m = json.loads(raw)
-                except ValueError:
+                n += 1
+                line = raw.strip()
+                if not line:
                     continue
-                for im in self.feed.convert(m):
-                    self.on_message(im)
-        except (OSError, ValueError):
-            pass
+                try:
+                    m = json.loads(line)
+                except ValueError:
+                    vin.counts["errors"] += 1
+                    vin.last_error = "bad JSON"
+                    reply({"type": "error", "line": n, "reason": "bad JSON"})
+                    continue
+                if isinstance(m, dict) and m.get("type") == "hello":
+                    reply(vin.hello(writer, m, self.mono_ns()))
+                    continue
+                err = self.feed_message(m, writer)
+                if err is not None:
+                    reply({"type": "error", "line": n, "reason": err})
+        except (OSError, ValueError, asyncio.LimitOverrunError) as e:
+            log.warning("feeder: %s", e)
         finally:
+            vin.disconnect(writer)
             writer.close()
+
+    async def vehicle_ticks(self, period=0.05):
+        """The `vehicle` topic also without feeder messages (twice a second; `present: false` without a feeder), and a
+        change that the 20-a-second limit held back goes out within `period`."""
+        while True:
+            m = self.vin.tick(self.mono_ns(), time.time_ns())
+            if m is not None:
+                self.on_message(m)
+            await asyncio.sleep(period)
 
     async def run(self):
         os.makedirs(self.rundir, exist_ok=True)
@@ -150,7 +196,7 @@ class Daemon:
                 pass
             feed_srvs.append(await asyncio.start_unix_server(self.feed_client, path=p, limit=LINE_LIMIT))
             os.chmod(p, 0o666)
-        tasks = []
+        tasks = [asyncio.create_task(self.vehicle_ticks())]
         for i, (d, socks) in enumerate(self.sources):
             inst = None if i == 0 else os.path.basename(d.rstrip("/"))
             if inst is not None:
@@ -175,7 +221,7 @@ class Daemon:
             pl = slot.plugin
             if getattr(pl, "remote", False) and not pl.sync and pl.fileno() is not None:
                 loop.add_reader(pl.fileno(), pl.pump)
-        log.info("chris-integrator: %d source sockets, %d plug-ins (%s), state size %d, http %s", len(tasks),
+        log.info("chris-integrator: %d source sockets, %d plug-ins (%s), state size %d, http %s", len(tasks) - 1,
                  len(self.mixer.order), ", ".join(s.name for s in self.mixer.order), self.integ.model.n, self.http)
         try:
             await asyncio.gather(*tasks) if tasks else await asyncio.Event().wait()

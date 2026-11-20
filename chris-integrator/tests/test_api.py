@@ -279,10 +279,18 @@ class ApiTest(unittest.TestCase):
         req = urllib.request.Request(self.base + "/v2/vehicle", data=body, method="POST")
         with urllib.request.urlopen(req, timeout=5) as r:
             self.assertEqual(json.loads(r.read())["accepted"], 2)
-        self.assertTrue(self.get("/v2/vehicle")["controls"]["brake"])
+        self.wait(lambda: self.get("/v2/vehicle")["controls"]["brake"], 2)   # a change goes out within 50 ms
+
+        def brake_in_lead():                                                 # the brake reaches lead.ego (as with mapd)
+            with urllib.request.urlopen(urllib.request.Request(self.base + "/v2/vehicle", method="POST",
+                                        data=b'{"type":"controls","brake":true,"source":"test"}'), timeout=5):
+                pass
+            return (self.get("/v2/lead").get("ego") or {}).get("brake") is True
+        self.wait(brake_in_lead, 5)
         for name in ("feed.sock", "position.sock"):                           # the car backend's socket, under both names
             with socket.socket(socket.AF_UNIX) as s:
                 s.connect(os.path.join(self.tmp, "chris", name))
+                s.sendall(b'{"type":"hello","api":1,"name":"test"}\n')
                 hello = json.loads(s.makefile().readline())
                 self.assertIn("motion", hello["accepts"])
                 self.assertIn("controls", hello["accepts"])

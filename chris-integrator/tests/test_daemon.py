@@ -27,16 +27,21 @@ class DaemonTest(unittest.TestCase):
                 clients.append(writer)
                 await reader.read()
             srv = await asyncio.start_unix_server(modeld, path=os.path.join(rs, "modeld.sock"))
-            d = Daemon(run, [(rs, ["modeld.sock"])], {}, tmp)
+            # the simulation runs on its own clock (from 1000 s): the `vehicle` topic is stamped with it; the messages
+            # are written faster than they are read, so the age check (against the newest written) is off
+            sim_now = [int(msgs[0][1]["ts_mono_ns"])]
+            d = Daemon(run, [(rs, ["modeld.sock"])], {}, tmp, feed_cfg={"max_input_age_s": None}, mono_ns=lambda: sim_now[0])
             task = asyncio.create_task(d.run())
             for _ in range(100):
                 await asyncio.sleep(0.02)
                 if clients and os.path.exists(os.path.join(run, "feed.sock")):
                     break
             fr, fw = await asyncio.open_unix_connection(os.path.join(run, "feed.sock"))
+            fw.write(b'{"type":"hello","api":1,"name":"sim"}\n')
             hello = json.loads(await fr.readline())
             out_r, out_w = await asyncio.open_unix_connection(os.path.join(run, "integrator.sock"), limit=1 << 24)
             for t, m in msgs:
+                sim_now[0] = max(sim_now[0], int(m.get("ts_mono_ns") or 0))
                 if m["type"] == "road":
                     clients[0].write(json.dumps(m, separators=(",", ":")).encode() + b"\n")
                 else:
@@ -71,11 +76,15 @@ class DaemonTest(unittest.TestCase):
 
     def test_feed_and_partial_parse(self):
         f = Feed()
-        ego = f.convert({"type": "motion", "ts_mono_ns": 5, "speed_mps": 3.0, "gear": "R", "yaw_rate_rps": 0.1})[0]
+        t0 = 100 * 10 ** 9
+        ego = f.convert({"type": "motion", "ts_mono_ns": t0, "speed_mps": 3.0, "gear": "R", "yaw_rate_rps": 0.1}, now_ns=t0)[0]
         self.assertEqual((ego["type"], ego["speed_mps"], ego["reverse"], ego["yaw_source"]), ("ego", -3.0, True, "yaw_rate"))
-        v = f.convert({"type": "controls", "brake": True}, now_ns=77)[0]
-        self.assertEqual((v["type"], v["controls"]["brake"], v["ts_mono_ns"]), ("vehicle", True, 77))
-        self.assertEqual(f.convert({"type": "gnss", "age_ms": 500, "lat": 1.0}, now_ns=10 ** 9)[0]["ts_mono_ns"], 5 * 10 ** 8)
+        v = f.convert({"type": "controls", "brake": True}, now_ns=t0 + 10 ** 9)[0]
+        self.assertEqual((v["type"], v["controls"]["brake"], v["ts_mono_ns"]), ("vehicle", True, t0 + 10 ** 9))
+        g = f.convert({"type": "gnss", "age_ms": 500, "lat": 1.0, "lon": 2.0}, now_ns=t0 + 2 * 10 ** 9)[0]
+        self.assertEqual(g["ts_mono_ns"], t0 + 15 * 10 ** 8)
+        self.assertEqual(f.convert({"type": "gnss", "age_ms": 500, "lat": 1.0}, now_ns=t0 + 3 * 10 ** 9), [])
+        self.assertEqual(f.last_error, "missing field lon")                  # rejected with mapd's reason
         road = {"type": "road", "seq": 1, "pose": {"vx": 1.0}, "lane_lines": [{"x": [1, 2], "y": [0.5, 1], "prob": 0.3}],
                 "road_edges": [{"y": [1.0]}], "leads": [{"prob": 0.9, "x": [10.0]}], "plan": {"x": [0, 1], "y": [0, 0]},
                 "meta": {"a": [1, 2], "b": {"c": 3}}}

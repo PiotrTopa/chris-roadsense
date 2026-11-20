@@ -42,9 +42,11 @@ ROADSENSE = (
 )
 VEHICLE = (
     ("ego", "ego", "raw", "sample", True, "the car's motion: speed, wheels, gyro, accelerometers"),
-    ("vehicle", "vehicle", "raw", "sample", True, "the car as its host describes it: controls, body"),
+    ("vehicle", "vehicle", "raw", "sample", True, "the car as its host describes it: every signal with age, quality "
+                                                  "and source, the description, the sensors (docs/VEHICLE_INPUT.md)"),
     ("gnss", "gnss", "raw", "sample", True, "receiver fixes"),
     ("objects", "objects", "raw", "sample", True, "scans of range sensors and further cameras"),
+    ("reset", "position_reset", "raw", "event", False, "the feeder's `reset`: forget the position (estimator, map box)"),
 )
 EXTERNAL_MAP = (("map", "map", "context", "periodic", True, "map match and context from an external matcher"),)
 
