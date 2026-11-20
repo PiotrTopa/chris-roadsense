@@ -170,3 +170,9 @@ The ncnn/Vulkan fp16-packed backend misses the original accuracy gate only at th
 - [ ] fp16 on the Adreno: the lead distance of this model differs from fp32 by 0.37 m on average (0.86 m p95), twice supercombo's; the strict gate script rejects both models on the 120-frame bench clip (its maximum runs over absent lines to 192 m). A longer clip with leads through both arithmetic paths and the tracker is open
 - [ ] the run rate is now set by the GPU turn-taking with the sign detector (tuned for supercombo's 54 ms run), not by the GPU: 7 points of GPU time are unused
 - [ ] not deployed; the car's own camera has not seen this model
+
+## envd every 2 s (lane L53, 2026-11-21; docs/lanes/L53-owner-decisions.md)
+- [x] owner's decision 2026-11-21: envd one inference every 2 s, message re-sent every second (`--period 2 --republish 1`) is the installed configuration (unit); envd 184 -> 95 % of a little core on the phone (L48), caveat accepted: env area prior 0.72 % disagreement against a 1 Hz noise of 0.17-0.37 %, weather slightly above the noise
+- [x] consumers: no rate floor or staleness rule for `env` in chris-integrator or the debug face; test `chris-integrator/tests/test_env_rate.py`
+- [x] deployed on the bench phone (unit only, no build)
+- [ ] the car: first drive with the 2 s envd (tunnel entry delay p90 2 s by the study; no tunnel recorded yet)

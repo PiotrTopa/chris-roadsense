@@ -77,6 +77,9 @@ The option was switched back off; nothing tuned.
 With the new road model the hold buys nothing measurable in rate or latency; without it 0.1-0.3 W less and the big
 cores 4.7 K cooler in the last minute (one run each; the start temperatures differed: 73.9 / 82.1 C). For the owner.
 
+**Owner 2026-11-21: hold off (lane L53).** The installed modeld unit no longer passes `--cpu-latency-us 0`; the
+option stays in modeld. Bench check of the deploy: docs/lanes/L53-owner-decisions.md.
+
 ## Car backend's CAN reader (car repo `docs/lanes/L48-B-order.md`, bench part)
 
 The panda was on the bus (`idProduct` ddcc, `Panda connected`, fw DEV-f120999e, 1 frame/s, `panda_can_rx_errs` 0).
@@ -115,6 +118,10 @@ governor went to level 7 and paused the unit's envd (36 inferences in 224 s): vo
 **B: CPU line passes (52 % of A <= 55 %), road rate and temperatures equal within noise; the label line could not
 be measured validly (the one complete measurement fails place, under starvation).** C fails (slower). Installed
 configuration kept.
+
+**B adopted by the owner 2026-11-21 (lane L53):** `--period 2 --republish 1` is now the installed configuration
+(unit), with the laptop study's caveat accepted (env area prior 0.72 % against a noise of 0.17-0.37 %, weather
+slightly above the noise; docs/lanes/L48-envd.md). Bench check of the deploy: docs/lanes/L53-owner-decisions.md.
 
 ## State at the end
 

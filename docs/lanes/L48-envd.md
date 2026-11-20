@@ -109,6 +109,12 @@ Which groups decide something (code reading, chris-integrator and the car comput
 | B4 prep / scoring | 17-18 ms of 656-1138 | - | nothing to gain |
 
 ## 6. Recommendation
+
+**Adopted by the owner 2026-11-21 (lane L53):** item 1 (`--period 2 --republish 1`) is the installed
+configuration of envd (unit `systemd/roadsense-envd.service`); measured on the phone 184 -> 95 % of a little
+core (docs/lanes/L48-phone-results.md). The caveat below (env area prior 0.72 % against a noise of
+0.17-0.37 %, weather slightly above the noise) is accepted with that decision. Report: docs/lanes/L53-owner-decisions.md.
+
 1. **`--period 2 --republish 1`** (envd every 2 s, last message re-sent every second so the MFD's 5 s age
    rule and the speed engine's per-arrival evaluation see a 1 Hz stream): **-50 % of envd's CPU** (with the
    measured 70-195 % of a core: 35-100 % of a little core freed; inferred, not measured on the phone).
@@ -141,7 +147,9 @@ Which groups decide something (code reading, chris-integrator and the car comput
   default: 57 frames in 56 s, `tunnel` from frame 531; `--period 5 --republish 1 --trigger`: 34 frames,
   59 messages (23 re-sent), trigger at the portal (frame 415), `tunnel` from frame 496.
 - Tools: `tools/envd/rate_extract.py`, `rate_sim.py`, `rate_report.py`, `quant_eval.py`.
-- `config/envd.json` and the unit are **not** changed (the phone order decides).
+- `config/envd.json` and the unit were **not** changed here (the phone order decides); lane L53 set the unit
+  to `--period 2 --republish 1` on the owner's decision of 2026-11-21 (`config/envd.json` and the binary's
+  default stay 1 Hz).
 
 ## 8. Unverified / not finished
 - Phone: nothing measured on the phone; CPU savings are inferred from the rate.

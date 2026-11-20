@@ -32,9 +32,13 @@ ExecStopPost=-/bin/sh -c 'cut -d" " -f1 /sys/class/devfreq/5000000.gpu/available
 # GPU turn-taking with signd (docs/ARCHITECTURE.md "GPU schedule", docs/lanes/L4-gpu-sched.md): runs are
 # pipelined (the next run's vision stage is recorded during the current run and submitted the moment it
 # ends; default on), signd's detector gets the GPU between two runs on request (--gpu-yield, at most 80 ms;
-# the next run starts 2 ms before the detector is expected to end), and a 0 us CPU wake-up latency request
-# keeps the cores out of their deep idle state between GPU submits. Replay ride, 2026-10-27: road 13.0 ->
-# 14.05 runs/s (15 min), model p90 107 -> 55 ms, road latency p90 168 -> 126 ms, signs 5.0/s.
+# the next run starts 2 ms before the detector is expected to end). Replay ride, 2026-10-27: road 13.0 ->
+# 14.05 runs/s (15 min), model p90 107 -> 55 ms, road latency p90 168 -> 126 ms, signs 5.0/s (then with a 0 us
+# CPU wake-up latency request, `--cpu-latency-us 0`).
+# No wake-up latency hold since lane L53 (owner's decision 2026-11-21): with the v0.11.1 road model it bought
+# nothing measurable (docs/lanes/L48-phone-results.md P3: road 15.2 / 15.1 runs/s, road latency 119 / 135 ms
+# with it, 114 / 132 ms without) and cost 0.1-0.3 W and 4.7 K on the big cores. The option stays in modeld
+# (`--cpu-latency-us N`, `cpu_latency_us` in modeld.json); without it modeld makes no request (no log line).
 # Without signd (or with an older one) the schedule file is simply unused.
 #
 # Road model (lane L27): the command line names none on purpose. modeld's default is the openpilot v0.11.1 line:
@@ -53,7 +57,7 @@ ExecStopPost=-/bin/sh -c 'cut -d" " -f1 /sys/class/devfreq/5000000.gpu/available
 # "observe"` or "off" in modeld.json). Reported in the `calib` message and /v2/health `calibration`; kept in
 # /var/lib/roadsense/camera-calibration.json (StateDirectory above). The command line is unchanged: an older
 # modeld runs with this unit as before.
-ExecStart=/usr/local/bin/modeld --backend ncnn --cpus 4-7 --prep-cpus 0-3 --max-hz 20 --gpu-yield 80 --gpu-lead 2 --cpu-latency-us 0 --stats 10
+ExecStart=/usr/local/bin/modeld --backend ncnn --cpus 4-7 --prep-cpus 0-3 --max-hz 20 --gpu-yield 80 --gpu-lead 2 --stats 10
 # CPU fallback (ONNX Runtime fp32, exact but ~5 Hz and 90 C on this phone):
 # ExecStart=/usr/local/bin/modeld --backend ort --cpus 4-7 --prep-cpus 0-3 --max-hz 5 --stats 10
 Restart=always

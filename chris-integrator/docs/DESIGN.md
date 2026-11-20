@@ -798,8 +798,11 @@ added (a source file and a configuration line, section 7), the mixer is how a *b
 to the configuration adds an input to the estimator plug-in and nothing else.
 
 Services shared through the mixer (not streams): `rates` (the `rate` marker of measurement topics: measured
-rate and latency against the configured floors, with the roadsense governor's state as an input), `store`
-(carried state), `reset`.
+rate and latency against the configured floors, with the roadsense governor's state as an input; a provider
+that thins itself out on purpose announces it, and the floor follows: a `lights` message with `idle: {"hz": H}`
+comes from a light detector that tracks nothing and runs H passes a second, and while that holds the floor is
+0.8 x H, measured over the idle arrivals without the bias of a short window, so the stream is `slow` only when it
+falls behind the pattern it announces; `env` has no floor), `store` (carried state), `reset`.
 
 ### 14.5 Output channels
 
