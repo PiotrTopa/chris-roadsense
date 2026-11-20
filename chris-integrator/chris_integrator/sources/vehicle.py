@@ -204,7 +204,8 @@ class WheelsSource(Source):
         still = bool(msg.get("standstill")) and msg.get("speed_mps") == 0.0
         alive = min(ws) >= WHEEL_FLOOR
         if not alive and not (still and max(ws) == 0.0):
-            return []                # under the sensors' floor (creeping, pulling away): no measurement
+            # under the sensors' floor (creeping, pulling away): no measurement; the source is alive all the same
+            return [Meas("signal:wheels_below_floor", t, True, role="signal")]
         # the scale of wheel speeds against the speed signal is a car's own (0.98 here): the tolerance covers it
         out = [Meas("speed", t, m, 0.10 + 0.04 * abs(m), src="wheels.speed", role="monitor")]
         # the rear wheels' difference is a yaw rate of its own (another sensor than the gyro): fused, with its

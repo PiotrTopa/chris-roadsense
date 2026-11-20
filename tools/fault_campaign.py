@@ -399,10 +399,13 @@ def cmd_healthy(a):
 # ---- real recordings -----------------------------------------------------------------------------------------------
 def _run_real(job):
     label, specs, path, pos, t_from, t_to, tree, f0, f1 = job
-    sys.path.insert(0, HERE)
-    import replay_lib as rl                               # (it puts this checkout's integrator on the path ...)
-    sys.path.insert(0, os.path.join(tree or ROOT, "chris-integrator"))      # ... the tree asked for goes before it
+    # the tree asked for brings its own session reader and its own integrator (since the replay library moved
+    # into the package, this checkout's reader would load this checkout's integrator whatever --tree says)
+    sys.path.insert(0, os.path.join(tree, "tools") if tree else HERE)
+    sys.path.insert(0, os.path.join(tree or ROOT, "chris-integrator"))
+    import replay_lib as rl
     from chris_integrator import Integrator
+    assert os.path.abspath(sys.modules["chris_integrator"].__file__).startswith(os.path.abspath(tree or ROOT)), "wrong tree loaded"
     FM = _faults_mod()
     msgs = [m for m in rl.read_session(path, road_model="vision", pos=rl.load_pos(pos) if pos else None)
             if m.get("type") in ("ego", "vehicle", "gnss", "map", "calib", "objects", "road") and isinstance(m.get("ts_mono_ns"), int)]

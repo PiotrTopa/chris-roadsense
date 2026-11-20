@@ -220,6 +220,22 @@ else was edited. Alone on a bench: `Bench(Headway()).feed("lead", lead_message)`
 `RemotePlugin(cmd=[...])` with `remote.serve(Headway(), sys.stdin.buffer, sys.stdout.buffer)` at the other
 end, or any program that speaks the lines (docs/DESIGN.md section 14.3).
 
+## Fault detection: what acts, what reports
+
+Every detector that can take a source out of the estimate has a mode in `integrator.json`
+(`{"detectors": {"speed.cusum": "gate"}}`): `gate` (its verdict takes effect; what depends on that source alone
+is published as unknown) or `report` (its verdict is published with the evidence in `ego_state.diagnostics`,
+and nothing is set aside). By default a detector gates only if it was quiet, with a stated margin, on the
+reference car's healthy drives; `docs/FAULTS.md` has that table and the fault table, `docs/DESIGN.md` section
+5b the mechanism. `ego_state.detectors` lists the modes in use, `ego_state.checks[].peak` how near each test
+came to firing.
+
+## Documents
+
+`docs/DESIGN.md` (estimator, fault detection, object layer, the mixer), `docs/FAULTS.md` (which detectors gate;
+the fault table), `docs/TOPICS.md` (field tables of the consolidated topics), `docs/VEHICLE_INPUT.md` (the
+vehicle input API as served here), `docs/INSTALL.md` (install, units, ports, rollback).
+
 ## Status and limits
 
 Working and tested: everything listed above, on the simulator and on recordings of the reference deployment.
