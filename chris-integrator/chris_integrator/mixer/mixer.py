@@ -118,6 +118,7 @@ class Mixer:
         self.arrivals = collections.defaultdict(lambda: collections.deque(maxlen=200))
         self._subs = {}                                # stream -> [slot, ...] in order
         self._taps = []
+        self._tap_of = {}                              # stream -> the output channels' functions that take it
         self._depth = 0
         self._child = [0.0]
 
@@ -142,10 +143,12 @@ class Mixer:
         """An output channel: fn(envelope) for every message of a public stream (or of the listed streams)."""
         self.outputs[name] = (fn, None if streams is None else set(streams), info)
         self._taps = list(self.outputs.values())
+        self._tap_of = {}
 
     def remove_output(self, name):
         self.outputs.pop(name, None)
         self._taps = list(self.outputs.values())
+        self._tap_of = {}
 
     def add(self, plugin, enabled=True):
         if not plugin.name or plugin.name in self.slots or plugin.name in self.channels:
@@ -233,6 +236,7 @@ class Mixer:
             done.add(s.name)
             left.remove(s)
         self.order = order
+        self._tap_of = {}                  # a stream may have changed its producer or its `public`
         subs = {}
         for s in order:
             for i in s.plugin.inputs:
@@ -247,20 +251,17 @@ class Mixer:
             raise MixerError("stream %s was not declared (by %s)" % (stream, source))
         env = self.bus.put(stream, msg, source, line)
         self.arrivals[stream].append(env.t_arr)
-        if spec.public:
-            for fn, streams, _ in self._taps:
-                if streams is None or stream in streams:
-                    try:
-                        fn(env)
-                    except Exception:
-                        log.exception("output channel failed on %s", stream)
-        else:
-            for fn, streams, _ in self._taps:
-                if streams is not None and stream in streams:
-                    try:
-                        fn(env)
-                    except Exception:
-                        log.exception("output channel failed on %s", stream)
+        taps = self._tap_of.get(stream)
+        if taps is None:                   # which output channels take this stream: worked out once per stream
+            public = spec.public           # a public stream goes to every channel that did not narrow itself
+            taps = self._tap_of[stream] = tuple(
+                fn for fn, streams, _ in self._taps
+                if (stream in streams if streams is not None else public))
+        for fn in taps:
+            try:
+                fn(env)
+            except Exception:
+                log.exception("output channel failed on %s", stream)
         subs = self._subs.get(stream)
         if not subs:
             return env
@@ -309,11 +310,17 @@ class Mixer:
         if not q:
             return 0.0
         now = self.bus.clock.now()
-        recent = [t for t in q if now - t <= window]
-        if len(recent) < 2:
+        # arrivals are in time order (the bus clock never goes back): count from the newest until the window ends
+        n, first = 0, None
+        for t in reversed(q):
+            if now - t > window:
+                break
+            n += 1
+            first = t
+        if n < 2:
             return 0.0
-        span = now - recent[0]
-        return round((len(recent) - 1) / span, 2) if span > 0 else 0.0
+        span = now - first
+        return round((n - 1) / span, 2) if span > 0 else 0.0
 
     def reset(self, reason=None):
         for s in self.slots.values():

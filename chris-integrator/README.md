@@ -115,6 +115,8 @@ CHRIS_RUNDIR=/run/chris python3 -m chris_integrator --roadsense /run/roadsense -
 # accepts the car's feed on /run/chris/feed.sock (and POST /v2/vehicle),
 # serves the consolidated API on :8080 (GET /v2/lead, /v2/view, ..., /v2/health, /v2/mixer; WebSocket /ws?topics=...),
 # and JSON lines for other processes on /run/chris/integrator.sock
+# (--http-port defaults to $CHRIS_API_PORT, else 8080, on $CHRIS_API_HOST, else all interfaces; an installed
+#  unit sets 8090 on loopback, see docs/INSTALL.md)
 ```
 
 Replaying a recording: `chris_integrator.replay.Pipeline` is a mixer with a recorder session as its input

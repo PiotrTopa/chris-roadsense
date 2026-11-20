@@ -32,8 +32,12 @@ def _json(data, status=200):
 
 def _topic(name, missing="no message yet"):
     async def h(req):
-        msg = req.app["api"].latest(name)
-        return _json(msg or {"error": missing}, 200 if msg else 503)
+        # the envelope's line: the text json.dumps would give for a produced message, and a source's own line
+        # for an input (which may have been parsed only in part, fastjson.trim_road)
+        env = req.app["api"].bus.latest.get(name)
+        if env is None or not env.msg:
+            return _json({"error": missing}, 503)
+        return web.Response(text=env.line, content_type="application/json")
     return h
 
 
@@ -211,7 +215,7 @@ async def h_ws(req):
         try:
             q.put_nowait(line)
         except asyncio.QueueFull:          # slow client: disconnect, like the daemons do
-            api.subscribers.discard(push)
+            api.unsubscribe(push)
             asyncio.ensure_future(ws.close(message=b"slow consumer"))
 
     async def reader():
@@ -219,20 +223,31 @@ async def h_ws(req):
             if m.type == WSMsgType.ERROR:
                 break
 
-    api.subscribers.add(push)
+    def gone(_):                           # the client closed or broke: wake the sender (None ends it)
+        try:
+            q.put_nowait(None)
+        except asyncio.QueueFull:          # it is busy sending: `ws.closed` or the failing send ends it
+            pass
+
+    api.subscribe(push, topics)            # only what a client asked for is serialised for it
     rt = asyncio.create_task(reader())
+    rt.add_done_callback(gone)
     try:
+        # one await per message when the queue is empty, none for what queued up meanwhile (a task and an
+        # asyncio.wait per message cost more than the send itself on a phone core)
         while not ws.closed:
-            get = asyncio.create_task(q.get())
-            done, _ = await asyncio.wait({get, rt}, return_when=asyncio.FIRST_COMPLETED)
-            if get not in done:
-                get.cancel()
+            line = await q.get()
+            while line is not None:
+                await ws.send_str(line)
+                if q.empty():
+                    break
+                line = q.get_nowait()
+            if line is None:
                 break
-            await ws.send_str(get.result())
     except (ConnectionResetError, RuntimeError):
         pass
     finally:
-        api.subscribers.discard(push)
+        api.unsubscribe(push)
         rt.cancel()
         await ws.close()
     return ws

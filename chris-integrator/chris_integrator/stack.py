@@ -13,14 +13,20 @@ Configuration: one JSON file per plug-in in the configuration directory, named a
     {"disable": ["fused"],                                        plug-ins of the default stack to leave out
      "plugins": [{"class": "mypkg.mymod:MyPlugin", "cfg": {...}},   further plug-ins (in process)
                  {"remote": {"name": "x", "cmd": ["python3", "-m", "x"]}}],   ... or out of process
-     "replace": {"lanes": {"class": "mypkg.lanes2:Lanes2"}}}       another box in a default one's place
+     "replace": {"lanes": {"class": "mypkg.lanes2:Lanes2"}},       another box in a default one's place
+     "road_whole": true}                                           parse every member of `road` (see below)
+
+With only the default boxes, the daemon parses a `road` line without the members none of them reads (most of the
+plan's arrays, the lines' heights, `meta`, the desire outputs: half of the line; `fastjson.trim_road`). The line
+itself is passed on whole to every consumer. A wiring with `plugins` or `replace` gets the whole message, as does
+`"road_whole": true`.
 """
 import importlib
 import json
 import logging
 import os
 
-from .mixer import Mixer, StreamSpec
+from .mixer import Mixer, Plugin, StreamSpec
 from .plugins.common import Rates
 from .plugins.estimator import Estimator
 from .plugins.roadusers import RoadUsers
@@ -102,6 +108,9 @@ class Stack:
     def __init__(self, mixer):
         self.mixer = mixer
         self.route = {}                    # (instance or None, message type) -> (channel handle, stream)
+        # True: only the default boxes run, and an input channel may parse `road` without the members none of
+        # them reads (fastjson.trim_road). False as soon as the wiring adds or replaces a box.
+        self.trim_road = False
 
     def add_channel(self, name, table, instance=None, info=None):
         """An input channel from a table of (type, stream, kind, time, public, doc). A further instance of a
@@ -185,6 +194,8 @@ def build(cfg=None, config_dir=None, datadir=None, clock=None, mapper="auto", ex
         m.add(_make(spec))
     for p in plugins or ():
         m.add(p)
+    st.trim_road = not (wiring.get("plugins") or replace or plugins or wiring.get("road_whole")
+                        or isinstance(mapper, Plugin) and getattr(mapper, "remote", False))
     for s in m.slots.values():
         saved = store.load(s.name)
         if saved:

@@ -30,8 +30,10 @@ plus a unit switch. Phone: Poco F1, postmarketOS, user `user`, sudo password in 
 - `roadsense.target` autostart is disabled: on the Prius car computer the car backend starts it
   with ACC and stops it at key-off (docs/ARCHITECTURE.md "Running under a host controller"); on the
   bench, `systemctl start roadsense.target` by hand or the backend's `roadsense_mode on` command.
-- The car computer's own backend serves port 8080, so the roadsense API runs on **8090** there:
-  `API_PORT=8090 sh scripts/install-phone.sh` (writes `/etc/roadsense/api.env`).
+- The car computer's own backend serves port 8080, so the consolidated API (chris-integrator) runs on
+  **8090** and roadsense's per-camera debug face on **8091**, both on loopback: the defaults of
+  `sh scripts/install-phone.sh` (`CHRIS_API_PORT` / `CHRIS_API_HOST` and `DEBUG_API_PORT` / `DEBUG_API_HOST`
+  change them; `/etc/chris/integrator.env`, `/etc/roadsense/api.env`).
 
 ## Steps (from the laptop)
 

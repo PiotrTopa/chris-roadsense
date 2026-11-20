@@ -35,6 +35,8 @@ import os
 import shutil
 import time
 
+from ..fastround import Layout, warm
+
 log = logging.getLogger("chris_integrator.recorder")
 
 DEFAULT_TOPICS = ("road", "lights", "signs", "env", "speed_limit", "rules", "fused", "map", "ego", "calib", "camera",
@@ -57,12 +59,14 @@ def load_config(config_dir=None):
     return {k: v for k, v in cfg.items() if k in DEFAULTS}
 
 
-def _r(v, nd):
-    return [round(x, nd) for x in v] if isinstance(v, list) else v
+_LAYOUT = Layout()
+_MARK = "\x01"                  # stands for a list of numbers in the skeleton that json.dumps writes
+_MARK_TEXT = json.dumps(_MARK)
 
 
-def slim_road(road):
-    """The part of a `road` message the trackers and the replay tools read, numbers shortened."""
+def _slim(road):
+    """The reduced `road` with every list of numbers replaced by a marker: (dict, [(list, digits), ...] in the
+    order json.dumps meets the markers, [(container, key), ...])."""
     # every scalar a tracker or a replay tool reads: `road_model` selects the trackers' profile (it was dropped
     # until lane L37, so replays ran the supercombo profile on vision-model sessions), `camera` names the camera
     out = {k: road.get(k) for k in ("type", "seq", "ts_mono_ns", "ts_real_ns", "model_ms", "v_ego", "valid",
@@ -71,22 +75,73 @@ def slim_road(road):
     pose = road.get("pose")
     if isinstance(pose, dict):
         out["pose"] = {k: round(v, 4) if isinstance(v, float) else v for k, v in pose.items()}
+    parts, digits, slots = [], [], []
+
+    def put(d, k, v, nd):
+        if isinstance(v, list):
+            d[k] = _MARK
+            parts.append(v)
+            digits.append(nd)
+            slots.append((d, k))
+        else:
+            d[k] = v
     for key in ("lane_lines", "road_edges"):
         lines = road.get(key)
         if isinstance(lines, list):
-            out[key] = [dict({"x": _r(ln.get("x"), 2), "y": _r(ln.get("y"), 3), "y_std": _r(ln.get("y_std"), 3)},
-                             **({"prob": round(ln["prob"], 4)} if isinstance(ln.get("prob"), (int, float)) else {}))
-                        for ln in lines if isinstance(ln, dict)]
+            res = []
+            for ln in lines:
+                if isinstance(ln, dict):
+                    o = {}
+                    put(o, "x", ln.get("x"), 2)
+                    put(o, "y", ln.get("y"), 3)
+                    put(o, "y_std", ln.get("y_std"), 3)
+                    if isinstance(ln.get("prob"), (int, float)):
+                        o["prob"] = round(ln["prob"], 4)
+                    res.append(o)
+            out[key] = res
     leads = road.get("leads")
     if isinstance(leads, list) and leads and isinstance(leads[0], dict):
-        out["leads"] = [{k: (_r(v, 3) if isinstance(v, list) else v) for k, v in leads[0].items()}]
+        o = {}
+        for k, v in leads[0].items():
+            put(o, k, v, 3)
+        out["leads"] = [o]
     plan = road.get("plan")
     if isinstance(plan, dict):
-        out["plan"] = {k: _r(plan.get(k), 2) for k in ("x", "y", "z") if k in plan}
+        o = out["plan"] = {}
+        for k in ("x", "y", "z"):
+            if k in plan:
+                put(o, k, plan.get(k), 2)
         for k in ("held", "age_ms"):
             if k in plan:
-                out["plan"][k] = plan[k]
+                o[k] = plan[k]
+    return out, parts, digits, slots
+
+
+def slim_road(road):
+    """The part of a `road` message the trackers and the replay tools read, numbers shortened."""
+    out, parts, digits, slots = _slim(road)
+    if parts:                   # about 700 numbers a frame, rounded in one go: fastround gives round()'s results
+        for (d, k), v in zip(slots, _LAYOUT.round_parts(parts, digits)):
+            d[k] = v
     return out
+
+
+def slim_road_line(road):
+    """json.dumps(slim_road(road), separators=(",", ":")), made without writing each float: the skeleton goes
+    through json.dumps with a marker for every list, the lists' texts come from fastround's tables."""
+    out, parts, digits, slots = _slim(road)
+    if parts:
+        pieces = json.dumps(out, separators=(",", ":")).split(_MARK_TEXT)
+        if len(pieces) == len(parts) + 1:
+            texts = _LAYOUT.text_parts(parts, digits)
+            res = [pieces[0]]
+            for t, p in zip(texts, pieces[1:]):
+                res.append(t)
+                res.append(p)
+            return "".join(res)
+        for (d, k), v in zip(slots, _LAYOUT.round_parts(parts, digits)):      # a string that looks like the marker
+            d[k] = v
+    return json.dumps(out, separators=(",", ":"))
 
 
 class Recorder:
@@ -96,6 +151,11 @@ class Recorder:
         self.preview_path = preview_path
         self.clock, self.wall = clock, wall
         self.topics = set(self.cfg["topics"])
+        if "road" in self.topics:
+            warm((2, 3))            # the number texts of the reduced `road`: built at start-up, not in a frame
+        c = self.cfg
+        self._caps = {"road": c["road_hz"], "ego": c["ego_hz"], "objects": c["objects_hz"], "view": c["view_hz"],
+                      "camera": 1.0, "ego_state": c["ego_state_hz"], "tracks": c["ego_state_hz"]}
         self.dir = None
         self.fh = None
         self.failed = False
@@ -133,25 +193,42 @@ class Recorder:
 
     # ---- fan-out hook ----------------------------------------------------
     def on_envelope(self, env):
-        """The recorder as an output channel of the mixer."""
-        if env.stream in self.topics and not self.failed:
-            self.on_message(env.stream, env.line)
+        """The recorder as an output channel of the mixer: the message is serialised only when it is written
+        (after the rate cap), and `road` is reduced from the message the bus already holds."""
+        mtype = env.stream
+        if self.failed or mtype not in self.topics:
+            return
+        now = self.clock()
+        if not self._due(mtype, now):
+            return
+        if mtype == "road" and isinstance(env.msg, dict):
+            self._write(mtype, slim_road_line(env.msg), now)
+        else:
+            self._write(mtype, env.line, now)
 
     def on_message(self, mtype, line):
         """Called with every outgoing message (topic, serialised line)."""
         if self.failed or mtype not in self.topics:
             return
         now = self.clock()
-        cap = {"road": self.cfg["road_hz"], "ego": self.cfg["ego_hz"], "objects": self.cfg["objects_hz"],
-               "view": self.cfg["view_hz"], "camera": 1.0, "ego_state": self.cfg["ego_state_hz"], "tracks": self.cfg["ego_state_hz"]}.get(mtype)
-        if cap and now - self._last.get(mtype, -1e9) < 1.0 / cap - 0.005:
+        if not self._due(mtype, now):
             return
+        if mtype == "road":
+            line = json.dumps(slim_road(json.loads(line)), separators=(",", ":"))
+        self._write(mtype, line, now)
+
+    def _due(self, mtype, now):
+        """The rate cap of a topic: False when its last written message is too recent."""
+        cap = self._caps.get(mtype)
+        if cap and now - self._last.get(mtype, -1e9) < 1.0 / cap - 0.005:
+            return False
         self._last[mtype] = now
+        return True
+
+    def _write(self, mtype, line, now):
         try:
             if self.fh is None:
                 self._open()
-            if mtype == "road":
-                line = json.dumps(slim_road(json.loads(line)), separators=(",", ":"))
             self.fh.write(line + "\n")
             self.written["messages"] += 1
             self.written["bytes_in"] += len(line) + 1

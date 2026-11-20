@@ -8,8 +8,11 @@
 #   sh scripts/install-phone.sh [--no-systemctl]
 #   DESTDIR=/scratch/dir SKIP_BUILD=1 sh scripts/install-phone.sh    files only, into a scratch prefix
 # Environment (optional): BUILD (build dir), CMAKE_ARGS, SKIP_BUILD=1 (install what BUILD already holds),
-#   API_PORT / API_HOST (the debug face, default 8091 on loopback), AUTOSTART=1 (enable roadsense.target at
-#   boot), WITH_CHRIS=0 (skip chris-integrator), CHRIS_CPUS (its CPUAffinity, default 0-2 on this phone),
+#   DEBUG_API_PORT / DEBUG_API_HOST (the debug face, default 8091 on loopback; under their names before L46,
+#   API_PORT / API_HOST, they are still read here and mean the same), CHRIS_API_PORT / CHRIS_API_HOST (the
+#   consolidated API of chris-integrator, default 8090 on loopback; passed on to its install script, which
+#   never sees this script's API_PORT / API_HOST), AUTOSTART=1 (enable roadsense.target at boot),
+#   WITH_CHRIS=0 (skip chris-integrator), CHRIS_CPUS (its CPUAffinity, default 0-2 on this phone),
 #   PYTHON (passed to the chris install's checks).
 set -eu
 cd "$(dirname "$0")/.."
@@ -24,6 +27,14 @@ for a in "$@"; do
 done
 [ -n "$D" ] && SYSTEMCTL=0
 [ -n "$D" ] || [ "$(id -u)" = 0 ] || { echo "run as root (sudo), or DESTDIR=/some/dir for a scratch install"; exit 1; }
+# The debug face's port / bind as given to this script (DEBUG_API_PORT / DEBUG_API_HOST; API_PORT / API_HOST are
+# their names before L46). API_PORT / API_HOST leave the environment here: chris-integrator's install script,
+# run from this one, would read them as the consolidated API's and refuse the collision; its own are
+# CHRIS_API_PORT / CHRIS_API_HOST. The integrator's link to this face follows the port when one was given.
+GIVEN_PORT=${DEBUG_API_PORT:-${API_PORT:-}}
+GIVEN_HOST=${DEBUG_API_HOST:-${API_HOST:-}}
+unset API_PORT API_HOST
+if [ -n "$GIVEN_PORT" ]; then ROADSENSE_HTTP=${ROADSENSE_HTTP:-http://127.0.0.1:$GIVEN_PORT}; export ROADSENSE_HTTP; fi
 # the chris part's prerequisites first, so that a missing module stops the install before anything changed
 if [ "${WITH_CHRIS:-1}" = 1 ]; then
     if [ "$SYSTEMCTL" = 1 ]; then sh chris-integrator/scripts/install.sh --check
@@ -58,7 +69,7 @@ for c in camera.json calib.json modeld.json envd.json mapd.json laned.json; do
 done
 # Debug face port/bind: /etc/roadsense/api.env. Since api 3 this is one camera's debug face, on 8091 on
 # loopback; the consumer API is chris-integrator's (port 8090, chris-integrator/scripts/install.sh).
-# API_PORT=N / API_HOST=ADDR replace a value; otherwise the file's own values are kept, except the old
+# DEBUG_API_PORT=N / DEBUG_API_HOST=ADDR replace a value; otherwise the file's own values are kept, except the old
 # consolidated port 8090 (now chris-integrator's), which becomes 8091. Other keys are kept; the old file
 # is kept once as api.env.pre-chris. The nftables rule follows api.env: opened for the port unless the
 # face is loopback-only, in which case a previously installed rule is removed.
@@ -66,8 +77,8 @@ AE=$D/etc/roadsense/api.env
 OLD_PORT=$(sed -n 's/^ROADSENSE_API_PORT=//p' "$AE" 2>/dev/null | tail -n 1)
 OLD_HOST=$(sed -n 's/^ROADSENSE_API_HOST=//p' "$AE" 2>/dev/null | tail -n 1)
 [ "$OLD_PORT" = 8090 ] && OLD_PORT=
-PORT=${API_PORT:-${OLD_PORT:-8091}}
-HOST=${API_HOST:-${OLD_HOST:-127.0.0.1}}
+PORT=${GIVEN_PORT:-${OLD_PORT:-8091}}
+HOST=${GIVEN_HOST:-${OLD_HOST:-127.0.0.1}}
 if [ -f "$AE" ] && [ ! -e "$AE.pre-chris" ]; then cp -p "$AE" "$AE.pre-chris"; fi
 [ -f "$AE" ] || : > "$AE"
 for kv in "ROADSENSE_API_PORT=$PORT" "ROADSENSE_API_HOST=$HOST"; do
@@ -99,9 +110,8 @@ if [ "${AUTOSTART:-0}" = 1 ] && [ "$SYSTEMCTL" = 1 ]; then systemctl enable road
 echo "roadsense installed${D:+ into $D}: daemons in /usr/local/bin, the debug face (port $PORT, bind $HOST) and the legacy mapd in /usr/local/lib/roadsense, units in /etc/systemd/system"
 if [ "${WITH_CHRIS:-1}" = 1 ]; then
     # chris-integrator on the little cores 0-2 (cpu 3 is the car backend's, 4-7 run the models); the
-    # integrator's link to this face follows API_PORT when one was given
+    # integrator's link to this face (ROADSENSE_HTTP) was set above when a debug port was given
     echo "--- chris-integrator"
-    if [ -n "${API_PORT:-}" ]; then ROADSENSE_HTTP=${ROADSENSE_HTTP:-http://127.0.0.1:$PORT}; export ROADSENSE_HTTP; fi
     if [ "$SYSTEMCTL" = 1 ]; then CPUS=${CHRIS_CPUS:-0-2} sh chris-integrator/scripts/install.sh
     else CPUS=${CHRIS_CPUS:-0-2} DESTDIR=$D sh chris-integrator/scripts/install.sh --no-systemctl; fi
 else

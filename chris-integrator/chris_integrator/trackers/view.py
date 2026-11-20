@@ -56,6 +56,7 @@ No I/O and no wall clock in here; times come from the messages (CLOCK_MONOTONIC 
 import math
 
 from ..contract import LocalEgo, validity
+from ..fastround import round_flat, scales
 from .roadview import RoadView
 
 NS = 1e9
@@ -125,6 +126,37 @@ def _interp(xs, ys, x):
             t = (x - xs[i - 1]) / ((xs[i] - xs[i - 1]) or 1.0)
             return a + (b - a) * t
     return None
+
+
+def _interp_all(xs, ys, qs):
+    """[_interp(xs, ys, q) for q in qs], walking the table once: for queries in rising order the segment search
+    goes on where the last one ended (every earlier node was already below the smaller query); a query below
+    its predecessor starts over. The same comparisons and arithmetic as `_interp`, so the same numbers."""
+    if not xs or not ys:
+        return [None] * len(qs)
+    n = min(len(xs), len(ys))
+    x0, y0 = xs[0], ys[0]
+    out = []
+    i, prev = 1, None
+    for x in qs:
+        if x <= x0:
+            out.append(y0)
+            continue
+        if prev is not None and not x >= prev:
+            i = 1
+        prev = x
+        while i < n and not x <= xs[i]:
+            i += 1
+        if i >= n:
+            out.append(None)
+            continue
+        a, b = ys[i - 1], ys[i]
+        if a is None or b is None:
+            out.append(None)
+            continue
+        t = (x - xs[i - 1]) / ((xs[i] - xs[i - 1]) or 1.0)
+        out.append(a + (b - a) * t)
+    return out
 
 
 class _Static:
@@ -271,8 +303,8 @@ class ViewBuilder:
                 ml = mlines[i]
                 if isinstance(ml, dict) and ml.get("present") and isinstance(ml.get("y"), list):
                     # the model's line on the source's distances (cut where they end)
-                    ys = [_interp(lanes["x"], ml["y"], x) for x in ex]
-                    sd = [_interp(lanes["x"], ml.get("y_std") or [], x) for x in ex]
+                    ys = _interp_all(lanes["x"], ml["y"], ex)
+                    sd = _interp_all(lanes["x"], ml.get("y_std") or [], ex)
                     if all(y is not None for y in ys):
                         return dict(ml, y=ys, y_std=[v if v is not None else 0.0 for v in sd], model=True)
                 return None
@@ -539,7 +571,7 @@ class ViewBuilder:
         lines = self._lines(self._display_lanes(lanes, ts) if valid else None, ts, dt, fade)
         path = None
         if self.plan:
-            ys = [_interp(self.plan[0], self.plan[1], x) for x in c["xs"]]
+            ys = _interp_all(self.plan[0], self.plan[1], c["xs"])
             end = self.plan[0][-1] if self.plan[0] else 0.0
             path = {"id": "path", "kind": "path",
                     "y": [round(y, 2) if y is not None and x <= end else None for x, y in zip(c["xs"], ys)]}
@@ -613,14 +645,17 @@ class ViewBuilder:
                  for x in xs]
         mv, mr, _ = self._motion(ts)
         seen = set()
+        nx = len(xs)
+        xs_rising = all(a <= b for a, b in zip(xs, xs[1:]))     # then "x <= reach" holds for a leading run of points
+        flat, todo = [], []
         for lid, kind, ln in src:
             seen.add(lid)
             st = self.lines.get(lid)
             ok = isinstance(ln, dict) and ln.get("present") and isinstance(ln.get("y"), list)
             if ok:
                 gx = lanes["x"] if kind == "lane_line" else lanes.get("edges_x") or lanes["x"]
-                ys = [_interp(gx, ln["y"], x) for x in xs]
-                stds = [_interp(gx, ln.get("y_std") or [], x) for x in xs]
+                ys = _interp_all(gx, ln["y"], xs)
+                stds = _interp_all(gx, ln.get("y_std") or [], xs)
                 ok = ys[0] is not None and ys[1] is not None
             if ok:
                 reach = xs[-1]
@@ -677,14 +712,44 @@ class ViewBuilder:
                 continue
             phase = "leave" if not st.present else "appear" if st.alpha < 1.0 else \
                 "shift" if st.shift_t is not None else "coast" if (ln or {}).get("mode") == "coast" else "steady"
-            out.append({"id": lid, "kind": kind,
-                        "y": [round(y, 2) if x <= st.reach else None for x, y in zip(xs, st.b)],
-                        "dy": [round(d, 2) if x <= st.reach else None for x, d in zip(xs, st.dy)],
-                        "reach_m": st.reach, "conf": st.conf, "age_s": round((ts - self.seen.get(lid, st.t0)) / NS, 2),
-                        "phase": phase, "alpha": round(st.alpha, 2)})
+            # the points within reach, offsets then rates: rounded for all lines at once below
+            m = sum(1 for x in xs if x <= st.reach) if xs_rising else None
+            o = {"id": lid, "kind": kind, "y": None, "dy": None,
+                 "reach_m": st.reach, "conf": st.conf, "age_s": round((ts - self.seen.get(lid, st.t0)) / NS, 2),
+                 "phase": phase, "alpha": round(st.alpha, 2)}
+            if m is None or len(st.b) != nx or len(st.dy) != nx:
+                o["y"] = [round(y, 2) if x <= st.reach else None for x, y in zip(xs, st.b)]
+                o["dy"] = [round(d, 2) if x <= st.reach else None for x, d in zip(xs, st.dy)]
+            else:
+                flat += st.b[:m]
+                flat += st.dy[:m]
+                todo.append((o, m))
+            out.append(o)
+        if todo:
+            rounded = round_flat(flat, self._scale(len(flat)), self._two(len(flat)))
+            i = 0
+            for o, m in todo:
+                pad = [None] * (nx - m)
+                o["y"] = rounded[i:i + m] + pad
+                o["dy"] = rounded[i + m:i + 2 * m] + pad
+                i += 2 * m
         for lid in [k for k in self.lines if k not in seen]:
             del self.lines[lid]
         return out
+
+    _SCALES = {}
+
+    @classmethod
+    def _scale(cls, n):
+        """The scale array of `fastround.round_flat` for n numbers with two digits."""
+        sc = cls._SCALES.get(n)
+        if sc is None:
+            sc = cls._SCALES[n] = (scales([2] * n), [2] * n)
+        return sc[0]
+
+    @classmethod
+    def _two(cls, n):
+        return cls._SCALES[n][1]
 
     @staticmethod
     def _carry(ys, xs, v, r, dt):

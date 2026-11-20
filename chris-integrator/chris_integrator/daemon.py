@@ -28,7 +28,7 @@ import signal
 import time
 
 from .io.vehicle_input import VehicleInput
-from .io.sockets import LINE_LIMIT, LineServer, Reader
+from .io.sockets import LINE_LIMIT, LineServer, Reader, parse_line_trimmed
 from .stack import build
 
 log = logging.getLogger("chris_integrator")
@@ -81,11 +81,15 @@ class Daemon:
     # ---- output channels ---------------------------------------------------------------------------------
     def _to_socket(self, env):
         out = self.out
-        if not out.clients and env.stream not in self.out_default:
+        stream = env.stream
+        default = stream in self.out_default
+        if default:
+            out.last[stream] = env         # serialised when a client connects (LineServer._client), not per message
+        if not out.clients:
             return
         data = None
         for w, want in list(out.clients.items()):
-            if env.stream not in (self.out_default if want is None else want):
+            if (not default) if want is None else (stream not in want):
                 continue
             if data is None:
                 data = env.line.encode() + b"\n"
@@ -95,8 +99,6 @@ class Daemon:
                 continue
             w.write(data)
             out.out_bytes += len(data)
-        if env.stream in self.out_default:
-            out.last[env.stream] = data if data is not None else env.line.encode() + b"\n"
 
     def _record(self, env):
         rec = self.recorder
@@ -204,7 +206,8 @@ class Daemon:
                 self.stack.add_channel("roadsense@" + inst, ROADSENSE, instance=inst, info="a further chris-roadsense instance")
             for s in socks:
                 name = s[:-5] if s.endswith(".sock") else s
-                r = Reader(os.path.join(d, name + ".sock"), lambda m, ln, inst=inst: self.on_message(m, ln, inst), name)
+                r = Reader(os.path.join(d, name + ".sock"), lambda m, ln, inst=inst: self.on_message(m, ln, inst), name,
+                           parse=parse_line_trimmed if self.stack.trim_road else None)
                 if i == 0:
                     self.readers[name] = r
                 tasks.append(asyncio.create_task(r.run()))
@@ -252,8 +255,11 @@ def main(argv=None):
                     help="also read a roadsense mapd's relays (ego.sock, vehicle.sock) while a car still feeds its position.sock")
     ap.add_argument("--no-mapd", action="store_true", help="(default now; kept for older unit files)")
     ap.add_argument("--no-mapper", action="store_true", help="run without the map box")
-    ap.add_argument("--host", default=env("CHRIS_API_HOST", "0.0.0.0"))
-    ap.add_argument("--http-port", type=int, default=int(env("CHRIS_API_PORT", "8080")), help="consolidated API port (0: none)")
+    # built-in defaults for a stand-alone start by hand: 8080 on all interfaces. An installed unit sets
+    # CHRIS_API_PORT=8090 and CHRIS_API_HOST=127.0.0.1 (scripts/install.sh, docs/INSTALL.md)
+    ap.add_argument("--host", default=env("CHRIS_API_HOST", "0.0.0.0"), help="bind address (default $CHRIS_API_HOST, else all interfaces)")
+    ap.add_argument("--http-port", type=int, default=int(env("CHRIS_API_PORT", "8080")),
+                    help="consolidated API port (default $CHRIS_API_PORT, else 8080; 0: none)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     cfg = load_config(a.config) if a.config else None
