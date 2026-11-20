@@ -547,6 +547,11 @@ for s in 104128 113201 151146 153636; do for m in recorded box; do
   $PY tools/mixer_equiv.py stats $O/eq_main_${s}_$m.jsonl.gz $O/eq_${s}_$m.jsonl.gz --fields 40; done; done
 ```
 
+The tables were produced by the committed code but for one change made after them: `Filter.rebase` keeping an
+earlier restart's carry (section 4.5 (c)). After it, the tests and the frame comparison of 113201 were run
+again; the four-drive, simulation and fault tables were not (the change touches one frame's validity flags).
+113201 varies between builds by more than that (section 4.1).
+
 The plots, the per-step traces and the episode lists the diagnosis was read from came from one-off scripts in
 the lane's scratch directory (a track dump of both systems per drive, drawn over the map pack's roads; the
 receiver's steps against the odometer; the list of gaps per stream); the numbers they gave are the ones in
