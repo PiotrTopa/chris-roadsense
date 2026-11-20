@@ -256,7 +256,8 @@ Not hidden:
   exists, two sources wrong the same way, a wrong camera lead range, a slow drift of the receiver.
 * Monitor thresholds rest on a small amount of real driving (town, daylight).
 * Pure Python and numpy: about 4 ms per camera frame on a laptop core for the whole stack (the estimator about
-  half of it), more with radars. The filter core is the candidate for a compiled implementation.
+  half of it), more with radars; about 25 ms on a phone's little core (docs/DESIGN.md 14.7). The filter core is
+  the candidate for a compiled implementation.
 * The car's direct feed is taken as it comes: the validation, per-signal quality and the description of the
   car that a feeder may send (vehicle input API 1.1) are not yet carried into the `vehicle` topic.
 * A second chris-roadsense instance is wired as a channel (its streams are suffixed with the instance name);

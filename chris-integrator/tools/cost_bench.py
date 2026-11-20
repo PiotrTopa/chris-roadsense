@@ -207,6 +207,7 @@ def _run(a, lines, tmp):
     n_road = n_in = 0
     worst = []
     cpu0 = time.process_time()
+    os0 = os.times()
     w0 = time.perf_counter()
     if prof:
         prof.enable()
@@ -235,10 +236,12 @@ def _run(a, lines, tmp):
         prof.dump_stats(a.profile)
     wall = time.perf_counter() - w0
     cpu = time.process_time() - cpu0
+    os1 = os.times()
     if d.recorder is not None:
         d.recorder.close()
     res = {"tree": tree, "input": a.input, "messages": n_in, "road_frames": n_road, "wall_s": round(wall, 3),
-           "cpu_s": round(cpu, 3), "ms_per_road_frame": round(1e3 * cpu / max(1, n_road), 3)}
+           "cpu_s": round(cpu, 3), "cpu_user_s": round(os1.user - os0.user, 2), "cpu_sys_s": round(os1.system - os0.system, 2),
+           "ms_per_road_frame": round(1e3 * cpu / max(1, n_road), 3)}
     if dump is None:
         per = 1e3 / max(1, n_road)
         plug = {s.name: {"calls": s.calls, "ms_per_call": round(1e3 * s.cpu / s.calls, 4) if s.calls else None,

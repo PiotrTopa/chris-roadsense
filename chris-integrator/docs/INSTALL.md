@@ -79,13 +79,14 @@ explicitly in the environment is replaced, every other line stays.
 * No watchdog, no start timeout a hot and throttled CPU could trip; `Restart=always` every 2 s, and
   `StartLimitIntervalSec=0` so that a restart loop (e.g. while another process still holds the port during a
   switch-over) never gives up. `MemoryMax=768M` is a backstop against a leak, not a throttle (no `MemoryHigh`):
-  the daemon is about 70 MB resident with the map box (a real-pace replay on a laptop).
+  the daemon is about 70-75 MB resident with the map box and the recorder (measured on the reference phone).
 * `systemctl stop` sends SIGTERM; the daemon then saves its carried state and exits with status 0.
 
 ### CPU placement and priority
 
 The integrator is in the measurement path: it produces `lead` (and `lanes`, `view`) for every camera frame, about
-3-4 ms of one laptop core per frame for the whole stack (more on a phone core). Choices for a host that shares
+3-4 ms of one laptop core per frame for the whole stack; on the reference phone about 25 ms of a little core per
+frame with a recorder and one WebSocket consumer, 39 % of that core at 15 frames a second (docs/DESIGN.md 14.7). Choices for a host that shares
 its cores with a camera pipeline:
 
 * **Nice -2** (in the unit). systemd does not enable the cpu controller inside `roadsense.slice` unless a unit in

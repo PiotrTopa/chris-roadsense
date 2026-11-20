@@ -737,6 +737,39 @@ the dispatch is not visible in the total. A box moved out of process in sync mod
 trigger: 0.4 ms per message for the map box, whose input is a 5 kB `ego_state` (serialising it, two pipe
 crossings, parsing the answer); its outputs are the same message for message.
 
+### 14.7 What the daemon costs on a phone core
+
+Measured on the reference phone (a little core of a Snapdragon 845 at 1.77 GHz, Python 3.14, numpy 2.5; one
+camera at 15 road frames a second, sign and light providers at 5 a second, a recorder, one WebSocket consumer
+that takes `road`, `lanes`, `view`, `lead` and the decisions): about **17 ms of CPU per road frame** for the
+whole per-message path on a quiet core and 25 ms with the camera pipeline running beside it (the kernel's
+part of 15 kB lines in and out, the event loop, shared caches): 39 % of one little core. The same path costs
+about 3 ms on a laptop core: the ratio is 6.5, and what dominates is not arithmetic but the unit prices of
+Python on such a core: 1 us to read a JSON number and 1.5 us to write one, 2 us for a `round()`, 5-18 us for a
+numpy call on a small array. By stage (ms per road frame): reading the inputs 1.4, the estimator 5.2, lanes
+2.1, view 1.7, the other boxes 1.9, the recorder 2.7, serialising for the WebSocket consumer 1.3, dispatch 0.6.
+
+What keeps it there, and what an extension has to respect:
+
+* **A message is serialised only when something takes its line** (`Envelope.line`): an output channel must
+  decide whether it wants a message (subscription, rate cap) before it touches `line`. The WebSocket channel
+  serialises a stream only for a subscriber of it (`Api.subscribe(cb, topics)`), the socket channel makes its
+  greeting lines when a client connects, the recorder asks after its rate cap.
+* **Lists of numbers are rounded and written in bulk** (`fastround`): `round_flat` gives exactly `round()`'s
+  results from a few numpy calls, `text_parts` the JSON text of the rounded numbers from a table of the texts
+  of k / 10^n. The recorder's `road` line is made this way and is byte for byte what `json.dumps` of the
+  rounded message gives.
+* **`road` is parsed without what the default boxes do not read** (`fastjson.trim_road`: most of the plan's
+  arrays, the lines' heights; 40 % of the line). The line itself goes to every consumer whole, and
+  `GET /v2/<topic>` serves the line. A stack with boxes of its own gets the whole message (`Stack.trim_road`,
+  `"road_whole": true` in `mixer.json` forces it).
+* On arrays of a few dozen values a numpy call costs more than the arithmetic: the trackers convert and test
+  a frame's lists in one array, not one by one, and avoid `np.median` and friends on tiny inputs.
+
+`tools/cost_capture.py` records what a running daemon is fed, `tools/cost_bench.py` replays it through the
+daemon's whole per-message path (cost by stage, and a dump of every output for comparing two trees line by
+line), `tools/cost_live.py` measures a running unit.
+
 ## 15. The map box (chris-mapper)
 
 Its own component (top-level `chris-mapper/`, package `chris_mapper`, its own tests, README and licence;
