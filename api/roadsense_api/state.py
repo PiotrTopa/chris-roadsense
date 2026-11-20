@@ -2,12 +2,16 @@
 readings, the load governor. Nothing is tracked or fused here: the consolidated side (trackers, decisions, the
 consumer API) is chris-integrator, which reads the same daemon sockets."""
 import collections
+import json
 import glob
 import os
+import re
 import struct
 import time
 
 from . import governor as governor_mod
+
+_TS_REAL = re.compile(r'"ts_real_ns":(\d+)')
 
 DAEMONS = ("camerad", "modeld", "signd", "envd", "lightd")
 TOPICS = ("camera", "road", "signs", "calib", "env", "lights", "display_lanes")
@@ -62,11 +66,31 @@ def battery():
     return out
 
 
+class Latest(dict):
+    """type -> newest message. A type whose newest message arrived as text only (`State.on_line`) is parsed on
+    the first `get` and kept; every reader of the map goes through `get`."""
+
+    def __init__(self):
+        super().__init__()
+        self.text = {}                                     # type -> newest line not parsed yet
+
+    def get(self, key, default=None):
+        line = self.text.pop(key, None)
+        if line is not None:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                msg = None
+            if isinstance(msg, dict):
+                self[key] = msg
+        return super().get(key, default)
+
+
 class State:
     def __init__(self, rundir, datadir=None, ring_path=None, rules=None):
         self.rundir = rundir
         self.ring_path = ring_path
-        self.latest = {}                                   # type -> message dict
+        self.latest = Latest()                             # type -> message dict (parsed on demand, see Latest)
         self.arrivals = collections.defaultdict(lambda: collections.deque(maxlen=200))
         self.connected = {d: False for d in DAEMONS}
         self.last_msg = {d: None for d in DAEMONS}         # monotonic time of last message
@@ -94,7 +118,23 @@ class State:
                 self.live_tracks.pop(e.get("track_id"), None)
             for tid in [k for k, t in self.live_tracks.items() if now - t["_seen"] > 2.0]:
                 del self.live_tracks[tid]
+        self.latest.text.pop(mtype, None)
         self.latest[mtype] = msg
+        self.arrivals[mtype].append(now)
+        self.version += 1
+        for cb in list(self.subscribers):
+            cb(mtype, line)
+
+    def on_line(self, mtype, daemon, line):
+        """A message taken as text (sockets.LAZY_PREFIX): counted, timed and relayed like any other, parsed only
+        when a reader asks for it (`Latest.get`). The camera -> api latency comes from the text."""
+        now = time.monotonic()
+        self.last_msg[daemon] = now
+        if mtype == "road":
+            m = _TS_REAL.search(line)
+            ts = int(m.group(1)) if m else 0
+            self._road_lat_ms = (time.time_ns() - ts) / 1e6 if ts > 0 else None
+        self.latest.text[mtype] = line
         self.arrivals[mtype].append(now)
         self.version += 1
         for cb in list(self.subscribers):

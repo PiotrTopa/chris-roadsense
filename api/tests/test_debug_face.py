@@ -116,3 +116,26 @@ class DebugFaceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LazyRoadTest(unittest.TestCase):
+    """`road` lines stay text until a reader asks (lane L48): same answers, no parse per frame."""
+
+    def test_road_line_is_parsed_on_demand_only(self):
+        from roadsense_api.sockets import LAZY_PREFIX
+        from roadsense_api.state import State
+        st = State("/nonexistent")
+        got = []
+        st.subscribers.add(lambda t, line: got.append((t, line)))
+        line = '{"type":"road","seq":7,"ts_mono_ns":5,"ts_real_ns":%d,"model_ms":44.0}' % (time.time_ns() - 50_000_000)
+        self.assertTrue(line.startswith(LAZY_PREFIX))
+        st.on_line("road", "modeld", line)
+        self.assertEqual(got, [("road", line)])                 # relayed as it came
+        self.assertNotIn("road", st.latest)                     # nothing parsed yet
+        self.assertAlmostEqual(st._road_lat_ms, 50.0, delta=20.0)
+        self.assertEqual(st.latest.get("road")["seq"], 7)       # parsed when asked
+        self.assertEqual(st.health()["model_ms"], 44.0)
+        st.on_line("road", "modeld", line.replace('"seq":7', '"seq":8'))
+        self.assertEqual(st.latest.get("road")["seq"], 8)       # the newest line wins over the parsed one
+        st.on_message("modeld", {"type": "road", "seq": 9}, "{}")
+        self.assertEqual(st.latest.get("road")["seq"], 9)       # a parsed message replaces a waiting line

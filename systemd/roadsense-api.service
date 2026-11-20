@@ -20,6 +20,9 @@ Environment=ROADSENSE_API_PORT=8091
 Environment=ROADSENSE_API_HOST=127.0.0.1
 EnvironmentFile=-/etc/roadsense/api.env
 ExecStart=/usr/bin/python3 -m roadsense_api --host ${ROADSENSE_API_HOST} --port ${ROADSENSE_API_PORT}
+# Little cores: the debug face has no deadline, and unpinned it was seen on an A75 (lane L48: 5 % of a big core,
+# a third of it the parse of `road` lines nobody asked for, now deferred).
+CPUAffinity=0-3
 Restart=always
 RestartSec=2
 

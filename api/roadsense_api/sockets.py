@@ -6,6 +6,10 @@ import os
 
 log = logging.getLogger("roadsense_api.sockets")
 LINE_LIMIT = 16 * 1024 * 1024
+# modeld starts every `road` line with its type (modeld/supercombo.cc, modeld/vision.cc: road_json). The debug
+# face has no consumer of its own for `road` (the integrator reads modeld's socket itself), so the line is kept
+# as text and parsed on the first GET, /ws relay excluded (it passes the text on).
+LAZY_PREFIX = '{"type":"road",'
 
 
 async def daemon_client(state, daemon, path, backoff_min=0.2, backoff_max=5.0, track=True):
@@ -29,6 +33,9 @@ async def daemon_client(state, daemon, path, backoff_min=0.2, backoff_max=5.0, t
                     break
                 line = raw.decode("utf-8", "replace").strip()
                 if not line:
+                    continue
+                if line.startswith(LAZY_PREFIX):     # `road`: 5 kB a frame, parsed only when somebody asks
+                    state.on_line("road", daemon, line)
                     continue
                 try:
                     msg = json.loads(line)
