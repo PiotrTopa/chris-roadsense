@@ -977,6 +977,22 @@ that does not read the file is simply never shed.
 Measured on the reference phone (what each step saves, and the proof that the road outputs hold at the limit
 while the lower steps are shed): docs/lanes/L24-quality-max.md.
 
+## Demand hints (`<rundir>/demand`, optional, lane L48)
+
+The governor says what the device can afford; a demand file says what the consumer currently needs. Same
+format, reader (`camerad/governor.h`, `GovernorReader(path)`) and validity rule as the governor's caps file: one
+flat JSON object with `ts_mono_ns` and `valid_s`, rewritten atomically; a missing or stale file means "no hint"
+and every daemon then behaves as configured. A hint may only allow a daemon to do less while nothing is lost,
+or forbid such a saving; it never raises a rate above the configured one and never overrides the governor.
+Nothing in roadsense writes the file: it is the integrator's to write (it knows the map and the car), and a
+host without an integrator runs unchanged.
+
+| key | read by | meaning |
+|---|---|---|
+| `lights_idle` | the light provider (`signd --lights-idle P`) | 0 = never use the idle pattern (signals are expected ahead); 1 or absent = the idle pattern is allowed while no light is tracked |
+
+Further keys are proposals of docs/lanes/L48-system-optimisation.md (section 5), not implemented.
+
 ## roadsense 2.0: what changed since 1.x
 
 2.0 (2026-11-18, lanes L19-L22) is a breaking release of the consumer contract. A 1.x consumer has to change
