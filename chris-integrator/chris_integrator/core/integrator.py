@@ -744,3 +744,48 @@ class Integrator:
             return es, None, None
         tr, ld = self.objects.frame(self, None, es)
         return es, tr, ld
+
+    # ---- L43-V: the feeder's `reset` (vehicle input API 5.3). One method, appended; nothing above changed. -------
+    def forget_position(self, reason=None):
+        """Forget the position (a synthetic drive ended, the receiver was swapped): the input so far must not live
+        on as the car's position. Dropped: the local frame (origin, anchor), position, heading and altitude with
+        their covariance, the states and memories of the absolute sources (receiver delay and correlated error, the
+        map's lane offset, the receiver's track), their monitors and arrival history. Kept: the motion (speed,
+        yaw rate, accelerations, grade), every calibration state of the car's own sensors and of the cameras, the
+        faults, the object layer, the odometer. Position comes back with the next usable fix (a new frame id)."""
+        absolute = [s for s in self.specs if s.group in ("gnss", "map") or s.family == "gnss"]
+        x0, P0 = self.model.initial()
+        drop = [E.PE, E.PN, E.PSI, E.Z] + [i for s in absolute for i in s.ix.values()]
+        l = self.ekf.latest()
+        if l is None:
+            x, P = self.ekf.x0, self.ekf.P0
+        else:
+            t, x, P = l
+            x, P = x.copy(), P.copy()
+        for i in drop:
+            x[i] = x0[i]
+            P[i, :] = 0.0
+            P[:, i] = 0.0
+            P[i, i] = P0[i, i]
+        if l is not None:
+            self.ekf.rebase(t, x, P)
+        self.origin = None
+        self.anchored = False
+        self._anchor_first = None
+        self._lost = False
+        self._pos_high_t = None
+        self.frame_id += 1
+        groups = {s.group for s in absolute}
+        for s in absolute:
+            self.ctx[s.id].mem = {}
+        for g in groups:
+            self.groups[g].reset_data()
+        for k, m in self.nis.items():
+            if k[0] in groups or k[1] in ("pos", "heading", "alt", "map_cross", "map_heading"):
+                m.reset_data()
+        self.ekf.set_quarantine(k for k in self.ekf.quarantine if k[0] not in groups
+                                and k[1] not in ("pos", "heading", "alt", "map_cross", "map_heading"))
+        self.fdi.event("position", "reset", None, "the feeder reset the position (%s): position, heading and the "
+                       "receiver's states dropped, calibration of the car's sensors kept" % (reason or "requested"),
+                       quantity="position")
+        self._cache()

@@ -36,14 +36,23 @@ class Estimator(Plugin):
         self.integ = Integrator(cfg, sources=self._sources)
         types = [self.FRAME] + sorted(self.stream_of.get(t, t) for t in self.integ.by_type if t != self.FRAME)
         self.inputs = tuple(In(t, trigger=True, optional=True, feedback=t in self.feedback) for t in types) + \
-            (In("governor", optional=True),)
+            (In("governor", optional=True), In(self.RESET, trigger=True, optional=True))
 
     def register(self, src):
         """A source added while running (its message type becomes an input at the next wiring)."""
         self.integ.register(src)
 
+    RESET = "position_reset"               # the feeder's `reset` (vehicle input API): forget the position only
+
     def on_input(self, stream, msg, ctx):
         I = self.integ
+        if stream == self.RESET:
+            I.forget_position(msg.get("reason"))
+            ts = msg.get("ts_mono_ns")
+            if I.now is not None and isinstance(ts, int) and I.camera_silent():
+                # no camera frames to carry the news: an ego state without the position goes out now
+                self._publish(I.tick(max(ts, int(round(I.now * 1e9))), msg.get("ts_real_ns")), msg, ctx)
+            return
         if stream == self.FRAME:
             try:
                 outs = I.frame(msg)

@@ -5,7 +5,12 @@ the estimator as a measurement, and the map context: road attributes, limits, ju
 
 In process the box is wrapped here; out of process it speaks the plug-in wire contract itself
 (`python3 -m chris_mapper --plugin`, `mixer.remote.RemotePlugin`). Without chris-mapper or without a pack the
-stack runs without map streams and says so."""
+stack runs without map streams and says so.
+
+The feeder's `reset` (stream `position_reset`) drops the box's state (match, matcher, position state): the map is
+`no_source` until the estimator has a position again; `map.input.resets` / `last_reset` say so. An out-of-process
+box does not declare that input: it sees the estimator's position go and its new frame id, and drops its match
+from those (state `unknown` instead of `no_source`)."""
 import logging
 
 from ..mixer import In, Out, Plugin
@@ -15,16 +20,27 @@ log = logging.getLogger("chris_integrator.mapper")
 
 class Mapper(Plugin):
     name = "mapper"
-    inputs = (In("ego_state", trigger=True),)
+    inputs = (In("ego_state", trigger=True), In("position_reset", trigger=True, optional=True))
     outputs = (Out("map", "context", "periodic", doc="map match (a measurement for the estimator) and map context"),)
 
     def __init__(self, box, name=None):
         super().__init__(None, name)
         self.box = box
+        self.resets, self.last_reset = 0, None
 
     def on_input(self, stream, msg, ctx):
+        if stream == "position_reset":
+            self.box.reset(msg.get("reason"))
+            self.resets += 1
+            self.last_reset = {"ts_mono_ns": msg.get("ts_mono_ns"), "reason": msg.get("reason")}
+            es = ctx.get("ego_state")              # the estimator's state after it forgot the position, if it sent one
+            if not es or (es.get("position") or {}).get("valid"):
+                return
+            msg = es
         out = self.box.on_ego_state(msg)
         if out is not None:
+            if isinstance(out.get("input"), dict):
+                out["input"].update(resets=self.resets, last_reset=self.last_reset)
             ctx.emit("map", out)
 
     def reset(self, reason=None):
