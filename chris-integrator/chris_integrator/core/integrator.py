@@ -58,6 +58,13 @@ DEFAULT_CFG = dict(
                                  # reference car's healthy drives that happened 9 and 4 times, and a position lost just
                                  # before parking stayed unknown for as long as the car stood)
     reanchor_sigma_m=40.0, reanchor_heading_sigma=0.35,
+    gap_s=1.5,                   # L47: without any measurement of speed and yaw rate for longer than this, the heading
+                                 # is not known afterwards (a car turns 30-50 degrees in that time): position and
+                                 # heading are placed anew, and no position or heading row is used in between
+    heading_lost_rad=0.7,        # L47: a heading less certain than this (40 degrees, 1 sigma) after a gap of all motion
+                                 # input is not a heading: position and heading are placed on the next usable fix
+                                 # (as after a loss), instead of being pulled in by fixes through a linearisation
+                                 # that does not hold for an error of that size
     settle_s=0.0,                # a relative position reference (the map's geometry) is not used this long after an anchoring ...
     settle_fixes=0,              # ... nor before this many absolute fixes have been fused since, nor while they are set aside
     vote_wait_s=25.0,            # a disagreement of two sources waits this long at most for a third source's evidence
@@ -100,6 +107,7 @@ DETECTORS = {
 
 GATE_ALL = {k: "gate" for k in DETECTORS}      # every detector acts (a car whose sensors were shown to support it; tests)
 
+_POSE_ROWS = ("pos", "heading", "map_cross", "map_heading")      # rows that are about where the car is and where it points
 _IV, _IA, _IW, _IAL = (np.array([i], dtype=np.intp) for i in (E.V, E.A, E.W, E.AL))
 _ONE = np.array([1.0])
 
@@ -221,6 +229,75 @@ class Integrator:
             self.x_now, self.P_now = self.ekf.x0, self.ekf.P0
         else:
             self.x_now, self.P_now = l[1], l[2]
+            self._yaw_note(l[0], l[1], l[2])
+
+    # ---- how far the car has turned and driven between two times (L47) ------------------------------------------
+    # A source of absolute positions is seconds old: the direction of its track is the car's heading of then, and
+    # has to be carried to now by the yaw the car made since; and its own motion (turns, distances, and how late it
+    # is) can be checked against the car's. That needs the *change* of heading and the distance between two times
+    # as the car's own sensors give them, whatever the heading and position themselves are believed to be (they
+    # may be wrong, or have been placed anew in between): the filtered heading's increments and the speed's
+    # integral are accumulated here, skipping the moments the heading is set; a gap of the sensors ends a stretch.
+    def _yaw_note(self, t, x, P):
+        psi = float(x[E.PSI])
+        v = float(x[E.V]) / (1.0 + float(x[E.SV]))
+        last = getattr(self, "_yaw_last", None)
+        if last is None:
+            self._yaw_t, self._yaw_c = [], []
+            cum, seg, dist = 0.0, 0, 0.0
+        else:
+            cum, seg, dist = last[2], last[3], last[4]
+            if t <= last[0]:                           # the newest state corrected in place: not a turn of the car
+                self._yaw_last = (last[0], psi, cum, seg, dist, v)
+                self._psi_set = False
+                return
+            if t - last[0] > 0.5 or P[E.W, E.W] > 0.01 or P[E.V, E.V] > 1.0:
+                seg += 1                               # nobody measured the yaw rate or the speed over this stretch
+            else:
+                dist += 0.5 * (v + last[5]) * (t - last[0])
+                if not getattr(self, "_psi_set", False):
+                    cum += wrap_pi(psi - last[1])
+        if P[E.W, E.W] <= 0.01 and P[E.V, E.V] <= 1.0:   # the car's motion is measured now: how long was it not?
+            kt = getattr(self, "_known_t", None)
+            if kt is not None and t - kt > self.cfg["gap_s"]:
+                self._gap = (t, t - kt)                # a gap of all motion input has ended: the heading did not survive it
+            if kt is None or t - kt > self.cfg["gap_s"]:
+                self.known_since = t                   # the car's motion has been measured without a gap since then
+            self._known_t = t
+        self._psi_set = False
+        self._yaw_last = (t, psi, cum, seg, dist, v)
+        self._yaw_t.append(t)
+        self._yaw_c.append((cum, seg, dist))
+        if len(self._yaw_t) > 12288:               # (about two minutes of notes are kept)
+            del self._yaw_t[:4096], self._yaw_c[:4096]
+
+    def yaw_between(self, t0, t1):
+        """The heading change (rad) from t0 to t1 as the yaw sensors measured it, or None (a gap in between, or
+        outside what is remembered: about a minute)."""
+        import bisect
+        ts = getattr(self, "_yaw_t", None)
+        if not ts or t0 < ts[0] - 0.2 or max(t0, t1) > ts[-1] + 0.5:
+            return None
+        a = self._yaw_c[max(bisect.bisect_right(ts, t0) - 1, 0)]
+        b = self._yaw_c[max(bisect.bisect_right(ts, t1) - 1, 0)]
+        return None if a[1] != b[1] else b[0] - a[0]
+
+    def dist_between(self, t0, t1):
+        """The distance over ground (m, signed: backwards is negative) the car drove from t0 to t1 as its speed
+        sensors measured it, or None (a gap in between, or outside what is remembered)."""
+        import bisect
+        ts = getattr(self, "_yaw_t", None)
+        if not ts or t0 < ts[0] - 0.2 or max(t0, t1) > ts[-1] + 0.5:
+            return None
+        out = []
+        for t in (t0, t1):
+            k = max(bisect.bisect_right(ts, t) - 1, 0)
+            a = self._yaw_c[k]
+            d = a[2]
+            if k + 1 < len(ts) and self._yaw_c[k + 1][1] == a[1] and ts[k + 1] > ts[k]:      # between two notes of one stretch
+                d += (self._yaw_c[k + 1][2] - a[2]) * min(max((t - ts[k]) / (ts[k + 1] - ts[k]), 0.0), 1.0)
+            out.append((d, a[1]))
+        return None if out[0][1] != out[1][1] else out[1][0] - out[0][0]
 
     def carry_fault(self, group, reason):
         """A fault known from before this run: the group starts faulted until its monitors see agreement."""
@@ -300,6 +377,15 @@ class Integrator:
             self._cache()
             if self._lost:
                 self._reanchor()
+            elif self.anchored and not getattr(self, "_reanchor_pending", False) \
+                    and self.P_now[E.W, E.W] <= 0.01 and self.P_now[E.V, E.V] <= 1.0 and abs(float(self.x_now[E.V])) >= 1.0:
+                # (acted on once the car's motion is measured again and it moves: a fix that arrives inside the gap
+                # says nothing about the heading, and a standing car cannot show its heading)
+                if getattr(self, "_gap", None) is not None:
+                    self._gap_reanchor()
+                elif self.P_now[E.PSI, E.PSI] > self.cfg["heading_lost_rad"] ** 2:
+                    # the position was placed while the car stood: the heading is still to come
+                    self._reanchor("the heading is not known (the position was placed while the car stood)", pos_sigma="keep")
 
     def _new_epoch(self):
         """The device clock restarted: drop what is tied to the old time axis. Calibration states and their
@@ -325,6 +411,7 @@ class Integrator:
                 P[E.PSI, E.PSI] = Po[E.PSI, E.PSI] + c["epoch_heading_sigma"] ** 2
                 P[E.Z, E.Z] = Po[E.Z, E.Z] + 25.0
         self.ekf.reset(x, P)
+        self._psi_set = True
         self._init_state()
         self._odo_t = None
         for s in self.specs:
@@ -380,6 +467,19 @@ class Integrator:
                 self._isolate()
             return False
         fused = False
+        if role == "fuse" and m.q in _POSE_ROWS and self.anchored and not getattr(self, "_reanchor_pending", False):
+            # L47: across a gap of all motion input the heading is not known, and a position or heading row
+            # would be applied through a linearisation about a heading that may be the other way round (a
+            # road's bearing is a line: its row then locks the heading 180 degrees wrong, with 8 degrees stated).
+            # Rows whose time lies in such a gap are not used; when the gap has ended, position and heading are
+            # placed anew before any such row is.
+            kt = getattr(self, "_known_t", None)
+            if kt is not None and m.t - kt > self.cfg["gap_s"]:
+                self.counts["dropped"][m.src or spec.id] = self.counts["dropped"].get(m.src or spec.id, 0) + 1
+                return False
+            if getattr(self, "_gap", None) is not None:
+                self._gap_reanchor()
+                return False
         if role == "fuse" and not g.witness:
             sig = m.sigma * self.fdi.noise_scale(g.name, m.q)     # a noise burst: weighted by its present noise
             self._fuse(m.t, Row(m.q, m.z, sig * sig, m.h, m.src, g.name, robust=m.robust, wrap=m.wrap,
@@ -461,22 +561,48 @@ class Integrator:
 
     # ---- absolute position (any receiver) --------------------------------------------------------------
     def abs_position(self, src, t_stamp, lat, lon, sigma, itau=None, course_deg=None, course_ok=False, cb=None,
-                     bias=None):
+                     bias=None, bias_coef=1.0, offset=None, consider=None, sigma_total=None, heading=None,
+                     own_heading=False, place=None):
         """Rows of an absolute position fix (list of Meas). Sets the local origin on the first fix and anchors
         the local frame (position and heading) once a heading is known: a usable course, or two fixes far
         enough apart. Until then nothing is fused. `itau`: index of the source's delay state; `bias`: indices
-        of its east / north error states (a receiver's error correlated over tens of seconds)."""
+        of its east / north error states (a receiver's error correlated over tens of seconds), which enter the
+        rows multiplied by `bias_coef` (L47: the states are in units of the receiver's present error level, so
+        the level can change from one fix to the next). `sigma` is the white part of the fix's error. `offset`
+        (east, north, m) is subtracted from the fix (a step of the receiver the source has detected and holds
+        back). `consider`: state indices the rows must not correct (their uncertainty still counts).
+        `sigma_total`: the fix's whole error (white and slowly varying), for cross-checks against it. `heading`:
+        the car's heading now (rad) as the source derives it from its own track (the direction of the track of
+        `delay` s ago is not the heading now while the car turns); it places the heading at an anchoring in
+        preference to the course field. `own_heading`: the source derives headings that way and will give one
+        when it has it: the chord between two fixes is then not used (it points backwards while the car reverses).
+        `place`: (extra sigma m, heading still wanted): the position is put on this fix with the heading left
+        unknown, nothing is fused. Used while the car stands (the receiver at rest, extra 0: the heading comes
+        when the car moves) and right after a gap of all motion input (extra = what the car drives in the fix's
+        age, in an unknown direction; the heading is placed by a later fix)."""
         c = self.cfg
         if self.origin is None:
             self.origin = (lat, lon)
         e, n = E.to_local(self.origin, lat, lon)
+        raw = (e, n)
+        if offset is not None:
+            e, n = e - offset[0], n - offset[1]
         x = self.x_now
         tau = float(x[itau]) if itau is not None else 0.0
-        if not self.anchored or getattr(self, "_reanchor_pending", False):
+        if not self.anchored or getattr(self, "_reanchor_pending", False) or place is not None:
             psi = None
-            if course_ok and course_deg is not None:
+            if place is not None:
+                # no heading can be had now (L47: the car stands, or a gap has just ended): the position is put on
+                # the fix with the heading unknown
+                self._anchor(e, n, None, sigma, 0.0, itau, bias=None if bias is None else (bias[0], bias[1], bias_coef),
+                             extra=place[0])
+                self._reanchor_pending = bool(place[1])
+                return []
+            if heading is not None:
+                psi = heading
+            elif course_ok and course_deg is not None:
                 psi = E.course_to_psi(course_deg)
-            else:
+            elif not own_heading:
                 f = self._anchor_first
                 if f is None:
                     self._anchor_first = (e, n)
@@ -485,7 +611,7 @@ class Integrator:
             if psi is None:
                 return []
             self._reanchor_pending = False
-            self._anchor(e, n, psi, sigma, tau, itau)
+            self._anchor(e, n, psi, sigma, tau, itau, bias=None if bias is None else (bias[0], bias[1], bias_coef))
             return []
         v, ps = float(x[E.V]) / (1.0 + float(x[E.SV])), float(x[E.PSI])
         idx = [E.PE] if itau is None else [E.PE, itau]
@@ -493,28 +619,45 @@ class Integrator:
         ce = [1.0] if itau is None else [1.0, -v * math.cos(ps)]
         cn = [1.0] if itau is None else [1.0, -v * math.sin(ps)]
         if bias is not None:
-            idx, idn, ce, cn = idx + [bias[0]], idn + [bias[1]], ce + [1.0], cn + [1.0]
+            idx, idn, ce, cn = idx + [bias[0]], idn + [bias[1]], ce + [bias_coef], cn + [bias_coef]
+
         ke = tau * v * math.cos(ps) if itau is not None else 0.0      # so that the prediction is pe at insertion
         kn = tau * v * math.sin(ps) if itau is not None else 0.0
         t = t_stamp - tau
         loc = not c["gnss_absolute"]
         self.anchor_fixes = getattr(self, "anchor_fixes", 0) + 1
-        self.abs_latest = (t_stamp, e, n, sigma, src)      # the newest absolute fix as given (for cross-checks of relative references)
+        # the newest absolute fix as given (for cross-checks of relative references), with its whole error
+        self.abs_latest = (t_stamp, raw[0], raw[1], sigma if sigma_total is None else sigma_total, src)
         self.abs_delay = max(tau, 0.0)                     # ... and how old a fix is at its stamp (the freshness of the position)
-        return [Meas("pos", t, e, sigma, lin(idx, ce, ke), src + ".pos", robust=True, cb=cb, local=loc),
-                Meas("pos", t, n, sigma, lin(idn, cn, kn), src + ".pos", robust=True, local=loc)]
+        return [Meas("pos", t, e, sigma, lin(idx, ce, ke), src + ".pos", robust=True, cb=cb, local=loc, consider=consider),
+                Meas("pos", t, n, sigma, lin(idn, cn, kn), src + ".pos", robust=True, local=loc, consider=consider)]
 
-    def _reanchor(self):
+    def _gap_reanchor(self):
+        """A gap of all motion input has ended (L47). Where the car can be after T s without any motion input: it
+        kept going, give or take what a car does in T s (1 m/s2, and half the distance in direction: it may have
+        turned); the filter's own white-jerk growth says hundreds of metres after 6 s, which is "unknown", and
+        too much. The heading is not known at all: the position is put on the receiver's next fix, the heading
+        on the first one whose track was driven after the gap."""
+        T = self._gap[1]
+        self._gap = None
+        self.gaps_lost = getattr(self, "gaps_lost", 0) + 1
+        v = abs(float(self.x_now[E.V])) if self.P_now[E.V, E.V] <= 4.0 else 15.0
+        self._reanchor("the heading was lost in a gap of all motion input (%.1f s)" % T,
+                       pos_sigma=max(self.cfg["reanchor_sigma_m"], 0.5 * T * T + 0.5 * v * T))
+
+    def _reanchor(self, why=None, pos_sigma=None):
         """The absolute positions have disagreed with the estimate for too long to be the receiver's fault alone:
-        the position is declared lost and anchored again on the next usable fix (a new local frame id)."""
+        the position is declared lost and anchored again on the next usable fix (a new local frame id). `why`
+        (L47): another reason given as a fact, not a detector's verdict (the heading was lost in a gap of all
+        motion input): it is acted on whatever the detector modes are."""
         self._lost = False
         self._pos_high_t = None
-        txt = "the absolute position disagreed with the estimate for %.0f s (which of the two was wrong is not known)" % self.cfg["reanchor_s"]
-        if not self.gates("position.lost"):
+        txt = why or "the absolute position disagreed with the estimate for %.0f s (which of the two was wrong is not known)" % self.cfg["reanchor_s"]
+        if why is None and not self.gates("position.lost"):
             self.fdi.event("position", "lost_reported", None, txt + ": reported only (detector position.lost in report mode)", quantity="position")
             return
-        self.reanchors = getattr(self, "reanchors", 0) + 1
-        if self.cfg["reanchor"] == "soft":
+        self.reanchors = getattr(self, "reanchors", 0) + (0 if pos_sigma == "keep" else 1)
+        if self.cfg["reanchor"] == "soft" or pos_sigma == "keep":
             # the dead-reckoned position stays published, with an uncertainty that says how little it is worth, until
             # the next usable fix; the position and the heading are then placed on that fix exactly as a first
             # anchoring does (`abs_position`). Nothing is invalid in between, and nothing is confident. (Letting
@@ -524,9 +667,15 @@ class Integrator:
             if l is not None:
                 t, x, P = l
                 P = P.copy()
-                P[E.PE, E.PE] += self.cfg["reanchor_sigma_m"] ** 2
-                P[E.PN, E.PN] += self.cfg["reanchor_sigma_m"] ** 2
-                P[E.PSI, E.PSI] += self.cfg["reanchor_heading_sigma"] ** 2
+                if pos_sigma is None:
+                    P[E.PE, E.PE] += self.cfg["reanchor_sigma_m"] ** 2
+                    P[E.PN, E.PN] += self.cfg["reanchor_sigma_m"] ** 2
+                    P[E.PSI, E.PSI] += self.cfg["reanchor_heading_sigma"] ** 2
+                elif pos_sigma != "keep":          # (after a gap: the stated uncertainty replaces the filter's own)
+                    for i, var in ((E.PE, pos_sigma ** 2), (E.PN, pos_sigma ** 2), (E.PSI, math.pi ** 2)):
+                        P[i, :] = 0.0
+                        P[:, i] = 0.0
+                        P[i, i] = var
                 self.ekf.rebase(t, x.copy(), P)
                 self._cache()
             self._reanchor_pending = True
@@ -547,7 +696,7 @@ class Integrator:
                 m.reset_data()
         self.ekf.set_quarantine(k for k, n in self.nis.items() if n.high and k[1] in self.cfg["quarantine"])
 
-    def _anchor(self, e, n, psi, sigma, tau, itau=None):
+    def _anchor(self, e, n, psi, sigma, tau, itau=None, bias=None, extra=0.0):
         """Place the local frame on a fix. The position is the fix carried forward by speed x delay along the
         heading, so it inherits the uncertainty of the delay (along the track) and of the heading (across it),
         correlated with those states: a delay and an along-track offset cannot be told apart at constant speed,
@@ -559,18 +708,37 @@ class Integrator:
         t, x, P = l
         x, P = x.copy(), P.copy()
         v = float(x[E.V]) / (1.0 + float(x[E.SV]))
+        var_psi = 0.35 ** 2
+        if psi is None:                            # a position without a heading (the car stands)
+            psi, var_psi, v = float(x[E.PSI]), math.pi ** 2, 0.0
         c, s = math.cos(psi), math.sin(psi)
         x[E.PE], x[E.PN], x[E.PSI] = e + v * tau * c, n + v * tau * s, psi
-        var_psi = 0.35 ** 2
+        self._psi_set = True
         var_tau = float(P[itau, itau]) if itau is not None else 0.0
         if itau is not None:                       # the delay keeps its variance, loses stale correlations
             P[itau, :] = 0.0
             P[:, itau] = 0.0
             P[itau, itau] = var_tau
-        for i, var in ((E.PE, (2.0 * sigma) ** 2 + 4.0), (E.PN, (2.0 * sigma) ** 2 + 4.0), (E.PSI, var_psi)):
+        for i, var in ((E.PE, (2.0 * sigma) ** 2 + 4.0 + extra * extra), (E.PN, (2.0 * sigma) ** 2 + 4.0 + extra * extra), (E.PSI, var_psi)):
             P[i, :] = 0.0
             P[:, i] = 0.0
             P[i, i] = var
+        if bias is not None:
+            # L47. The fix is the position plus the receiver's slowly varying error (state u, in units of `coef`
+            # metres): the position placed on it is `fix - coef u`, so it carries that error's uncertainty and
+            # is fully anti-correlated with it. Without this the next fixes, which carry the same error, were
+            # taken as independent confirmations of the anchor: the stated uncertainty shrank by 1 / sqrt(fixes)
+            # while the error stayed (two runs anchored on different fixes differed by more than 3 sigma).
+            ie, in_, coef = bias
+            for ip, ib in ((E.PE, ie), (E.PN, in_)):
+                vb = float(P[ib, ib])
+                ub = float(x[ib])
+                P[ib, :] = 0.0
+                P[:, ib] = 0.0
+                P[ib, ib] = vb
+                x[ip] -= coef * ub
+                P[ip, ip] += coef * coef * vb
+                P[ip, ib] = P[ib, ip] = -coef * vb
         d = v * tau
         u, nrm = (c, s), (-s, c)                   # along the track, across it
         for a_, ia in ((u[0], E.PE), (u[1], E.PN)):
@@ -584,9 +752,26 @@ class Integrator:
             for a_, ia in ((u[0], E.PE), (u[1], E.PN)):
                 P[ia, itau] = P[itau, ia] = v * var_tau * a_
         self.ekf.rebase(t, x, P)
+        self._gap = None
         self.anchored = True
         self.frame_id += 1
         self.anchor_t, self.anchor_fixes = t, 0
+        self._cache()
+
+    def widen_position(self, de, dn):
+        """The position may be wrong by this vector (L47: the receiver it followed has stepped by it, and whether
+        it stepped away from the truth or back to it is not known): its covariance takes that in, along that
+        direction."""
+        l = self.ekf.latest()
+        if l is None or not self.anchored:
+            return
+        t, x, P = l
+        P = P.copy()
+        P[E.PE, E.PE] += de * de
+        P[E.PN, E.PN] += dn * dn
+        P[E.PE, E.PN] += de * dn
+        P[E.PN, E.PE] += de * dn
+        self.ekf.rebase(t, x.copy(), P)
         self._cache()
 
     def position_settled(self, t):
@@ -893,6 +1078,7 @@ class Integrator:
             P[i, i] = P0[i, i]
         if l is not None:
             self.ekf.rebase(t, x, P)
+        self._psi_set = True
         self.origin = None
         self.anchored = False
         self._anchor_first = None

@@ -13,6 +13,10 @@ the legacy mapd engine (its own position filter), on the same inputs.
         2 s old at its stamp); map availability, confidence, ambiguity, distance to the matched road, agreement
         of the two on the road; cost.
 
+Lane L47 added: --tree (the same measurement on another checkout), --rx / --seeds (simulated receivers with few
+satellites, with truth: is the right road matched, is the stated uncertainty honest), the estimator's delay
+state over the drive, the held-out fixes against the estimator's own stated uncertainty.
+
 "legacy" = mapd/roadsense_mapd/engine.py (the engine of today's mapd daemon: GNSS + vehicle motion into its own
 filter, default configuration, vision odometry off as in the unit file). "box" = the default chris-integrator
 stack with the chris-mapper box in process; vehicle motion, fixes and (real drives) the road model go to the
@@ -26,6 +30,8 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if "--tree" in sys.argv:                   # the same tool on another checkout's packages (before / after)
+    HERE = os.path.abspath(os.path.expanduser(sys.argv[sys.argv.index("--tree") + 1]))
 for d in ("chris-integrator", "chris-mapper", "mapd"):
     sys.path.insert(0, os.path.join(HERE, d))
 
@@ -38,6 +44,15 @@ from chris_mapper import geo, sim                              # noqa: E402
 from chris_mapper.box import MapBox                            # noqa: E402
 from chris_mapper.rsmap import Pack                            # noqa: E402
 from roadsense_mapd.engine import Engine                       # noqa: E402
+
+if "--tree" in sys.argv:
+    # the simulator is this tool's own tree's on both sides (the same drives, receivers and truth for the
+    # packages of either checkout)
+    import importlib.util                                      # noqa: E402
+    _spec = importlib.util.spec_from_file_location(
+        "chris_mapper.sim_own", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chris-mapper", "chris_mapper", "sim.py"))
+    sim = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(sim)
 
 NS = 1e9
 DEMOS = {
@@ -105,7 +120,7 @@ class Box:
         self.box = MapBox(pack=pack)
         self.stack = build(mapper=Mapper(self.box), clock=MessageClock())
         self.feed = Feed()
-        self.track, self.maps = [], []
+        self.track, self.maps, self.aux = [], [], []
         self.cpu = 0.0
         self.es = None
         self.stack.mixer.add_output("eval", self._out, streams=("ego_state", "map"))
@@ -114,6 +129,17 @@ class Box:
         m = e.msg
         if e.stream == "map":
             self.maps.append((m["ts_mono_ns"] / NS, m, self.box.match.edge.ref if m["available"] else None))
+            es = self.es or {}
+            g = (es.get("sources") or {}).get("gnss") or {}
+            cal = (es.get("calibration") or {}).get("gnss") or {}
+            p = es.get("position") or {}
+            # per map step: delay state and its std, the receiver's stated error (slowly varying part: L47; hacc x
+            # scale before), the pose's covariance, re-anchorings so far
+            sig = g.get("bias_sigma_m")
+            if sig is None and g.get("hacc_m") is not None:
+                sig = max(float(g["hacc_m"]), 3.0) * (g.get("noise_scale") or 1.0)
+            self.aux.append((m["ts_mono_ns"] / NS, (cal.get("tau") or {}).get("value"), (cal.get("tau") or {}).get("std"),
+                             sig, p.get("cov_en") if p.get("valid") else None, es.get("reanchors", 0)))
         else:
             self.es = m
             p = m["position"]
@@ -151,57 +177,126 @@ def at(track, t, max_gap=1.0):
 
 
 # ---- simulated drives with truth ------------------------------------------------------------------------------
+# Receivers (lane L47). `feed`: sim.feed's noise parameters; `rx`: sim.PoorReceiver's effects; `blackouts`: every
+# `period` s nothing at all arrives for `length` s (the host stalls: 5-20 times per drive on the reference car).
+RX = {
+    "good": dict(feed={}),                              # 3 m over 20 s, claimed 5 m: the receiver the lanes before simulated
+    # the reference car's on a good day: 10 m slowly varying and smooth from fix to fix, claimed 5 m
+    "car": dict(feed=dict(gnss_sigma_m=10.0, gnss_tau_s=15.0, gnss_smooth_s=5.0, gnss_white_m=0.7, hacc_m=5.0, sats=7)),
+    "noisy": dict(feed=dict(gnss_sigma_m=20.0, gnss_tau_s=15.0, gnss_smooth_s=5.0, gnss_white_m=2.0), rx=dict(hacc_m=8.0, sats=4)),
+    "gaps": dict(feed=dict(gnss_sigma_m=10.0, gnss_tau_s=15.0, gnss_smooth_s=5.0), rx=dict(gap_p=0.04, hacc_m=7.0, sats=4)),
+    "jumps": dict(feed=dict(gnss_sigma_m=10.0, gnss_tau_s=15.0, gnss_smooth_s=5.0), rx=dict(jump_p=0.02, hacc_m=7.0, sats=4)),
+    "repeats": dict(feed=dict(gnss_sigma_m=10.0, gnss_tau_s=15.0, gnss_smooth_s=5.0), rx=dict(repeat_p=0.06, hacc_m=7.0, sats=4)),
+    "smooth": dict(feed=dict(gnss_sigma_m=10.0, gnss_tau_s=15.0, gnss_smooth_s=5.0), rx=dict(smooth_s=6.0, hacc_m=7.0, sats=4)),
+    "poor": dict(feed=dict(gnss_sigma_m=15.0, gnss_tau_s=15.0, gnss_smooth_s=5.0, gnss_white_m=1.0),
+                 rx=dict(gap_p=0.03, jump_p=0.01, repeat_p=0.03, smooth_s=6.0, hacc_m=7.0, sats=4)),
+    "blackouts": dict(feed=dict(gnss_sigma_m=10.0, gnss_tau_s=15.0, gnss_smooth_s=5.0), blackouts=(45.0, 6.5)),
+    "poor+blackouts": dict(feed=dict(gnss_sigma_m=15.0, gnss_tau_s=15.0, gnss_smooth_s=5.0, gnss_white_m=1.0),
+                           rx=dict(gap_p=0.03, jump_p=0.01, repeat_p=0.03, smooth_s=6.0, hacc_m=7.0, sats=4), blackouts=(45.0, 6.5)),
+}
+
+
+def synth_run(cls, pack, path, seed, lag, rx):
+    """One simulated drive through one system. Returns the per-step rows: (truth sample, map message, matched edge,
+    pose covariance or None) and the system."""
+    spec = RX[rx]
+    kw = dict(spec.get("feed") or {})
+    if spec.get("rx") and hasattr(sim, "PoorReceiver"):
+        kw["rx"] = sim.PoorReceiver(seed=1000 + seed, **spec["rx"])
+    if spec.get("blackouts"):
+        per, ln = spec["blackouts"]
+        kw["blackouts"] = [(per * k + 30.0, per * k + 30.0 + ln) for k in range(1, 400)]
+    s = cls(pack)
+    truth, late = [], []
+    for ts, m, o in sim.feed(sim.Drive(pack, path), t0_ns=10 ** 12, seed=seed, source="receiver" if lag > 0 else "synthetic", **kw):
+        if m is None:
+            continue
+        if m["type"] == "gnss" and lag > 0:
+            late.append(dict(m, ts_mono_ns=ts + int(lag * NS)))
+            continue
+        while late and late[0]["ts_mono_ns"] <= ts:
+            g = late.pop(0)
+            s.feeder(g, g["ts_mono_ns"])
+        s.feeder(m, ts)
+        if m["type"] == "motion":
+            truth.append((ts / NS, o.lat, o.lon, o.tunnel, o.heading))
+    return s, truth
+
+
 def cmd_synth(a):
     pack = Pack(os.path.expanduser(a.pack), cache_tiles=600)
+    for rx in a.rx:
+        if rx not in RX:
+            sys.exit("unknown receiver %r (known: %s)" % (rx, ", ".join(RX)))
     for demo in a.demo or sorted(DEMOS):
         path = sim.route(pack, *DEMOS[demo])
         on_path = {e.ref for e, _, _, _ in path}
         km = sum(abs(s1 - s0) for _, _, s0, s1 in path) / 1000.0
-        print("== %s: %d edges, %.1f km; receiver lag %.1f s" % (demo, len(path), km, a.lag))
-        for cls in (Legacy, Box):
-            s = cls(pack)
-            truth = []
-            late = []
-            for ts, m, o in sim.feed(sim.Drive(pack, path), t0_ns=10 ** 12, seed=a.seed, source="receiver" if a.lag > 0 else "synthetic"):
-                if m is None:
-                    continue
-                if m["type"] == "gnss" and a.lag > 0:
-                    late.append(dict(m, ts_mono_ns=ts + int(a.lag * NS)))
-                    continue
-                while late and late[0]["ts_mono_ns"] <= ts:
-                    g = late.pop(0)
-                    s.feeder(g, g["ts_mono_ns"])
-                s.feeder(m, ts)
-                if m["type"] == "motion":
-                    truth.append((ts / NS, o.lat, o.lon, o.tunnel))
-            tt = [x[0] for x in truth]
-            errs, dr = [], []
-            n = ok = avail = tun = tun_ok = 0
-            states = {}
-            for t, out, ref in s.maps:
-                k = min(len(truth) - 1, bisect.bisect_left(tt, t))
-                if t - truth[0][0] < 20.0:
-                    continue
-                n += 1
-                states[out["state"]] = states.get(out["state"], 0) + 1
-                pos = out["position"]
-                if pos:
-                    (dr if out["state"] == "dead_reckoning" else errs).append(geo.dist_m(pos["lat"], pos["lon"], truth[k][1], truth[k][2]))
-                if truth[k][3]:
-                    tun += 1
-                    tun_ok += bool(out["available"] and ref in on_path)
-                if out["available"]:
-                    avail += 1
-                    ok += ref in on_path
-            dur = truth[-1][0] - truth[0][0]
-            print("  %-28s map available %5.1f %%  on route %5.1f %% of available (%5.1f %% of all steps)  in tunnels on route %s" % (
-                s.name, 100.0 * avail / max(n, 1), 100.0 * ok / max(avail, 1), 100.0 * ok / max(n, 1),
-                "-" if not tun else "%.1f %% (n %d)" % (100.0 * tun_ok / tun, tun)))
-            print("  %-28s position error with a fix: %s" % ("", stat(errs)))
-            print("  %-28s position error dead reckoning: %s   states %s" % ("", stat(dr), states))
-            print("  %-28s cpu %.2f %% of one core%s" % ("", 100.0 * s.cpu / dur, "" if cls is Legacy else
-                                                       " (the box alone: %.3f ms per pose, %.2f %%)" % (
-                                                           1e3 * s.mapper_cost()[0] / max(1, s.mapper_cost()[1]), 100.0 * s.mapper_cost()[0] / dur)))
+        for rx in a.rx:
+            print("== %s: %d edges, %.1f km; receiver %s, lag %.1f s; seeds %s" % (demo, len(path), km, rx, a.lag, a.seeds))
+            for cls in ((Box,) if a.box_only else (Legacy, Box)):
+                agg = dict(n=0, avail=0, ok=0, wrong=0, amb=0, errs=[], dr=[], nees=[], along=[], cross=[], hacc=[], tun=0, tun_ok=0, tau=[],
+                           cpu=0.0, dur=0.0, states={}, re=0)
+                for seed in a.seeds:
+                    s, truth = synth_run(cls, pack, path, seed, a.lag, rx)
+                    tt = [x[0] for x in truth]
+                    aux = {x[0]: x for x in getattr(s, "aux", ())}
+                    for t, out, ref in s.maps:
+                        k = min(len(truth) - 1, bisect.bisect_left(tt, t))
+                        if t - truth[0][0] < 20.0 or abs(tt[k] - t) > 0.5:
+                            continue
+                        agg["n"] += 1
+                        agg["states"][out["state"]] = agg["states"].get(out["state"], 0) + 1
+                        pos = out["position"]
+                        if pos:
+                            d = geo.dist_m(pos["lat"], pos["lon"], truth[k][1], truth[k][2])
+                            (agg["dr"] if out["state"] == "dead_reckoning" else agg["errs"]).append(d)
+                            ax = aux.get(t)
+                            if ax is not None and ax[4]:
+                                # the error in east / north against the pose's own covariance (2 dof: expect 2), and
+                                # along / across the true heading
+                                de = (pos["lon"] - truth[k][2]) * geo.m_per_deg(truth[k][1])[1]
+                                dn = (pos["lat"] - truth[k][1]) * geo.m_per_deg(truth[k][1])[0]
+                                cee, cen, cnn = ax[4]
+                                det = cee * cnn - cen * cen
+                                if det > 1e-9:
+                                    agg["nees"].append((cnn * de * de - 2.0 * cen * de * dn + cee * dn * dn) / det)
+                                h = math.radians(truth[k][4])
+                                agg["along"].append(de * math.sin(h) + dn * math.cos(h))
+                                agg["cross"].append(de * math.cos(h) - dn * math.sin(h))
+                                agg["hacc"].append(pos["hacc_m"])
+                        if truth[k][3]:
+                            agg["tun"] += 1
+                            agg["tun_ok"] += bool(out["available"] and ref in on_path)
+                        if out["available"]:
+                            agg["avail"] += 1
+                            agg["ok"] += ref in on_path
+                            mt = out["match"]
+                            agg["amb"] += bool(mt["ambiguous"])
+                            # confidently wrong: a road beside the route offered as a sure match (what `fused` would use)
+                            agg["wrong"] += bool(ref not in on_path and not mt["ambiguous"] and mt["confidence"] >= 0.5)
+                    agg["dur"] += truth[-1][0] - truth[0][0]
+                    agg["cpu"] += s.cpu
+                    agg["tau"] += [x[1] for x in getattr(s, "aux", ()) if x[1] is not None]
+                    agg["re"] += (s.aux[-1][5] if getattr(s, "aux", None) else 0)
+                n = max(agg["n"], 1)
+                print("  %-28s map available %5.1f %%  on route %5.1f %% of available (%5.1f %% of all steps)  wrong road and sure of it %4.2f %% of all steps  "
+                      "ambiguous %4.1f %%  in tunnels on route %s" % (
+                          cls.name, 100.0 * agg["avail"] / n, 100.0 * agg["ok"] / max(agg["avail"], 1), 100.0 * agg["ok"] / n,
+                          100.0 * agg["wrong"] / n, 100.0 * agg["amb"] / max(agg["avail"], 1),
+                          "-" if not agg["tun"] else "%.1f %% (n %d)" % (100.0 * agg["tun_ok"] / agg["tun"], agg["tun"])))
+                print("  %-28s position error with a fix: %s" % ("", stat(agg["errs"])))
+                print("  %-28s position error dead reckoning: %s   states %s" % ("", stat(agg["dr"]), agg["states"]))
+                if agg["nees"]:
+                    ne = sorted(agg["nees"])
+                    print("  %-28s honesty: error^2 / stated covariance (2 dof: mean 2, median 1.39): mean %.2f median %.2f, inside the 95 %% ellipse %.3f; "
+                          "stated 1-sigma (major axis) p50 %.1f m; along-track p50 |.| %.1f m bias %+.1f m, cross-track p50 |.| %.1f m" % (
+                              "", sum(ne) / len(ne), ne[len(ne) // 2], sum(1 for v in ne if v <= 5.99) / len(ne), pct(agg["hacc"], 50),
+                              pct([abs(v) for v in agg["along"]], 50), sum(agg["along"]) / len(agg["along"]), pct([abs(v) for v in agg["cross"]], 50)))
+                if agg["tau"]:
+                    print("  %-28s receiver delay state: min %.2f p50 %.2f max %.2f s (true %.1f); re-anchorings %d" % (
+                        "", min(agg["tau"]), pct(agg["tau"], 50), max(agg["tau"]), a.lag, agg["re"]))
+                print("  %-28s cpu %.2f %% of one core" % ("", 100.0 * agg["cpu"] / max(agg["dur"], 1e-9)))
 
 
 # ---- recorded drives ---------------------------------------------------------------------------------------------
@@ -212,6 +307,7 @@ def cmd_real(a):
         systems = [Legacy(pack), Box(pack)]
         held, k_g = [], 0
         veh = []                               # (t, speed)
+        fixes = []                             # every fix: (t, lat, lon)
         t0 = t1 = None
         for m in read_session(sess, road_model="vision", pos=pos):
             ts = m.get("ts_mono_ns")
@@ -222,6 +318,7 @@ def cmd_real(a):
             if m.get("type") == "ego":
                 veh.append((ts / NS, abs(m.get("speed_mps") or 0.0)))
             if m.get("type") == "gnss" and m.get("fix") in ("2d", "3d"):
+                fixes.append((ts / NS, m["lat"], m["lon"]))
                 k_g += 1
                 if k_g % 2 == 0:               # held out of both systems
                     held.append((ts / NS, m["lat"], m["lon"], m.get("hacc_m")))
@@ -235,6 +332,31 @@ def cmd_real(a):
             return veh[min(k, len(veh) - 1)][1] if veh else 0.0
         dur = (t1 - t0) / NS
         print("== %s: %.0f s, %d fixes (%d held out), vehicle samples %d" % (os.path.basename(sess.rstrip("/")), dur, k_g, len(held), len(veh)))
+        # Stops (L47): the nearest thing to truth a recording has. While the wheels stand the car is in one place,
+        # so no assumption about the receiver's delay enters; a receiver that has come to rest by the end of the
+        # stop (its last fixes within 3 m of each other) says where that place is, to its own slowly varying
+        # error. Each system is asked where the car was 1 s after the wheels stopped: before the receiver could
+        # tell it. Only stops after at least 60 m of driving count.
+        stops, s0, moved = [], None, 0.0
+        for (ta, va), (tb, vb) in zip(veh, veh[1:]):
+            if tb - ta > 1.0:                  # a gap of the feed: not a stop one can trust
+                s0 = None
+                continue
+            if va < 0.02 and vb < 0.02:
+                s0 = ta if s0 is None else s0
+            else:
+                if s0 is not None and ta - s0 >= 6.0 and moved >= 60.0:
+                    stops.append((s0, ta))
+                    moved = 0.0
+                s0 = None
+                moved += 0.5 * (va + vb) * (tb - ta)
+        ft = [f[0] for f in fixes]
+        stop_ref = []
+        for a_, b_ in stops:
+            last = fixes[bisect.bisect_left(ft, b_ - 4.0):bisect.bisect_right(ft, b_)]
+            if len(last) >= 3 and max(geo.dist_m(last[0][1], last[0][2], f[1], f[2]) for f in last) <= 3.0:
+                stop_ref.append((a_ + 1.0, sum(f[1] for f in last) / len(last), sum(f[2] for f in last) / len(last), b_ - a_))
+        print("  stops of at least 6 s after at least 60 m: %d, the receiver at rest by the end of %d of them" % (len(stops), len(stop_ref)))
         for s in systems:
             mv = [(t, out, ref) for t, out, ref in s.maps if speed(t) >= 3.0]
             av = [x for x in mv if x[1]["available"]]
@@ -259,12 +381,46 @@ def cmd_real(a):
                     if p is not None:
                         d.append(geo.dist_m(lat, lon, p[0], p[1]))
                 print("  %-28s held-out fixes against the position %.0f s before their stamp: %s" % ("", lag, stat(d)))
+            sd = [geo.dist_m(la, lo, p[0], p[1]) for t, la, lo, _ in stop_ref for p in [at(s.track, t, 2.5)] if p is not None]
+            print("  %-28s position 1 s into a stop against where the receiver came to rest: %s%s" % (
+                "", stat(sd), "" if len(sd) > 8 or not sd else "  each: " + " ".join("%.0f" % v for v in sd)))
             extra = ""
             if isinstance(s, Box):
                 c, n = s.mapper_cost()
                 tau = (s.es or {}).get("calibration", {}).get("gnss", {}).get("tau", {})
                 extra = "; the box alone %.3f ms per pose = %.2f %% of one core; receiver delay state %.2f +- %.2f s" % (
                     1e3 * c / max(n, 1), 100.0 * c / dur, tau.get("value", float("nan")), tau.get("std", float("nan")))
+                # the delay state over the drive, and the held-out fixes against the estimator's own statement: the
+                # position at the fix's stamp minus the delay as estimated then, against the pose's covariance plus
+                # the receiver's stated error (L47: its slowly varying part and 1.5 m; before: hacc x scale) plus
+                # speed x the delay's stated std
+                at_ = [x[0] for x in s.aux]
+                mvx = [x for x in s.aux if speed(x[0]) >= 3.0 and x[1] is not None]
+                own, nrm = [], []
+                for t, lat, lon, _ in held:
+                    k = bisect.bisect_right(at_, t) - 1
+                    if speed(t) < 3.0 or k < 0 or s.aux[k][1] is None or s.aux[k][4] is None or t - at_[k] > 1.5:
+                        continue
+                    p = at(s.track, t - s.aux[k][1])
+                    if p is None:
+                        continue
+                    own.append(geo.dist_m(lat, lon, p[0], p[1]))
+                    cee, cen, cnn = s.aux[k][4]
+                    # ... and what the delay's own uncertainty means in metres at this speed
+                    v = (s.aux[k][3] or 10.0) ** 2 + 1.5 ** 2 + (speed(t) * (s.aux[k][2] or 0.0)) ** 2
+                    cee, cnn = cee + v, cnn + v
+                    de = (lon - p[1]) * geo.m_per_deg(lat)[1]
+                    dn = (lat - p[0]) * geo.m_per_deg(lat)[0]
+                    nrm.append((cnn * de * de - 2.0 * cen * de * dn + cee * dn * dn) / (cee * cnn - cen * cen))
+                if mvx:
+                    taus = [x[1] for x in mvx]
+                    print("  %-28s receiver delay state while moving: min %.2f p10 %.2f p50 %.2f p90 %.2f max %.2f s; re-anchorings %d" % (
+                        "", min(taus), pct(taus, 10), pct(taus, 50), pct(taus, 90), max(taus), s.aux[-1][5]))
+                if nrm:
+                    nrm.sort()
+                    print("  %-28s held-out fixes against the position at stamp - delay state: %s; normalised by the stated uncertainty "
+                          "(2 dof: mean 2, median 1.39): mean %.2f median %.2f, inside the 95 %% ellipse %.3f" % (
+                              "", stat(own), sum(nrm) / len(nrm), nrm[len(nrm) // 2], sum(1 for v in nrm if v <= 5.99) / len(nrm)))
             print("  %-28s cpu %.2f %% of one core%s" % ("", 100.0 * s.cpu / dur, extra))
         # agreement of the two on the road, at the legacy system's steps
         L, B = systems
@@ -295,9 +451,13 @@ def main():
     p = sub.add_parser("synth")
     p.add_argument("--demo", action="append")
     p.add_argument("--lag", type=float, default=2.0)
-    p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--seeds", type=int, nargs="+", default=[1])
+    p.add_argument("--rx", nargs="+", default=["good"], help="simulated receivers: %s" % ", ".join(RX))
+    p.add_argument("--box-only", action="store_true")
+    p.add_argument("--tree", help="run on another checkout's chris-integrator / chris-mapper / mapd")
     p.add_argument("--pack", default="~/roadsense-maps/packs/poland-20261114.rsmap")
     p = sub.add_parser("real")
+    p.add_argument("--tree", help="run on another checkout's chris-integrator / chris-mapper / mapd")
     p.add_argument("sessions", nargs="+")
     p.add_argument("--pos", required=True)
     p.add_argument("--pack", default="~/roadsense-maps/packs/poland-20261114.rsmap")

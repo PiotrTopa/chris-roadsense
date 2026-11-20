@@ -226,10 +226,73 @@ class Drive:
             yield o
 
 
+class PoorReceiver:
+    """What a receiver with few satellites does to its fixes (lane L47; each effect is off at its default).
+
+    gap_p, gap_s      per fix, the chance that a gap of gap_s (min, max) seconds without fixes starts
+    jump_p, jump_m,   per fix, the chance that a multipath excursion starts: every fix is displaced by jump_m
+    jump_s            (min, max) metres in one direction for jump_s (min, max) seconds
+    repeat_p,         per fix, the chance that the receiver starts repeating its last position for repeat_n
+    repeat_n          (min, max) fixes (stamps go on, the content stands)
+    smooth_s          the receiver reports a smoothed track: its position follows the true one with this time
+                      constant (a first-order lag). It trails the car by speed x smooth_s, crawls while the car
+                      accelerates and keeps moving for seconds after the car has stopped, as the reference car's
+                      head unit does on 3-4 satellites (there: 4-7 m/s for 13 s after the wheels stood still)
+    hacc_m, sats      what it claims meanwhile
+    """
+
+    def __init__(self, seed=1, gap_p=0.0, gap_s=(4.0, 8.0), jump_p=0.0, jump_m=(20.0, 40.0), jump_s=(5.0, 20.0),
+                 repeat_p=0.0, repeat_n=(2, 5), smooth_s=0.0, hacc_m=7.0, sats=4):
+        self.rnd = random.Random(seed)
+        self.gap_p, self.gap_s, self.jump_p, self.jump_m, self.jump_s = gap_p, gap_s, jump_p, jump_m, jump_s
+        self.repeat_p, self.repeat_n, self.smooth_s, self.hacc_m, self.sats = repeat_p, repeat_n, smooth_s, hacc_m, sats
+        self.gap_until = self.jump_until = -1.0
+        self.jump = (0.0, 0.0)
+        self.repeat_left = 0
+        self.last = None
+        self.local = None
+        self.trk = None                  # [t, e, n] of the smoothed track
+        self.events = {"gaps": 0, "jumps": 0, "repeats": 0}
+
+    def fix(self, t, lat, lon):
+        """The fix the receiver reports for the (already noisy) position, or None (no fix)."""
+        r = self.rnd
+        if t < self.gap_until:
+            return None
+        if self.gap_p and r.random() < self.gap_p:
+            self.gap_until = t + r.uniform(*self.gap_s)
+            self.events["gaps"] += 1
+            return None
+        if self.local is None:
+            self.local = geo.Local(lat, lon)
+        e, n = self.local.to_xy(lat, lon)
+        if self.smooth_s:
+            if self.trk is None or t - self.trk[0] > 30.0:
+                self.trk = [t, e, n]
+            else:
+                k = 1.0 - math.exp(-max(t - self.trk[0], 0.0) / self.smooth_s)
+                self.trk = [t, self.trk[1] + k * (e - self.trk[1]), self.trk[2] + k * (n - self.trk[2])]
+            e, n = self.trk[1], self.trk[2]
+        if t >= self.jump_until and self.jump_p and r.random() < self.jump_p:
+            ang, mag = r.uniform(0.0, 2.0 * math.pi), r.uniform(*self.jump_m)
+            self.jump, self.jump_until = (mag * math.cos(ang), mag * math.sin(ang)), t + r.uniform(*self.jump_s)
+            self.events["jumps"] += 1
+        if t < self.jump_until:
+            e, n = e + self.jump[0], n + self.jump[1]
+        if self.repeat_left > 0 and self.last is not None:
+            self.repeat_left -= 1
+            return self.last
+        if self.repeat_p and r.random() < self.repeat_p:
+            self.repeat_left = r.randint(*self.repeat_n)
+            self.events["repeats"] += 1
+        self.last = self.local.to_ll(e, n)
+        return self.last
+
+
 def feed(truth, t0_ns=0, seed=1, gnss_hz=1.0, motion_hz=20.0, motion="yaw", gnss_sigma_m=3.0, gnss_tau_s=20.0,
          gnss_white_m=0.5, hacc_m=5.0, tunnel_blocks_gnss=True, dropouts=(), explicit_none=False,
          bias_m=None, yaw_bias_dps=0.15, yaw_noise_dps=0.2, speed_scale=1.01, speed_noise=0.05,
-         gnss_course=True, source="synthetic", tick_hz=0.0):
+         gnss_course=True, source="synthetic", tick_hz=0.0, rx=None, sats=14, blackouts=(), gnss_smooth_s=0.0):
     """Turn Truth samples into (t_ns, message, truth) tuples of the position input API.
 
     tick_hz > 0 also yields (t_ns, None, truth) at that rate, so that a consumer can step its engine while no
@@ -237,9 +300,15 @@ def feed(truth, t0_ns=0, seed=1, gnss_hz=1.0, motion_hz=20.0, motion="yaw", gnss
 
     motion: "yaw" (speed + yaw_rate_rps), "steer" (speed + steering_wheel_deg), "wheels" (speed + four wheel
     speeds) or "none". dropouts: [(t_from, t_to)] seconds without a fix (also inside tunnels when
-    tunnel_blocks_gnss). bias_m: f(t) -> (east, north) metres added to the GNSS position."""
+    tunnel_blocks_gnss). bias_m: f(t) -> (east, north) metres added to the GNSS position. rx: a
+    `PoorReceiver` between the noisy position and the fix. blackouts: [(t_from, t_to)] seconds in which nothing
+    at all arrives (no motion, no fix: the host stalled), as on the reference car's recordings. gnss_smooth_s:
+    the slowly varying GNSS error is low-passed over this long and rescaled (smooth from fix to fix, as a real
+    receiver's is: a plain Gauss-Markov error of 10 m over 15 s steps by 3.6 m a second)."""
     rnd = random.Random(seed)
     ge = gn = 0.0
+    se = sn = 0.0
+    k_s = math.sqrt((gnss_tau_s + gnss_smooth_s) / gnss_tau_s) if gnss_smooth_s > 0 and gnss_tau_s > 0 else 1.0
     next_g = next_m = next_tick = 0.0
     last_t = None
     for o in truth:
@@ -249,7 +318,12 @@ def feed(truth, t0_ns=0, seed=1, gnss_hz=1.0, motion_hz=20.0, motion="yaw", gnss
             k = math.exp(-dt / gnss_tau_s)
             q = gnss_sigma_m * math.sqrt(1 - k * k)
             ge, gn = ge * k + rnd.gauss(0, q), gn * k + rnd.gauss(0, q)
+            if gnss_smooth_s > 0:
+                a_ = 1.0 - math.exp(-dt / gnss_smooth_s)
+                se, sn = se + a_ * (ge - se), sn + a_ * (gn - sn)
         ts = t0_ns + int(o.t * 1e9)
+        if any(a <= o.t < b for a, b in blackouts):
+            continue
         if tick_hz > 0 and o.t >= next_tick:
             next_tick = o.t + 1.0 / tick_hz
             yield ts, None, o
@@ -273,9 +347,16 @@ def feed(truth, t0_ns=0, seed=1, gnss_hz=1.0, motion_hz=20.0, motion="yaw", gnss
                     yield ts, {"type": "gnss", "ts_mono_ns": ts, "fix": "none", "source": source}, o
                 continue
             be, bn = bias_m(o.t) if bias_m else (0.0, 0.0)
-            lat, lon = geo.offset(o.lat, o.lon, gn + bn + rnd.gauss(0, gnss_white_m), ge + be + rnd.gauss(0, gnss_white_m))
+            xe, xn = (k_s * se, k_s * sn) if gnss_smooth_s > 0 else (ge, gn)
+            lat, lon = geo.offset(o.lat, o.lon, xn + bn + rnd.gauss(0, gnss_white_m), xe + be + rnd.gauss(0, gnss_white_m))
+            if rx is not None:
+                got = rx.fix(o.t, lat, lon)
+                if got is None:
+                    continue
+                lat, lon = got
             g = {"type": "gnss", "ts_mono_ns": ts, "fix": "3d", "lat": round(lat, 7), "lon": round(lon, 7),
-                 "hacc_m": hacc_m, "speed_mps": round(max(0.0, o.v + rnd.gauss(0, 0.15)), 2), "sats": 14, "source": source}
+                 "hacc_m": hacc_m if rx is None else rx.hacc_m, "speed_mps": round(max(0.0, o.v + rnd.gauss(0, 0.15)), 2),
+                 "sats": sats if rx is None else rx.sats, "source": source}
             if gnss_course:
                 g["course_deg"] = round((o.heading + rnd.gauss(0, 1.0 + 3.0 / max(1.0, o.v))) % 360.0, 1)
                 g["course_acc_deg"] = round(1.5 + 4.0 / max(1.0, o.v), 1)

@@ -30,6 +30,25 @@ class _GM:
         return self.x
 
 
+class _GM2:
+    """A slowly varying error that is also smooth from one sample to the next: a first-order Gauss-Markov process
+    (sigma, tau) seen through a low-pass of `smooth` s, rescaled to sigma. (The reference car's receiver: 7-10 m
+    beside the road for 5-20 s at a time, while its steps differ from the odometer's by about 1 m; a plain
+    Gauss-Markov process of 10 m over 15 s steps by 3.6 m a second.)"""
+
+    def __init__(self, rng, sigma, tau, smooth):
+        self.gm = _GM(rng, sigma, tau)
+        self.smooth, self.k = smooth, math.sqrt((tau + smooth) / tau)
+        self.y, self.t = self.gm.x, None
+
+    def at(self, t):
+        x = self.gm.at(t)
+        if self.t is not None:
+            self.y += (1.0 - math.exp(-abs(t - self.t) / self.smooth)) * (x - self.y)
+        self.t = t
+        return self.k * self.y
+
+
 class VehicleSim:
     """The feeder's motion as mapd relays it (`ego`), 10 Hz. Faults: `silences` [(t0, t1)] with stale first
     samples on resume; `speed_fault` (t0, t1, factor): the speed signal and the wheels read factor x true."""
@@ -153,24 +172,59 @@ class VisionSim:
 class GnssSim:
     """A receiver like the reference car's head unit: one fix a second, stamped when it arrives, describing
     where the car was `lag` s earlier; correlated position noise; a claimed hacc that is too small; a speed
-    field that is slower still. `outage` [(t0, t1)]; `jump` (t0, t1, east m, north m): a multipath excursion."""
+    field that is slower still. `outage` [(t0, t1)]; `jump` (t0, t1, east m, north m): a multipath excursion.
+
+    Few satellites (lane L47; each effect off at its default, all seeded): `gap_p` per fix the chance that
+    `gap_s` (min, max) seconds without fixes begin; `jump_p` per fix the chance of a multipath excursion of
+    `jump_m` (min, max) metres for `jump_s` (min, max) seconds; `repeat_p` per fix the chance that the next
+    `repeat_n` (min, max) fixes repeat the position; `smooth_s`: the receiver reports a smoothed track (its
+    position follows the true one with this time constant: it trails the car by speed x smooth_s, crawls
+    while the car accelerates and keeps moving after the car has stopped); `sats` is what it reports;
+    `noise_smooth_s`: the slowly varying error is smooth from fix to fix (low-passed over this long)."""
 
     def __init__(self, seed=31, hz=1.0, lag=2.0, sigma_gm=2.0, tau_gm=20.0, sigma_white=1.0, hacc=3.0, speed_lag=5.0,
-                 speed_gain=0.9, outage=(), jump=None, alt_sigma=4.0):
+                 speed_gain=0.9, outage=(), jump=None, alt_sigma=4.0, gap_p=0.0, gap_s=(4.0, 8.0), jump_p=0.0,
+                 jump_m=(20.0, 40.0), jump_s=(5.0, 20.0), repeat_p=0.0, repeat_n=(2, 5), smooth_s=0.0, sats=7, noise_smooth_s=0.0):
         self.__dict__.update(locals())
 
     def generate(self, w):
         rng = random.Random(self.seed)
-        ge, gn = _GM(rng, self.sigma_gm, self.tau_gm), _GM(rng, self.sigma_gm, self.tau_gm)
+        if self.noise_smooth_s:                            # (the slowly varying error without the jitter of a plain GM)
+            ge, gn = (_GM2(rng, self.sigma_gm, self.tau_gm, self.noise_smooth_s) for _ in range(2))
+        else:
+            ge, gn = _GM(rng, self.sigma_gm, self.tau_gm), _GM(rng, self.sigma_gm, self.tau_gm)
         # the world has no past before its start: the first fix is the first one that describes a time inside it
         t = w.t0 + 0.4 + math.ceil(max(self.lag, self.speed_lag))
+        poor = random.Random(self.seed + 7)                # (its own stream: the effects do not move the noise)
+        gap_until = jump_until = -1.0
+        jmp, trk, held, rep_left = (0.0, 0.0), None, None, 0
         while t < w.t0 + w.T:
             rel = t - w.t0
-            if not any(a <= rel < b for a, b in self.outage):
+            if self.gap_p and rel >= gap_until and poor.random() < self.gap_p:
+                gap_until = rel + poor.uniform(*self.gap_s)
+            if not any(a <= rel < b for a, b in self.outage) and rel >= gap_until:
                 tr = w.truth_at(t - self.lag)
                 # the antenna sits about over the rear axle: the estimator's position reference
                 e = tr["pe"] + ge.at(t) + rng.gauss(0, self.sigma_white)
                 n = tr["pn"] + gn.at(t) + rng.gauss(0, self.sigma_white)
+                if self.smooth_s:
+                    if trk is None or t - trk[0] > 30.0:
+                        trk = [t, e, n]
+                    else:
+                        k_ = 1.0 - math.exp(-max(t - trk[0], 0.0) / self.smooth_s)
+                        trk = [t, trk[1] + k_ * (e - trk[1]), trk[2] + k_ * (n - trk[2])]
+                    e, n = trk[1], trk[2]
+                if self.jump_p and rel >= jump_until and poor.random() < self.jump_p:
+                    ang, mag = poor.uniform(0.0, 2.0 * math.pi), poor.uniform(*self.jump_m)
+                    jmp, jump_until = (mag * math.cos(ang), mag * math.sin(ang)), rel + poor.uniform(*self.jump_s)
+                if rel < jump_until:
+                    e, n = e + jmp[0], n + jmp[1]
+                if rep_left > 0 and held is not None:
+                    rep_left -= 1
+                    e, n = held
+                elif self.repeat_p and poor.random() < self.repeat_p:
+                    rep_left = poor.randint(*self.repeat_n)
+                held = (e, n)
                 if self.jump and self.jump[0] <= rel < self.jump[1]:
                     e, n = e + self.jump[2], n + self.jump[3]
                 if tr["v"] == 0.0:                         # a standing receiver repeats itself
@@ -180,7 +234,7 @@ class GnssSim:
                 yield t + 0.02, {"type": "gnss", "fix": "3d", "lat": round(lat, 7), "lon": round(lon, 7), "hacc_m": self.hacc,
                                  "speed_mps": round(self.speed_gain * ts_["v"] + abs(rng.gauss(0, 0.3)), 3),
                                  "course_deg": round((90.0 - math.degrees(ts_["psi"]) + rng.gauss(0, 3.0)) % 360.0, 2),
-                                 "alt_m": round(tr["z"] + rng.gauss(0, self.alt_sigma), 1), "sats": 7,
+                                 "alt_m": round(tr["z"] + rng.gauss(0, self.alt_sigma), 1), "sats": self.sats,
                                  "ts_mono_ns": ns(t), "source": "sim"}
             t += 1.0 / self.hz + rng.uniform(-0.01, 0.01)
 

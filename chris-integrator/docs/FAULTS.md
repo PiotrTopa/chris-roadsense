@@ -39,7 +39,7 @@ chris-roadsense repository.
 | `speed.track` | report | 4.4: 15 spells, held 68 % of the driving on one drive | this receiver's track is not a speed at this level: against the odometer over 3-10 fixes its error is 1-1.6 m/s (robust), 2.5-3.2 m/s rms, beyond 10 % in half of the chords, correlated over tens of seconds; with 3-5 satellites the track is 20-25 % short; 46 % of the fixes repeat the position |
 | `innovation` | gate | fires: position rows 14 % / 11 % of the driving, map cross-track 9 % / 28 % | sets a row class aside while it lasts, never a source; no output becomes invalid by it (the position coasts and says so) |
 | `position.lost` | gate | 9 and 3 times | does not invalidate: the position stays published with its uncertainty opened by 40 m until the next usable fix places it (`reanchor: soft`) |
-| `map.conflict` | gate | fires: 21 % / 16 % of the driving (the receiver's median of 8 fixes lies 12-27 m beside the matched road) | holds only the map's rows back; the position then rests on the receiver alone. It is what bounds a matcher on a parallel road (below) |
+| `map.conflict` | gate | (before L47, fixed limit of 12 m) fired: 21 % / 16 % of the driving (the receiver's median of 8 fixes lies 12-27 m beside the matched road); since L47 the limit follows the receiver's own error, see "The receiver distrusted" | holds only the map's rows back; the position then rests on the receiver alone. It is what bounds a matcher on a parallel road (below) |
 
 What was found behind the alarms on healthy data, and fixed at the cause instead of by a wider limit:
 
@@ -67,7 +67,71 @@ What was found behind the alarms on healthy data, and fixed at the cause instead
 What `report` costs is in the summary lines under the tables: with the default modes, a fault that only a
 reporting detector sees is found and named, and its source stays in the estimate.
 
+## The receiver distrusted (L47)
+
+One absolute source. What can be known about the position without it, and what the estimator does once the
+receiver's own motion says it is not to be believed:
+
+* **What is left.** Across the road: the matched road's line (the lane offset, 2.5 m, and the spread of the
+  candidate roads). Along the road: the odometer, whose error grows with the distance driven (the speed scale
+  is known to 1-2 % without a receiver to learn it from), reset at every turn of the matched road, where the
+  new piece's line constrains what was along-track before. The heading: the gyro, and the road's bearing on
+  straights.
+* **Found out raw against raw**, without asking the estimate (which may be the wrong party): the receiver's
+  displacement from fix to fix against the distance the car's speed sensors measured and the direction of
+  the receiver's own earlier track turned by the car's yaw. A single step beyond 8 m + half the car's own
+  step is a jump; two steps in three beyond 2.5 m/s a receiver that is not moving as the car does (few
+  satellites: a smoothed track that crawls and catches up); mirrored coordinates turn the wrong way at the
+  first bend. Not while the car's own speed sources disagree with each other: then the receiver is not the
+  one to blame.
+* **Held back.** What the receiver moved and the car did not is subtracted from its fixes (decaying over 45 s)
+  and counted into its stated error; a jump also widens the position's own covariance by the step (the
+  receiver may have returned to the truth, and the position that followed it is then the wrong one). The
+  position goes on by dead reckoning with the map across the road, `position.mode: coast`, the receiver
+  `suspect` with the reason. Beyond 250 m held back the receiver is not used at all.
+* **Re-acquired** when its fixes lie within the estimate's reach again; or, once dead reckoning has run out
+  (stated uncertainty beyond 75 m: the position is then published unknown), when the receiver has moved as
+  the car does ten fixes running: the position is placed on it anew.
+* **What this cannot do.** A slow drift (1 m/s) is inside this class of receiver's ordinary disagreement with
+  the odometer (its chords over 100 m differ from the odometer's by 20 % either way on the reference car): it
+  is followed along the road; across the road the map holds it. A step that stays is followed after the best
+  part of a minute. A parallel road nearer than about 3 of the receiver's own sigmas (12 m for a 3 m
+  receiver, 35-40 m for the reference car's with 3-5 satellites) cannot be told from the receiver's error:
+  the answer is the stated uncertainty across the road (the matcher's candidates and the odds of a wrong
+  match are in it), not a detection.
+
+Dead reckoning with the map, in simulation with truth (town drive, a receiver like the reference car's,
+gone from 60 s to 230 s: 1.7 km): error along the road at most 1.4 m (median per 20 s), across 1.0 m; stated
+uncertainty (1 sigma, major axis) 2.2 m after each bend, growing to 8-13 m before the next one. The same
+without the map: 18-32 m, stated 31-44 m. (`tests/test_position_loop.py`; the simulated map is always right:
+what a wrong match costs is the map rows of the table.)
+
+Rows of the table below that this changed (simulation, default modes, seconds an output was valid and wrong
+beyond its tolerance and 3 of its own sigmas; `tools/fault_campaign.py sim`, before = the tree before L47):
+
+| fault | before | after |
+|---|---|---|
+| receiver: position jump 30 m | position 41 s | 0 |
+| receiver: slow position drift 1 m/s | position 35 s | 0 (followed along the road, inside the stated uncertainty) |
+| receiver: lat / lon swapped | heading 18 s, position 50 s | heading 21 s, position 18 s |
+| receiver: fixes 2 s older | position 33 s | position 3 s |
+| camera out of range and receiver jump 30 m | lead 2 s, position 41 s | lead 2 s |
+| map: parallel road 25 m, bearing turned 90 degrees | 0, 0 | 0, 0 |
+| vehicle speed: stuck / sign | position 46 / 58 s (sign: heading 12 s) | position 29 / 28 s |
+| vehicle speed: bias +2 m/s / scale 0.9 / slow scale drift | position 39 / 40 / 13 s | position 48 / 50 / 36 s |
+| vehicle and camera speed x 0.7 | position 42 s | position 49 s |
+| gyro: scale 1.3 | heading 17 s, position 8 s | heading 23 s, position 19 s |
+| all 59 faults | 1355 s: position 655, heading 119, speed 424, yaw rate 56, lead 102 | 1198 s: position 493, heading 124, speed 424, yaw rate 56, lead 102 |
+
+Worse where the car's own speed or yaw rate is wrong and (with the default modes) stays in the estimate: the
+receiver's rows correct the position along the road more slowly than before, because its slowly varying
+error is no longer taken for white noise. That is the price of the stated uncertainty being right on the car
+(DESIGN.md section 3a); with those detectors gating the wrong sensor leaves the estimate instead. Alarms after
+a receiver fault now last as long as something is held back (up to a minute after the fault ends).
+
 ## The reference car's sensor set (vehicle, camera, receiver, map)
+
+(The table below is the one of before L47; its receiver and map rows are superseded by the section above.)
 
 Every detector gating (`tools/fault_campaign.py sim --gate-all`): what the detectors can do on a car whose
 sensors support them. "Before" is the integrator before the fault-detection work. Positions are scored whenever

@@ -76,7 +76,9 @@ class Filter:
         say about *when each quantity was last measured* is kept (`carry`): re-placing the position does not make
         the speed that was measured 50 ms ago unmeasured (before L43 a frame right after a re-anchoring was
         published with speed, yaw rate and lead unknown, "no_measurement")."""
-        carry = {}
+        # (what an earlier restart carried and is still recent stays carried: two restarts in a row, a position
+        # declared lost and placed again within one message, must not forget it: L47)
+        carry = {(q, src): tt for tt, q, src in self.carry if tt >= t - 2.0}
         for e in self.entries[-64:]:
             if e.t >= t - 2.0:
                 for r in e.rows:

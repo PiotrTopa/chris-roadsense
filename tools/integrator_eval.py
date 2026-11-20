@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Evaluation of the data integrator (docs/INTEGRATOR.md section 10; results in docs/lanes/L38-integrator.md).
 
-    integrator_eval.py sim [--scenario town|highway] [--seeds 1 2 3] [--radar] [--cam2]
-        ego accuracy, NEES and coverage, calibration states and object tracks against simulated truth
+    integrator_eval.py sim [--scenario town|highway] [--seeds 1 2 3] [--radar] [--cam2] [--rx NAME]
+        ego accuracy, NEES and coverage, calibration states and object tracks against simulated truth.
+        --rx (lane L47): the simulated receiver: good (the default: 2 m slowly varying, as before), car (the
+        reference car's on a good day: 10 m slowly varying and smooth, claimed 4 m), noisy, gaps, jumps, repeats,
+        smooth (a track that trails by another 6 s), poor (all of those at once); with any of them but `good` the
+        receiver is not declared a good one (`gnss_absolute` off, as on the car)
     integrator_eval.py real SESSION... [--pos POS.txt] [--no-map]
         the estimator on recordings: source states, innovation consistency per row class, position against
         receiver fixes held out (every second one), calibration states, cost
@@ -75,6 +79,20 @@ class Veh:
 
 
 # ---- sim ---------------------------------------------------------------------------------------------------------
+# simulated receivers (lane L47): GnssSim parameters on top of the truth's lag
+_CAR = dict(sigma_gm=10.0, tau_gm=15.0, noise_smooth_s=5.0, sigma_white=0.7, hacc=4.0)
+RX = {
+    "good": {},
+    "car": _CAR,
+    "noisy": dict(_CAR, sigma_gm=20.0, sigma_white=2.0, hacc=8.0, sats=4),
+    "gaps": dict(_CAR, gap_p=0.04, hacc=7.0, sats=4),
+    "jumps": dict(_CAR, jump_p=0.02, hacc=7.0, sats=4),
+    "repeats": dict(_CAR, repeat_p=0.06, hacc=7.0, sats=4),
+    "smooth": dict(_CAR, smooth_s=6.0, hacc=7.0, sats=4),
+    "poor": dict(_CAR, sigma_gm=15.0, sigma_white=1.0, gap_p=0.03, jump_p=0.01, repeat_p=0.03, smooth_s=6.0, hacc=7.0, sats=4),
+}
+
+
 def cmd_sim(a):
     sys.path.insert(0, os.path.join(os.path.dirname(HERE), "chris-integrator"))
     from tests.simrun import Run
@@ -84,6 +102,10 @@ def cmd_sim(a):
     from chris_integrator.sim.camera2 import CameraObjectsSim
     true = dict(vehicle=dict(gyro_bias=0.004, gyro_scale=0.04, accel_bias=0.15, silences=[(80.0, 87.0)]),
                 vision=dict(mount_yaw=-0.06, mount_pitch=0.05, speed_scale=0.03, range_scale=1.08), gnss=dict(lag=2.2))
+    rx = getattr(a, "rx", None) or "good"
+    true["gnss"].update(RX[rx])
+    if rx != "good":
+        print("receiver: %s %s" % (rx, RX[rx]))
     print("scenario %s; truth: speed scale 0.015, gyro bias 0.004 scale 0.04, accel bias 0.15, camera mount yaw -0.06 pitch 0.05 "
           "scale 0.03 delay 0.125 range scale 1.08, receiver lag 2.2%s" % (a.scenario, ", radar misaligned 1.0 deg" if a.radar else ""))
     print("seed | speed rms NEES cover2s | yaw rate rms NEES | heading rms(deg) NEES | position rms(m) NEES(2 dof) | grade NEES |"
@@ -92,7 +114,7 @@ def cmd_sim(a):
     for seed in a.seeds:
         tk = {k: dict(v, seed=100 * seed + i) for i, (k, v) in enumerate(dict(true, map={}).items())}
         sens = default_sensors(**tk)
-        cfg = {"gnss_absolute": True}          # the simulated receiver is a decent one (2 m correlated, 1 m white)
+        cfg = {"gnss_absolute": rx == "good"}  # the simulated receiver is a decent one (2 m correlated, 1 m white), or not
         src = []
         if a.radar:
             sens.append(RadarSim(misalign_deg=1.0, seed=100 * seed + 7))
@@ -625,6 +647,7 @@ def main():
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--radar", action="store_true")
     p.add_argument("--cam2", action="store_true")
+    p.add_argument("--rx", choices=sorted(RX), default="good")
     for name in ("real", "heldout", "gnss", "mount", "position", "characterise"):
         p = sub.add_parser(name)
         p.add_argument("sessions", nargs="+")

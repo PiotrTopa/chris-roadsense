@@ -30,7 +30,10 @@ m = box.on_ego_state(ego_state)        # a `map` message when one is due (every 
   (`value` in degrees clockwise from north, `std`, `valid`); `speed.value`; `odometer_m`.
 * **Out**: `map`. `match` is geometry of the map (the matched road's point and bearing): the estimator takes
   it as a measurement (cross-track distance to the road = 0, heading = the road's bearing), so the loop
-  estimator -> map -> estimator does not feed a pose back to itself. `position` repeats the pose that was used
+  estimator -> map -> estimator does not feed a pose back to itself. Which road it is, is a hypothesis: the
+  match carries the other candidates' lines with their shares (`weight`, `alternatives`), how well the winner
+  fits (`fit`) and how much the road turns around the matched point (`bearing_span_deg`), so that a pose
+  source does not take "probably this road" for "this road" (docs/MAP.md). `position` repeats the pose that was used
   with its state (`good`, `dead_reckoning`, `unknown`, `no_source`). `road`, `speed_limit`, `ahead` are the
   map context.
 * No sensor input, no position filter, no wall clock: times are the input's. A changed pack file is loaded
