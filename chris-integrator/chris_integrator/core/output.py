@@ -1,4 +1,4 @@
-"""The `ego_state` message (docs/INTEGRATOR.md section 8): every quantity with value, std, valid / reason,
+"""The `ego_state` message (docs/DESIGN.md section 8): every quantity with value, std, valid / reason,
 mode, age and contributing sources; calibration states; per-source health; the monitors' table."""
 import math
 

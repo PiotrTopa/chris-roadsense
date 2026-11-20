@@ -302,7 +302,7 @@ why (since 2.1, lane L37; before, the tracker followed whatever the model report
 "departed": false,               // the lead moved off while ego still stands (below)
 "departure": null,               // or {"age_s":0.4,"dist_at_stop_m":3.61,"moved_m":0.8}
 "event": {"kind":"acquired|reacquired|cut_in|changed|relocated|departed|gap_changed|lost|reset|invalid","ts_mono_ns":..,"track_id":12,"age_s":31.4},   // the last one; null before the first
-"ego": {"speed_mps":0.0,"std_mps":0.0,"standstill":true,"source":"vehicle|vision","age_s":0.04,"tag":"prius-can",   // the integrator's ego speed of the frame (null when unknown); age_s: distance in time to the nearest vehicle sample
+"ego": {"speed_mps":0.0,"std_mps":0.0,"standstill":true,"source":"vehicle|vision","age_s":0.04,"tag":"car-can",   // the integrator's ego speed of the frame (null when unknown); age_s: distance in time to the nearest vehicle sample
         "brake":true},              // the brake pedal (the integrator's pass-through of `vehicle.controls.brake`); null when no host sends it
 "radar": null,                   // or {"sensor":"front_radar","id":17,"dist_m":31.4,"lateral_m":0.2,"v_rel_mps":-0.8,"age_s":0.03}: the range-sensor object used in this frame
 "vision_scale": null,            // radar distance / camera distance, learned while both see the lead (radar fusion only)

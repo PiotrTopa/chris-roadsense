@@ -306,6 +306,51 @@ map's geometry.
 | a delay of the whole vehicle feed with fresh stamps | camera and vehicle disagree in time, not which one is late | honest time stamps from the feeder (`age_ms`) |
 | an accelerometer bias | it is the same thing as road grade | an altitude source |
 
+## 5b. Detector modes: gate or report (L43)
+
+A detector that can take something out of the estimate has a mode, per detector, in the configuration
+(`integrator.json`: `{"detectors": {"speed.cusum": "gate"}}`; defaults in `core/integrator.py` `DETECTORS`):
+
+* `gate`: its verdict takes effect. The source's rows (or one quantity's rows, or a row class) leave the
+  estimate; what depends on that source alone is then published as unknown (a camera's lead, a speed with no
+  other source).
+* `report`: it runs all the same and publishes its verdict with the evidence: an entry of kind `reported` in
+  `ego_state.diagnostics` (`detector`, `mode: "report"`, the text names who would have been set aside, by which
+  rule, and the numbers), the detector's name under `reported` in the source's health entry. Nothing is set
+  aside, nothing goes invalid, a verdict held this way has no vote in another pair's isolation, and nobody
+  waits for it.
+
+`ego_state.detectors` lists the modes in use. Every monitor also keeps the largest value its statistic has
+reached as a fraction of its firing level (`checks[].peak`): how near a healthy source came to an alarm.
+
+| detector | what it sees | may set aside |
+|---|---|---|
+| `self_check` | a source's stated uncertainty far above its characterised one (median over 5 s above 4 x) | the source |
+| `signal.invalid`, `signal.noise`, `signal.stuck` | one stream by itself: not a number; noise 25 x the characterised level; a value frozen for 2.5 s | the source (or that quantity) |
+| `speed.share`, `yaw_rate.share` | two sources of one quantity: half of 5 s of evidence beyond 4 sigma | by vote, else (speed) by rank |
+| `speed.cusum`, `yaw_rate.cusum` | the same pairs: a small difference that adds up (bias, 10 % scale, drift) | as above |
+| `speed.track` | a receiver's track as a third opinion on the speed: its own verdicts and its votes | as above |
+| `innovation` | a row class whose innovations are far beyond the stated uncertainty (position, heading, altitude, map rows, the mount's yaw row) | that row class, while it lasts |
+| `position.lost` | absolute positions set aside for 8 s | re-anchors the position |
+| `map.conflict` | the matched road's line against the receiver's recent fixes, raw against raw (median of 8 fixes beyond 12 m) | the map's rows |
+
+Never gating by construction: stale / absent sources (a fact, not a verdict), the feed's warm-up after a
+silence, the timing and trend findings, repeats and outliers, the mount's findings, the sign rows.
+
+The rule for the defaults: a detector gates only if it was quiet, with a stated margin, on the reference car's
+healthy drives; the others report. `docs/FAULTS.md` ("Which detectors gate") has the numbers per detector and
+what each `report` costs in the fault table. A CUSUM verdict that the share test confirms becomes the share
+test's verdict (and gates with it); a verdict held by a CUSUM alone lapses after 30 s without a sample.
+
+Position after a loss (`reanchor`, default `soft`): the position stays published with its uncertainty opened
+by 40 m and the heading's by 20 degrees, under a new local frame id, and the next fixes pull it in; nothing is
+invalid in between and nothing is confident. `hard` (the behaviour before L43) declares it unknown until the
+next usable fix. A host's `reset` (vehicle input API) and a change of the receiver (`gnss.source`) forget the
+position, the heading, the local frame and the receiver's states, and keep the motion and every calibration
+state of the car's sensors (`Integrator.new_position_source`). A receiver that names itself may have its own
+delay prior (`gnss_delay`: `{tag: [delay_s, sigma_s]}`; `synthetic`, the vehicle input API's tag of a simulated
+drive, is stamped at its time of validity).
+
 ## 6. The object layer
 
 **Track state** in the car frame (x forward, y left, origin the reference camera; z ignored):

@@ -1,6 +1,6 @@
 """Receiver fixes (`gnss`, mapd's relay of the feeder's messages).
 
-The reference car's head unit (docs/INTEGRATOR.md section 1): about one fix a second, stamped at arrival,
+The reference car's head unit (docs/DESIGN.md section 1): about one fix a second, stamped at arrival,
 positions about 2 s old and consistent in scale with the odometer; a claimed `hacc` that is too optimistic;
 a speed field that is a slower, smoothed output (1.5-9 s behind, low) and is therefore not fused: it is a
 separate witness source. Positions are fused with an estimated delay and a noise scale adapted from the

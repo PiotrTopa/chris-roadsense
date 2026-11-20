@@ -1,4 +1,4 @@
-"""The `tracks` and `lead` messages (docs/INTEGRATOR.md sections 6, 8)."""
+"""The `tracks` and `lead` messages (docs/DESIGN.md sections 6, 8)."""
 import math
 
 from ..contract import signal, validity

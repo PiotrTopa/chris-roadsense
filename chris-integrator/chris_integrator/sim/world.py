@@ -1,4 +1,4 @@
-"""A world with known truth, and sensors that emit the stack's real message types (docs/INTEGRATOR.md
+"""A world with known truth, and sensors that emit the stack's real message types (docs/DESIGN.md
 section 10). The road is the ego car's path; other vehicles move along it at a lane offset; roadside objects
 stand beside it. Everything is seeded and deterministic.
 

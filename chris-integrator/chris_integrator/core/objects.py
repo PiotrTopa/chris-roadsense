@@ -1,4 +1,4 @@
-"""The object layer: one multi-target track list in the car frame (docs/INTEGRATOR.md section 6).
+"""The object layer: one multi-target track list in the car frame (docs/DESIGN.md section 6).
 
 Track state [x, y, vx, vy, ax]: position relative to the car (x forward, y left, origin the reference camera),
 velocity and longitudinal acceleration over the ground in the car's axes. The car's own motion (speed, yaw

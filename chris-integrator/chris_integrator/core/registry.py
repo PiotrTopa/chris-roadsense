@@ -1,4 +1,4 @@
-"""What a source is (docs/INTEGRATOR.md section 7): an input description, a measurement model, and its mount
+"""What a source is (docs/DESIGN.md section 7): an input description, a measurement model, and its mount
 and calibration states. The core knows nothing else about any sensor."""
 import math
 

@@ -4,7 +4,7 @@ vehicle feed.
 
 Characterised on the reference car: speed sigma 0.25 + 0.035 v with heavy tails and an error correlated over
 seconds; valid 0.10-0.15 s before the frame stamp; direction of travel robust spread 0.003-0.005 per frame at
-speed on straights (docs/INTEGRATOR.md section 1).
+speed on straights (docs/DESIGN.md section 1).
 """
 import math
 

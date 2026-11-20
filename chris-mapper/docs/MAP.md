@@ -37,7 +37,7 @@ where the road is split into edges at a side road (median while moving on the re
 "input": {"gnss": {"source":"headunit","fix":"3d","age_s":0.4,"hacc_m":4.0,"sats":14,"hdop":0.8,
                    "used":812,"ignored":0,"rejected":2,"resets":0,
                    "hacc_scale":1.0},                                                    // since L20: factor on the receiver's hacc                                // null before the first gnss message
-          "motion": {"source":"vehicle|vision|none","tag":"prius-can","age_s":0.03},
+          "motion": {"source":"vehicle|vision|none","tag":"car-can","age_s":0.03},
           "errors": 0, "last_error": null,
           "synthetic": false,                                   // the position was fed by input tagged synthetic since the last reset
           "resets": 0, "last_reset": null},                     // or {"reason":"...","age_s":12.3}: `reset` messages and source changes
@@ -111,7 +111,7 @@ car's place on the ring in the same angles), so a picture does not turn under th
 first found on a ring gets a view with the car at 180 and no path exit. The view is a property of the most
 likely path: with `confidence` near 0.5 the path, and therefore the highlighted arm, is a guess. Turn
 restrictions are not in the pack. Cost: `look_ahead` with the view 0.53 ms on the laptop (Poland pack,
-Opole centre, 660 positions); not yet measured on the phone.
+a town centre, 660 positions); not yet measured on the phone.
 
 **Turn lanes** (`road.turn_lanes`, `ahead.turn_lanes`, lane L22; pack format 2, `docs/MAPS.md`): the painted
 arrows of OpenStreetMap's `turn:lanes`, per direction of travel. `road.turn_lanes` is the matched edge's own

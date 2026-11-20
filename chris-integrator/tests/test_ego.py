@@ -1,5 +1,5 @@
 """The ego estimator against simulated truth: accuracy, honest uncertainty, calibration states, time handling
-(docs/INTEGRATOR.md sections 2-5, 10)."""
+(docs/DESIGN.md sections 2-5, 10)."""
 import math
 import random
 import unittest

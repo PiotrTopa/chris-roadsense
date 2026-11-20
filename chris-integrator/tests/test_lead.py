@@ -533,7 +533,7 @@ class Radar(unittest.TestCase):
         self.assertEqual(rows[-1][3]["source"], "radar+ego")
         self.assertAlmostEqual(rows[-1][3]["dist_m"], s.gap, delta=0.5)
         # since L38 the lead is the track on the path, whoever sees it: a moving vehicle on the car's path that
-        # the radar holds stays the lead, and a radar alone finds one (the object layer, docs/INTEGRATOR.md 6)
+        # the radar holds stays the lead, and a radar alone finds one (the object layer, docs/DESIGN.md 6)
         rows = s.run(3.0)
         self.assertTrue(rows[-1][3]["present"])
         self.assertTrue(rows[-1][3]["on_path"])

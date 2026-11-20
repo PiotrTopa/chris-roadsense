@@ -1,4 +1,4 @@
-"""The ego state and its process model (docs/INTEGRATOR.md section 2).
+"""The ego state and its process model (docs/DESIGN.md section 2).
 
 Core (kinematic) states, in this order:
     PE, PN   position east / north of the local origin, m

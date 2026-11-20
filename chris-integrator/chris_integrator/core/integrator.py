@@ -1,5 +1,5 @@
 """The integrator: source registry, ego estimator, monitors and fault isolation, object layer, outputs
-(docs/INTEGRATOR.md). No I/O and no wall clock: times come from the messages (`ts_mono_ns`)."""
+(docs/DESIGN.md). No I/O and no wall clock: times come from the messages (`ts_mono_ns`)."""
 import collections
 import math
 
@@ -472,7 +472,7 @@ class Integrator:
         e, n = E.to_local(self.origin, lat, lon)
         x = self.x_now
         tau = float(x[itau]) if itau is not None else 0.0
-        if not self.anchored:
+        if not self.anchored or getattr(self, "_reanchor_pending", False):
             psi = None
             if course_ok and course_deg is not None:
                 psi = E.course_to_psi(course_deg)
@@ -484,6 +484,7 @@ class Integrator:
                     psi = math.atan2(n - f[1], e - f[0])
             if psi is None:
                 return []
+            self._reanchor_pending = False
             self._anchor(e, n, psi, sigma, tau, itau)
             return []
         v, ps = float(x[E.V]) / (1.0 + float(x[E.SV])), float(x[E.PSI])
@@ -514,8 +515,11 @@ class Integrator:
             return
         self.reanchors = getattr(self, "reanchors", 0) + 1
         if self.cfg["reanchor"] == "soft":
-            # the dead-reckoned position stays published, with an uncertainty that says how little it is worth; the
-            # next fixes (no longer set aside) pull it in. Nothing is invalid in between, and nothing is confident.
+            # the dead-reckoned position stays published, with an uncertainty that says how little it is worth, until
+            # the next usable fix; the position and the heading are then placed on that fix exactly as a first
+            # anchoring does (`abs_position`). Nothing is invalid in between, and nothing is confident. (Letting
+            # the filter pull the old state in instead was tried: with a heading tens of degrees off it converged
+            # slowly, held-out fixes 31 m p50 / 339 m p90 on one drive against 7 / 19 m.)
             l = self.ekf.latest()
             if l is not None:
                 t, x, P = l
@@ -524,9 +528,9 @@ class Integrator:
                 P[E.PN, E.PN] += self.cfg["reanchor_sigma_m"] ** 2
                 P[E.PSI, E.PSI] += self.cfg["reanchor_heading_sigma"] ** 2
                 self.ekf.rebase(t, x.copy(), P)
-                self.frame_id += 1
-                self.anchor_t, self.anchor_fixes = t, 0
                 self._cache()
+            self._reanchor_pending = True
+            self._anchor_first = None
         else:
             self.anchored = False
             self._anchor_first = None

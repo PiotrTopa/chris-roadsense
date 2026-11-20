@@ -1,4 +1,4 @@
-"""Synthetic sensors injected into a real recording, derived consistently from it (docs/INTEGRATOR.md
+"""Synthetic sensors injected into a real recording, derived consistently from it (docs/DESIGN.md
 section 10). The car has no radar and one camera; this makes the recording into what such a car would have
 recorded:
 
