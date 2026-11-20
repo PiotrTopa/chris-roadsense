@@ -851,8 +851,9 @@ What keeps it there, and what an extension has to respect:
   and the display box's table walk are also in one C file, used where the compiled module is present. The
   Python is the reference: a change to either side is a change to both, and `tests/test_native.py` holds them
   together (text and the lane tracker bit for bit; the filter to rounding, because numpy leaves the order of
-  its sums of products to BLAS). On a laptop core the per-message path costs 1.6 instead of 3.2 ms per road
-  frame with a car's feed and 1.4 instead of 2.3 ms without; about four fifths of what remains is Python
+  its sums of products to BLAS). On the reference phone's little core the per-message path costs 7.9 instead
+  of 15.3 ms per road frame on the bench and 8.7 instead of 21.0 ms with a car's feed replayed; live, 17 ms
+  of CPU per road frame instead of 25 (26 % of the core instead of 38 %). About four fifths of what remains is Python
   byte code in the estimator's bookkeeping, the trackers' decisions and the mixer (lane report L50).
 
 `tools/native_bench.py` prices every native function against its reference on the machine in hand;

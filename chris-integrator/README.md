@@ -258,9 +258,10 @@ Not hidden:
   exists, two sources wrong the same way, a wrong camera lead range, a slow drift of the receiver.
 * Monitor thresholds rest on a small amount of real driving (town, daylight).
 * Pure Python and numpy: about 3 ms per camera frame on a laptop core for the whole stack (the estimator about
-  half of it), more with radars; 17-22 ms on a phone's little core (docs/DESIGN.md 14.7). With the optional
+  half of it), more with radars; 15-21 ms on a phone's little core (docs/DESIGN.md 14.7). With the optional
   native core (docs/NATIVE.md: the filter's linear algebra, JSON text, rounding, the lane tracker's arrays in C;
-  the same outputs but for the sign of a rounded zero in one calibration field) it is half of that. What is
+  the same outputs but for the sign of a rounded zero in one calibration field) it is half of that: 8-9 ms on
+  the phone, 26 % of one little core live at 15 frames a second where pure Python takes 38 %. What is
   left is the price of Python on the estimator's bookkeeping and the trackers' decisions, not arithmetic.
 * The car's direct feed is taken as it comes: the validation, per-signal quality and the description of the
   car that a feeder may send (vehicle input API 1.1) are not yet carried into the `vehicle` topic.

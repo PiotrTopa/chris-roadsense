@@ -5,9 +5,8 @@ would make a tangible execution time difference. C / Rust, whatever would work b
 compiler required." Branch `v2-l50` from `v2-l49` fae9098 (roadsense), `l50-native` from `l48-opt` c7a8b81 (car
 repository). Nothing pushed, nothing merged.
 
-**State of this report: the laptop work is complete; the phone was held by lane L49 for the whole time, so
-nothing here was measured or installed on the phone.** Every phone number below is L46's (the "before") or an
-estimate marked as such. Section 6 is the order for the phone, ready to run.
+Laptop for the work and the equivalence campaign; the phone (Poco F1 on the bench) from 14:11 to 15:30 CET
+for the proof and the deployment. **The native build is deployed on the phone and running** (section 6).
 
 ## 0. Result
 
@@ -23,16 +22,26 @@ absent. Both pass the same test suite; a switch (`CHRIS_NATIVE`) and `/v2/health
 | outputs against `v2-l49` | | identical, line for line (4 inputs) | see below |
 | outputs, native against pure Python: the exact parts (JSON, rounding, the display walk, the lane tracker) | | | identical, line for line |
 | outputs, native against pure Python: all parts (the filter too) | | | every stream identical except `ego_state`: 69 of 55,786 messages differ, each in one field, by the sign of a zero |
-| phone, little core, bench: per-message path | 16.6 ms (L46) | not measured | not measured; expected about 10 ms |
-| phone, with a car feed replayed | 22.0 ms (L46) | not measured | not measured; expected about 11-12 ms |
+| **phone**, quiet little core, the bench input (3,035 frames), ms per road frame | 15.3 | 15.0 | **7.9** (-48 %) |
+| **phone**, quiet little core, a recorded drive with the car's feed and the map box (9,745 frames) | 21.0 | 18.6 | **8.7** (-59 %) |
+| ... median / 99th percentile / worst frame (drive, phone) | 17.1 / 27 / 49-59 | 15.0 / 23 / 45-47 | 6.4 / 12.2 / 38 |
+| **phone, live**, full stack on the replay playlist: share of one little core at 15 road frames/s | 34-37 % (L49) | 36.9 / 39.0 % (24.5 / 25.3 ms a frame) | **26.1 / 26.2 %** (17.3 ms a frame) |
+| ... latency added by the integrator, road -> lead / road -> lanes | | 7-12 / 10-15 ms | 5 / 6 ms |
+| ... resident memory | | 71-76 MB | 62-67 MB |
+| outputs on the phone (its own numpy and OpenBLAS) | | identical to `v2-l49` | exact parts identical; all native: bench input identical, drive 18 of 9,760 `ego_state` with the zero's sign |
 
 **Bad news first.**
 
-* **Nothing was measured on the phone.** The expectation above is the laptop's ratio applied to L46's phone
-  numbers; the phone prices numpy calls higher than the laptop does, so the native parts should gain more
-  there than here, but that is an argument, not a measurement.
-* **It is a half, not an order of magnitude, for the whole daemon.** The functions made native are 4 to 26
-  times cheaper than their Python on the laptop (section 4); the daemon as a whole is twice as cheap, because
+* **Live it is a third, not a half**: 25 -> 17.3 ms of CPU per road frame. The per-message path went from
+  about 15 to 8 ms; the other 9 ms of a live frame are the kernel's part of 15 kB lines in and out, the event
+  loop and the cost of sharing the little cores' cache with the rest of the stack, which no native kernel
+  touches (4.6 ms a frame is outside every plug-in, 1.8 ms of it system time).
+* **The car was not driven.** "With a car feed" is a recorded drive replayed off line on the phone (8.7 ms
+  against 21.0); live in the car expect about 26-28 % of a little core where L46 expected 45-50 %. An estimate.
+* **The native smoother step is no faster than numpy's on the phone** (492 against 438 us): 27-state products
+  are where LAPACK is as good as plain C. It runs 0.6 times a frame (0.03 ms); kept for one code path, not for speed.
+* **It is a half, not an order of magnitude, for the whole daemon.** The functions made native are 2.5 to 29
+  times cheaper than their Python on the phone (section 6); the daemon's per-message path is twice as cheap, because
   what is left is not arithmetic: it is the estimator's bookkeeping (monitors, fault detection, sources, the
   5 kB `ego_state`), the trackers' decisions and the mixer, spread over about 12,000 lines of Python with no
   function above 5 % (section 7). Making that native is a rewrite of the integrator in another language, kept
@@ -184,7 +193,7 @@ $PY tools/mixer_equiv.py run $D/20261119-104128 --pos $P --mapper box --out eq.j
 # cost: the runs above without --dump, with --json OUT;  unit prices: taskset -c N $PY chris-integrator/tools/native_bench.py CAPTURE
 ```
 
-## 4. Cost (laptop; the phone is section 6)
+## 4. Cost on the laptop (the phone: section 6)
 
 One laptop core (`taskset`), `tools/cost_bench.py`, two passes each, ms per road frame:
 
@@ -225,7 +234,7 @@ rounding; not for JSON (object building in CPython is the floor: 2.4 reading, 4.
 smoother (27-state products: LAPACK is as fast as plain C; the gain is only the call overhead).
 
 **Memory**: the two number-text tables of L46 (8 MB) are no longer built when the native core writes the
-recorder's line; the module adds 75 kB. Resident memory on the phone was not measured.
+recorder's line; the module adds 75 kB. On the phone, live: 62-67 MB against 71-76 MB.
 
 ## 5. Selection, fallback, the plug-in contract
 
@@ -253,54 +262,117 @@ recorder's line; the module adds 75 kB. Resident memory on the phone was not mea
   `mixer.json` as before; (3) a box in another process in any language over `mixer.remote.RemotePlugin`'s JSON
   lines. This lane used (1) only.
 
-## 6. The phone: not done, and the order for it
+## 6. On the phone
 
-The phone was lane L49's until this report was written. Read only (13:12 CET): Python 3.14.8, numpy 2.5.4,
-OpenBLAS 0.3.30, musl 1.2.6-r5, gcc 15.2.0-r9, no `python3-dev`, no `py3-orjson`; the installed package is
-`v2-l49` fae9098. **Nothing of this lane is on the phone; nothing was installed there; the CMDB was not
-touched.**
+Poco F1 on the bench, Python 3.14.8, numpy 2.5.4, OpenBLAS 0.3.30, musl 1.2.6-r5. Order: `orders/L50-phone.md`.
+Nothing was installed with `apk` and nothing was compiled on the phone; the module is the one built in the
+container on the laptop (sha256 `5382b037...a190`). Heavy runs were made with the stack off, as units
+(`systemd-run`), after L49's hang during a build beside the running stack.
 
-What is to be done there, in this order (the inputs are L46's, still on the phone: `~user/l46/bench.cap.gz`,
-3,035 frames, and `~user/l46/car113201-slice`):
+**Self-test and install.** `python3 -m chris_integrator.native` on the phone: `self-test ok: json, round,
+interp, ekf, lanes equal to the pure-Python reference`. `DESTDIR=... sh scripts/install.sh` under the phone's
+busybox ash: `native core: IN USE (linux-aarch64-musl, sha256 5382b037..., self-test ok)`.
 
-1. Trees: `git archive fae9098` as `~user/l50/base`, this branch's head as `~user/l50/final`, with
-   `native/dist/linux-aarch64-musl/_chris_native.abi3.so` copied to `final/chris-integrator/chris_integrator/native/`.
-   `python3 -m chris_integrator.native` from `final/chris-integrator`: the self-test on the phone's own
-   Python, numpy and BLAS.
-2. Stack off (`roadsense_mode off`), learned state saved with checksums (as L46 section 7).
-   Quiet little core, `taskset -c 1`: `cost_bench.py run` on both inputs for `base`, `final` with
-   `CHRIS_NATIVE=0` and `final` native, twice; `native_bench.py` for the unit prices; then the dumps and
-   `diff` (base / pure / exact parts / all native). **Pass**: pure identical to base; exact parts identical
-   to pure; all native differing from pure in nothing but `ego_state` zeros' signs (or state what else);
-   native clearly cheaper. Otherwise the phone stays on pure Python.
-3. Deployment (authorised for the bench): a rollback folder `~user/rollback-20261120-l50` with the installed
-   package and `RESTORE.txt`; the package of this branch and the module into `/usr/local/lib/chris`; live
-   runs on the replay playlist with `tools/cost_live.py`, the two implementations alternating by
-   `CHRIS_NATIVE=0` / unset in `/etc/chris/integrator.env` (200 s warm-up, 240 s window, as L46 section 5):
-   share of a little core, ms per road frame, latency, resident memory, temperatures.
-4. Back to the state as found (replay off, DVR source, state by checksum, bench recordings out of the
-   recordings folder, mode `auto`), `~/.infra/servers/poco.md` updated in place.
+**Equivalence on the phone** (`cost_bench.py --dump` / `diff`, the same inputs as L46: the phone's own capture
+with raw `road` lines, and the recorded drive 20261119-113201 with the map box):
 
-The order with its scripts is `orders/L50-phone.md`.
+| input | `v2-l49` against this branch, pure | pure against the exact native parts | pure against all native |
+|---|---|---|---|
+| bench capture, 3,035 road frames | IDENTICAL | IDENTICAL | IDENTICAL |
+| drive with the car's feed, 9,745 road frames | IDENTICAL | IDENTICAL | `ego_state` 9,742 of 9,760 identical, the other 18 differ in `calibration.odometry.speed_scale.value` only (`-0.0` / `0.0`, nine each way); every other stream identical |
 
-Expected, from the laptop's ratios applied to L46's phone stages (an estimate, not a measurement):
+**Cost off line, quiet little core** (`taskset -c 1`, stack off, two passes each; ms per road frame):
 
-| stage, phone, ms per road frame | bench: L46 | expected | car feed: L46 | expected |
-|---|---|---|---|---|
-| reading the inputs | 1.4 | 0.7 | 1.0 | 0.5 |
-| estimator | 5.2 | 2.8-3.2 | 11.5 | 5-6 |
-| lanes | 2.1 | 0.6-0.9 | 1.8 | 0.5-0.8 |
-| view | 1.7 | 1.1 | 0.8 | 0.6 |
-| rules | (in "others") | | 2.2 | 0.6 |
-| the other boxes | 1.9 | 1.8 | about 1.4 | 1.3 |
-| recorder | 2.7 | 1.2 | 2.8 | 1.2 |
-| WebSocket output | 1.3 | 0.35 | 0.7 | 0.25 |
-| mixer dispatch | 0.6 | 0.55 | 0.6 | 0.55 |
-| **total, quiet core** | **16.6** | **about 10** | **22.0** | **about 11-12** |
-| live, share of one little core at 15 frames/s | 39 % (26 ms a frame) | about 28-30 % | 45-50 % (L46's estimate) | about 30 % |
+| stage | bench input: `v2-l49` | pure | native | drive with car feed: `v2-l49` | pure | native |
+|---|---|---|---|---|---|---|
+| reading the inputs | 1.43 | 1.42 | 0.64 | 1.11 | 1.08 | 0.42 |
+| estimator | 4.70 | 4.40 | 2.49 | 11.2 | 10.6 | 4.96 |
+| lanes | 1.93 | 1.92 | 0.72 | 1.68 | 1.65 | 0.57 |
+| view | 1.60 | 1.62 | 1.01 | 0.77 | 0.74 | 0.52 |
+| rules | 0.28 | 0.28 | 0.22 | 1.86 | 0.33 | 0.24 |
+| roadgeom / egolane / ego_light | 0.65 / 0.39 / 0.20 | 0.64 / 0.38 / 0.18 | 0.61 / 0.33 / 0.17 | 0.34 / 0.18 / 0.24 | 0.33 / 0.17 / 0.24 | 0.29 / 0.15 / 0.20 |
+| recorder | 2.42 | 2.44 | 1.00 | 2.58 | 2.52 | 0.82 |
+| WebSocket output | 1.30 | 1.32 | 0.28 | 0.67 | 0.66 | 0.16 |
+| mixer dispatch | 0.47 | 0.45 | 0.39 | 0.42 | 0.40 | 0.32 |
+| **total** | **15.3** | **15.0** | **7.9** | **21.0** | **18.6** | **8.7** |
+| median / 99th percentile / worst frame | 12.8 / 18-22 / 52-77 | 12.5 / 19-22 / 53-73 | 6.2 / 11-12 / 42-44 | 17.1 / 27 / 49-59 | 15.0 / 23 / 45-47 | 6.4 / 12.2 / 38 |
 
-The live figure keeps L46's 9 ms a frame of kernel, event loop and shared-cache cost, which this lane did not
-touch.
+(`v2-l49` is 15.3 here against L46's 16.6 for `v2-l46`: the same code path, another day's core temperature and
+L47 / L48's changes in between. The rules' 1.86 -> 0.33 ms on the drive is the turn window that grew while the
+car stood: a Python fix, section 1.)
+
+**Unit prices on the phone's little core** (`tools/native_bench.py`, microseconds per call):
+
+| | pure Python | native | ratio |
+|---|---|---|---|
+| filter: one prediction, 27 states | 308 | 36 | 8.5 |
+| filter: one scalar row | 125 | 21 | 6.0 |
+| filter: one smoother step | 438 | 492 | 0.9 |
+| lanes: the frame's measurement arrays | 426 | 30.5 | 14.0 |
+| lanes: noise, gate, innovation, fit | 294 | 27.8 | 10.6 |
+| lanes: update of 4 lines | 158 | 5.5 | 28.7 |
+| lanes: rounded lists | 151 | 58.5 | 2.6 |
+| `round` of a list of 200 / 200 calls of `round` | 408 | 31 / 132 | 13.1 / 3.1 |
+| interpolate one line at 14 distances | 26.7 | 5.1 | 5.3 |
+| the recorder's reduced `road` line (against L46's table method) | 1,353 | 375 | 3.6 |
+| write `lanes` / `ego_state` / `road` | 576 / 592 / 2,977 | 93 / 186 / 634 | 6.2 / 3.2 / 4.7 |
+| read `lanes` / `road` / `road` trimmed | 350 / 1,513 / 943 | 141 / 587 / 369 | 2.5 / 2.6 / 2.6 |
+
+The ratios are the laptop's: the phone prices Python and numpy alike about seven times higher.
+
+**Deployed** (14:51 CET, stack off): the `chris_integrator` package of this branch with the module in
+`/usr/local/lib/chris/chris_integrator` (the package swapped by hand as L46 did, then the self-test where it
+runs; no unit, no configuration, no other package touched). Check: `cd /usr/local/lib/chris && find
+chris_integrator -name '*.py' | LC_ALL=C sort | xargs sha256sum | sha256sum` = `70e72fe5...43387e` (the same in
+`chris-integrator/` of this branch); module `native/_chris_native.abi3.so` sha256 `5382b037...a190`; marker
+`.deployed-commit-chris_integrator` = 7d1a07e. The phone's source tree `~user/d1/roadsense` got this branch's
+`chris-integrator/` (with `native/dist/`) and `scripts/sync-phone.sh`.
+
+**Live** (full stack on the replay playlist, each run started fresh, 200 s warm-up, 240 s window,
+`tools/cost_live.py`; the two implementations alternating by `CHRIS_NATIVE=0` in `/etc/chris/integrator.env`;
+14:51-15:26 CET; little cores at 1.77 GHz throughout, governor level 0):
+
+| run | implementation (`/v2/health` `native`) | share of one core | road frames/s | CPU ms / road frame (user + system) | outside the plug-ins | latency road / lead / lanes, ms | memory | peak |
+|---|---|---|---|---|---|---|---|---|
+| 1 | python | 39.0 % | 15.4 | 25.3 (23.3 + 2.0) | 6.9 | 115.2 / 126.9 / 129.9 | 71-76 MB | 83.4 C |
+| 2 | native | **26.2 %** | 15.1 | **17.3** (15.5 + 1.8) | 4.6 | 75.3 / 80.2 / 81.2 | 62-67 MB | 81.8 C |
+| 3 | python | 36.9 % | 15.0 | 24.5 (22.5 + 2.0) | 7.8 | 75.6 / 82.9 / 85.8 | 72-76 MB | 82.7 C |
+| 4 | native | **26.1 %** | 15.1 | **17.3** (15.5 + 1.8) | 4.6 | 66.8 / 72.0 / 73.2 | 62-67 MB | 84.4 C |
+
+* **CPU: 38 -> 26 % of one little core, 24.9 -> 17.3 ms per road frame (-31 %)**; against the 6054373 package
+  of this morning (47-48 %, 31-32 ms) it is 45 % less.
+* **Latency added by the integrator**: `lead` 7.3-11.7 -> 4.9-5.2 ms, `lanes` 10.2-14.7 -> 5.9-6.4 ms.
+* **Memory** 9 MB less (the number tables are not built). 0 plug-in errors in all four runs. The journal's
+  `Task exception was never retrieved ... KeyboardInterrupt` at every stop is the one L46 saw (both
+  implementations; the state is saved all the same).
+* Checked live with the native core: `/v2/health` says `native ... implementation native`; a WebSocket client
+  asking for `lead,lanes,view` gets those at 15.5 a second each; `integrator.sock` greets with `ego_state`,
+  `tracks`, `lead`; `GET /v2/road` is modeld's whole line (22 plan members, `meta`); the backend reports
+  `running`, `api_ok`; the recorder's session reads back with the reduced `road`; the daemon stops cleanly.
+
+**Undo.** Softest: the line `CHRIS_NATIVE=0` in `/etc/chris/integrator.env` and a restart of the stack (the same
+package on pure Python; that is how the comparison runs above were made). The package: as root, stack off
+(`roadsense_mode off`), `mv /usr/local/lib/chris/chris_integrator{,.l50}`, `tar xzf
+/home/user/rollback-20261120-l50/chris-lib-before.tar.gz -C / usr/local/lib/chris`, `roadsense_mode auto`
+(`RESTORE.txt` in that folder, root 0700; it also holds the replaced package directory, the state files as
+found and the bench's five recorder sessions, 273 MB). The replaced source-tree files:
+`~user/l50/d1-roadsense-replaced-files-fae9098.tgz`.
+
+**The state the phone was left in (15:30 CET):** as found, with the new package. `roadsense_mode auto`, the
+stack running on the DVR camera source with no camera attached (the bench's five-minute restart loop goes on);
+replay off (`roadsense-camerad-replay` disabled, `roadsense-camerad-dvr` enabled). Learned state restored from
+the copies of 14:13 and verified by checksum (`/var/lib/chris/integrator.json`, `signs.jsonl`,
+`/var/lib/roadsense/camera-calibration.json`, `signs.jsonl`, `vehicle-calibration.json`, `/etc/roadsense/calib.json`);
+the recordings folder holds the 93 sessions it held. `chris-integrator.service` disabled as the provisioning
+wants it; `CHRIS_NATIVE` not set. No reboot, no package installed, highest temperature 84.4 C. Working files in
+`~user/l50` (trees, results, scripts; deletable). CMDB: `~/.infra/servers/poco.md` updated in place, `dotinfra
+lint` clean, synced, event 12.
+
+**The install script and the unit's link** (L49's finding): `scripts/install.sh` re-created
+`roadsense.target.wants/chris-integrator.service` on every run, which the car's provisioning removes. Fixed in
+the script: where a drop-in of `roadsense.target` already says `Wants=chris-integrator.service` (the car's
+overlay), no link is made. Tried in scratch prefixes under dash and busybox sh, both cases; not run with
+`systemctl` on the live phone (the package was swapped by hand).
 
 ## 7. What stayed in Python, with the numbers
 
@@ -325,7 +397,7 @@ About 80 % of what the daemon now costs is Python byte code; 13 % is the native 
 
 The whole per-message path native (parse -> estimator -> trackers -> serialise, Python left for wiring and
 I/O) would remove most of the 80 % that is still Python: an estimated further 1.0-1.2 ms a frame on the laptop,
-6-8 ms on the phone, i.e. the daemon at 3-5 ms a frame on a little core instead of about 10. The price is
+5-6 ms on the phone, i.e. the per-message path at about 3 ms a frame on a little core instead of 8-9. The price is
 about 12,000 lines (core 4,900, sources 2,500, trackers 5,000) written a second time and kept equal to the
 reference line for line, fault logic included. It is the order of magnitude; it is a project of weeks with its
 own equivalence campaign, and it changes what the public package is (a native program with a Python reference
@@ -362,17 +434,19 @@ of that, each with the same method as the lane tracker's: the object layer (8.5 
 
 ## 9. Not verified
 
-* Everything on the phone: that the module loads there and passes its self-test (it does in an emulated
-  Alpine arm64 container with the same libc and a newer Python); the cost; the equivalence against the phone's
-  numpy and OpenBLAS (the exact parts are tested bit for bit on emulated aarch64; the filter's differences on
-  the phone may be other messages than on the laptop, of the same kind); memory; the live share.
-* The install script's native step on the phone's busybox ash (tried under busybox sh on the laptop).
-* A drive: the first one should read `cost_live.py`, as L46 asked.
-* numpy versions other than 2.5.4 (x86-64) and 2.5.5 (aarch64, emulated) for the lane tracker's order of
-  additions; another order shows as a failing test, not as wrong output beyond rounding.
+* **A drive.** The car-feed figure is a replay off line; the first drive should read `tools/cost_live.py` and
+  `/v2/health` (`native`), as L46 asked.
+* The install script as a whole on the live phone (its native step ran there in a scratch prefix; its new
+  rule for the unit's link only on the laptop).
+* The regression tools with the receiver in the loop (section 3) ran on the laptop only; on the phone the
+  comparison is the two inputs of section 6.
+* numpy versions other than 2.5.4 (x86-64 and the phone) and 2.5.5 (aarch64, emulated) for the lane tracker's
+  order of additions; another order shows as a failing test, not as wrong output beyond rounding.
 * Free-threaded CPython and CPython 3.10: the module is not built for them (pure Python runs).
+* The backend and the other daemons were not measured again by this lane (L49's budget of the same day:
+  backend 28-29 % of its core with the paced CAN reader).
 
 ## 10. Branches
 
-roadsense `v2-l50` and the car repository's `l50-native`: heads in the lane's hand-back. `v2-l49` had no new
-commits when this was written (fae9098). Not pushed, not merged.
+roadsense `v2-l50` (with `v2-l49`'s 8ed5a5e merged in) and the car repository's `l50-native`: heads in the
+lane's hand-back. Not pushed, not merged.
