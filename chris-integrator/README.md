@@ -68,7 +68,8 @@ Design, with the alternatives that were considered: [docs/DESIGN.md](docs/DESIGN
 ## Quick start
 
 Requirements: Python 3.10 or newer and numpy. The HTTP / WebSocket API needs aiohttp; the map box needs
-chris-mapper. Nothing else.
+chris-mapper. Nothing else. A C compiler is optional: `sh native/build.sh` (or `pip install .`) builds the
+native core, which halves the cost per frame; without it the package runs pure Python (docs/NATIVE.md).
 
 ```sh
 git clone <this repository> && cd chris-integrator
@@ -236,7 +237,8 @@ came to firing.
 
 `docs/DESIGN.md` (estimator, fault detection, object layer, the mixer), `docs/FAULTS.md` (which detectors gate;
 the fault table), `docs/TOPICS.md` (field tables of the consolidated topics), `docs/VEHICLE_INPUT.md` (the
-vehicle input API as served here), `docs/INSTALL.md` (install, units, ports, rollback).
+vehicle input API as served here), `docs/INSTALL.md` (install, units, ports, rollback), `docs/NATIVE.md` (the
+native core: what is compiled, what "the same result" means for each part, building, a native plug-in).
 
 ## Status and limits
 
@@ -255,9 +257,11 @@ Not hidden:
   with one camera, one speed chain and one receiver: which of two disagreeing sources is wrong when no third
   exists, two sources wrong the same way, a wrong camera lead range, a slow drift of the receiver.
 * Monitor thresholds rest on a small amount of real driving (town, daylight).
-* Pure Python and numpy: about 4 ms per camera frame on a laptop core for the whole stack (the estimator about
-  half of it), more with radars; about 25 ms on a phone's little core (docs/DESIGN.md 14.7). The filter core is
-  the candidate for a compiled implementation.
+* Pure Python and numpy: about 3 ms per camera frame on a laptop core for the whole stack (the estimator about
+  half of it), more with radars; 17-22 ms on a phone's little core (docs/DESIGN.md 14.7). With the optional
+  native core (docs/NATIVE.md: the filter's linear algebra, JSON text, rounding, the lane tracker's arrays in C;
+  the same outputs but for the sign of a rounded zero in one calibration field) it is half of that. What is
+  left is the price of Python on the estimator's bookkeeping and the trackers' decisions, not arithmetic.
 * The car's direct feed is taken as it comes: the validation, per-signal quality and the description of the
   car that a feeder may send (vehicle input API 1.1) are not yet carried into the `vehicle` topic.
 * A second chris-roadsense instance is wired as a channel (its streams are suffixed with the instance name);

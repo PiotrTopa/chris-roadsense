@@ -846,6 +846,16 @@ What keeps it there, and what an extension has to respect:
 * On arrays of a few dozen values a numpy call costs more than the arithmetic: the trackers convert and test
   a frame's lists in one array, not one by one, and avoid `np.median` and friends on tiny inputs.
 
+* **The arithmetic and the text exist twice** (`chris_integrator/native`, docs/NATIVE.md): the filter's
+  prediction, scalar row and smoother step, the lane tracker's arrays, `json.dumps` / `json.loads`, `round`
+  and the display box's table walk are also in one C file, used where the compiled module is present. The
+  Python is the reference: a change to either side is a change to both, and `tests/test_native.py` holds them
+  together (text and the lane tracker bit for bit; the filter to rounding, because numpy leaves the order of
+  its sums of products to BLAS). On a laptop core the per-message path costs 1.6 instead of 3.2 ms per road
+  frame with a car's feed and 1.4 instead of 2.3 ms without; about four fifths of what remains is Python
+  byte code in the estimator's bookkeeping, the trackers' decisions and the mixer (lane report L50).
+
+`tools/native_bench.py` prices every native function against its reference on the machine in hand;
 `tools/cost_capture.py` records what a running daemon is fed, `tools/cost_bench.py` replays it through the
 daemon's whole per-message path (cost by stage, and a dump of every output for comparing two trees line by
 line), `tools/cost_live.py` measures a running unit.
