@@ -11,7 +11,7 @@ track ([x, y, vx, vy, ax], the car's yaw rate compensated), other sensors update
 frames, and a track the camera lets go lives on while another sensor sees it.
 
 Road-model profiles (`PROFILES`): the noise model and life cycle were measured on supercombo; the vision model
-(`road.road_model == "vision"`) is a different instrument (docs/lanes/L27-new-model-default.md).
+(`road.road_model == "vision"`) is a different instrument (chris-roadsense docs/lanes/L27-new-model-default.md).
 """
 import math
 
@@ -28,7 +28,7 @@ DEFAULT_CFG = dict(
     acquire_frames=2,            # consecutive frames needed to start a track
     coast_s=0.6,                 # a track survives this long without a usable measurement
     max_gap_s=1.0,               # road messages further apart than this restart the tracker
-    # measurement noise (sigma per frame), from the replayed rides (docs/lanes/L14-lead.md):
+    # measurement noise (sigma per frame), from the replayed rides (chris-roadsense docs/lanes/L14-lead.md):
     #   distance        max(hypot(rx_floor, rx_rel * d), rx_scale * the model's x_std)
     #   relative speed  max(rv_floor, rv_scale * the model's v_std) + rv_rel * d
     rx_floor=0.10, rx_rel=0.02, rx_scale=0.2,
@@ -62,7 +62,7 @@ DEFAULT_CFG = dict(
     reacquire_s=0.0, reacquire_tol_m=3.0, reacquire_tol_rel=0.15,
 )
 
-# Per road model, on top of DEFAULT_CFG; a key set by the user's config wins (docs/lanes/L27, L29).
+# Per road model, on top of DEFAULT_CFG; a key set by the user's config wins (chris-roadsense docs/lanes/L27-new-model-default.md, L29).
 PROFILES = {
     "vision": dict(
         rv_scale=0.5, rv_rel=0.01, rx_scale=0.4, dist_walk_rel=0.03,
@@ -350,7 +350,7 @@ class CameraLeadModel(SensorModel):
                 o.mem["policy"] = cur.mem.get("policy")
                 cur = self.cur = o
                 self.other = self._has_other(cur, T)
-        # the camera's distance on the scale a range sensor taught (docs/lanes/L14-lead.md)
+        # the camera's distance on the scale a range sensor taught (chris-roadsense docs/lanes/L14-lead.md)
         vs = self.vis_scale
         scale = vs[0] if vs is not None and ts - vs[2] <= c["scale_keep_s"] * NS and vs[1] >= c["scale_min_n"] else None
         usable = z is not None and z["p"] >= c["drop_prob"]

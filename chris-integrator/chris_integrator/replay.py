@@ -6,11 +6,11 @@
         for out in p.feed(m):        # the api's outgoing messages for this input, in the api's order
             ...
 
-`Pipeline` is a mixer of chris-integrator (chris-integrator/chris_integrator/mixer) with the session as its
+`Pipeline` is a mixer of chris-integrator (chris_integrator/mixer) with the session as its
 input channel: `ego` and `map` go to the boxes; a `road` message yields `road`, `ego_state`, `tracks`, `lead`,
 `lanes`, `view` (with `view.road`), and `fused` twice a second of frame time; `lights`, `signs` and the other
-recorded topics pass through as they were recorded (they went out annotated). Used by
-tools/view_replay.py and by consumers' replay tools (the car computer's scene_feed_replay / mfd_chain_replay).
+recorded topics pass through as they were recorded (they went out annotated). Used by chris-roadsense's replay
+tools (its tools/view_replay.py and others) and by consumers' replay tools (the reference car computer's).
 """
 import json
 import os
@@ -53,30 +53,49 @@ def read_lines(path):
                 pass
 
 
-def load_pos(path):
-    """Feeder `gnss` messages from the car computer's trip logs (lines with `"dir":"POS"`, each prefixed by its
-    trip file name; extraction: docs/lanes/L35-ego-fusion-audit.md section 6), each with `_wall` (s): the trip
-    file's start (its name, local time Europe/Warsaw) plus the line's `ts` (ms since the trip start)."""
+def load_pos(path, tz=None):
+    """GNSS fixes for sessions recorded without them (`read_session(pos=...)`): `gnss` messages, each with `_wall`
+    (s, Unix time), sorted by `ts_mono_ns`. Two line formats are read; anything else is skipped:
+
+    * generic: one `gnss` message per line (JSON) with `ts_mono_ns` and `ts_real_ns` (`_wall` = `ts_real_ns`);
+    * an example adapter for one host's log, the reference car computer's trip logs: a line prefixed by its trip
+      file's name (`...trip_YYYYMMDD_HHMMSS...`), then a JSON record `{"ts": ms since the trip start, "d": the
+      feeder message}`; `_wall` = the trip's start, read as local time of `tz` (an IANA name such as
+      "Europe/Warsaw"; None: the local time zone of this machine), plus `ts`.
+
+    Another host's log format belongs in an adapter of its own that yields the same messages."""
     import re
-    import time as _time
-    os.environ.setdefault("TZ", "Europe/Warsaw")
-    _time.tzset()
+    from datetime import datetime
+    zone = None
+    if tz is not None:
+        from zoneinfo import ZoneInfo
+        zone = ZoneInfo(tz)
     out = []
     with open(path) as f:
         for ln in f:
             i = ln.find("{")
-            m = re.search(r"trip_(\d{8})_(\d{6})", ln[:i]) if i >= 0 else None
-            if not m:
+            if i < 0:
                 continue
             try:
                 rec = json.loads(ln[i:])
             except ValueError:
                 continue
-            d = rec.get("d") or {}
-            if d.get("type") != "gnss" or not isinstance(d.get("ts_mono_ns"), int):
+            if not isinstance(rec, dict):
                 continue
-            start = _time.mktime(_time.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S"))
-            d["_wall"] = start + (rec.get("ts") or 0) / 1000.0
+            m = re.search(r"trip_(\d{8})_(\d{6})", ln[:i])
+            if m:                                                   # the trip-log adapter
+                d = rec.get("d") or {}
+                if d.get("type") != "gnss" or not isinstance(d.get("ts_mono_ns"), int):
+                    continue
+                start = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
+                start = start.replace(tzinfo=zone).timestamp() if zone is not None else start.timestamp()
+                d["_wall"] = start + (rec.get("ts") or 0) / 1000.0
+            else:                                                   # generic: the message itself
+                d = rec
+                if (d.get("type") != "gnss" or not isinstance(d.get("ts_mono_ns"), int)
+                        or not isinstance(d.get("ts_real_ns"), int)):
+                    continue
+                d["_wall"] = d["ts_real_ns"] / NS
             out.append(d)
     out.sort(key=lambda d: d["ts_mono_ns"])
     return out
@@ -85,7 +104,7 @@ def load_pos(path):
 def read_session(session, map_path=None, road_model=None, pos=None):
     """Messages of a session in time order.
 
-    map_path    (the `--out` of tools/map_replay.py) the session's own `map` messages are replaced by those of the
+    map_path    (`map` messages, e.g. the `--out` of chris-roadsense tools/map_replay.py) the session's own `map` messages are replaced by those of the
                 replay.
     road_model  for sessions recorded before lane L37 (the recorder dropped `road.road_model`): the model name to
                 put back into every `road` message that has none ("vision" for every recording of the car so far).

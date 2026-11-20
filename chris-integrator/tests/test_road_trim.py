@@ -9,7 +9,7 @@ from chris_integrator.io.sockets import parse_line, parse_line_trimmed
 from chris_integrator.mixer import MessageClock
 from chris_integrator.stack import build
 
-DATA = os.path.join(os.path.dirname(__file__), "data", "road_raw_vision.jsonl")   # modeld's own lines as a phone wrote them
+DATA = os.path.join(os.path.dirname(__file__), "data", "road_raw_vision.jsonl")   # the vision model's layout, synthetic values (data/make_road_raw.py)
 
 
 def lines():

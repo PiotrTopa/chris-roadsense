@@ -19,7 +19,7 @@ frame that does not fit the track at all (the network relabelled its lines: a la
 averaged in; when the new picture persists the track is re-initialised on it, so nothing between two lanes is
 ever reported. An ego-motion compensation of the prediction (slide every line by the distance travelled, turn
 it by the yaw of the frame) is implemented and switched off (`slide_gain`, `yaw_gain`, `vy_gain` = 0): on the
-replayed rides it made the tracked lines trail the raw ones more, not less (docs/lanes/L15-stability.md: while
+replayed rides it made the tracked lines trail the raw ones more, not less (chris-roadsense docs/lanes/L15-stability.md: while
 the car follows its lane the lines hardly move in its frame, and the slide needs a speed and a camera yaw that
 an uncalibrated camera does not give).
 

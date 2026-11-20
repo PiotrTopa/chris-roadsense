@@ -1,7 +1,9 @@
-"""End-to-end test: tools/fake_daemons.py + the api as subprocesses, every endpoint exercised.
+"""End-to-end test: a fake chris-roadsense instance (tests/fakeroadsense.py: its daemons' sockets and its debug
+face) and chris-integrator as subprocesses, every endpoint of the consolidated API exercised. Needs aiohttp; the
+map box's check runs when chris-mapper is installed.
 
-    cd <repo> && python3 -m unittest discover -s api/tests -v
-Env: ROADSENSE_RUNDIR (default: a temp dir), ROADSENSE_TEST_PORT (default: a free port), OVERLAY_OUT (save one /preview frame there).
+    python3 -m pytest -q tests/test_api.py
+Env: OVERLAY_OUT (save one forwarded /preview frame there).
 """
 import asyncio
 import json
@@ -15,9 +17,18 @@ import time
 import unittest
 import urllib.request
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HAVE_ROADSENSE = os.path.exists(os.path.join(REPO, "tools", "fake_daemons.py")) and os.path.isdir(os.path.join(REPO, "api", "roadsense_api"))
+FAKE = os.path.join(HERE, "tests", "fakeroadsense.py")
+try:
+    import aiohttp  # noqa: F401
+    HAVE_AIOHTTP = True
+except ImportError:
+    HAVE_AIOHTTP = False
+try:
+    import chris_mapper
+    MAPPER = os.path.dirname(os.path.dirname(os.path.abspath(chris_mapper.__file__)))   # where it was found
+except ImportError:
+    MAPPER = None
 
 
 def free_port():
@@ -26,10 +37,10 @@ def free_port():
         return s.getsockname()[1]
 
 
-@unittest.skipUnless(HAVE_ROADSENSE, "needs the chris-roadsense tree next to this one (its fake daemons and debug face)")
+@unittest.skipUnless(HAVE_AIOHTTP, "needs aiohttp (the HTTP / WebSocket API)")
 class ApiTest(unittest.TestCase):
     """The whole stack as processes: fake roadsense daemons -> their sockets -> chris-integrator (the consolidated
-    API under test), with the roadsense debug face behind it for what belongs to the camera (/preview, the ring)."""
+    API under test), with the fake debug face behind it for what belongs to the camera (/preview, the ring)."""
 
     @classmethod
     def setUpClass(cls):
@@ -40,12 +51,9 @@ class ApiTest(unittest.TestCase):
         os.makedirs(cls.datadir)
         cls.port, cls.dbg_port = free_port(), free_port()
         cls.base = f"http://127.0.0.1:{cls.port}"
-        env = dict(os.environ, PYTHONPATH=os.pathsep.join([HERE, os.path.join(REPO, "chris-mapper")]),
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([HERE] + ([MAPPER] if MAPPER else [])),
                    CHRIS_MAP_PACK=os.path.join(cls.tmp, "no.rsmap"))
-        cls.debug = subprocess.Popen(
-            [sys.executable, "-m", "roadsense_api", "--rundir", cls.rundir,
-             "--ring", os.path.join(cls.rundir, "roadsense-frames"), "--host", "127.0.0.1", "--port", str(cls.dbg_port)],
-            cwd=os.path.join(REPO, "api"), env=dict(os.environ, ROADSENSE_CONFIG_DIR=os.path.join(cls.tmp, "etc")))
+        cls.fake = cls.api = None
         cls.api = subprocess.Popen(
             [sys.executable, "-m", "chris_integrator", "--rundir", os.path.join(cls.tmp, "chris"), "--datadir", cls.datadir,
              "--config-dir", os.path.join(cls.tmp, "etc"), "--roadsense", cls.rundir,
@@ -65,14 +73,14 @@ class ApiTest(unittest.TestCase):
 
     @classmethod
     def start_fake(cls):
-        cls.fake = subprocess.Popen([sys.executable, os.path.join(REPO, "tools", "fake_daemons.py"),
-                                     "--rundir", cls.rundir, "--no-mapd"])
+        cls.fake = subprocess.Popen([sys.executable, FAKE, "--rundir", cls.rundir, "--http-port", str(cls.dbg_port)])
 
     @classmethod
     def tearDownClass(cls):
-        for p in (cls.fake, cls.api, cls.debug):
-            p.terminate()
-            p.wait(10)
+        for p in (cls.fake, cls.api):
+            if p is not None:
+                p.terminate()
+                p.wait(10)
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     @classmethod
@@ -260,14 +268,18 @@ class ApiTest(unittest.TestCase):
         m = self.get("/v2/mixer")
         names = [p["name"] for p in sorted((p for p in m["plugins"] if p["enabled"]), key=lambda p: p["order"])]
         self.assertEqual(names[:3], ["ride_watch", "road_users", "estimator"])   # road users annotate the tracks (L42)
-        self.assertLess(names.index("estimator"), names.index("mapper"))      # the map box reads the ego estimate
+        if MAPPER:
+            self.assertLess(names.index("estimator"), names.index("mapper"))  # the map box reads the ego estimate
         self.assertLess(names.index("lanes"), names.index("view"))
         self.assertTrue(all(p["errors"] == 0 for p in m["plugins"]), [p["last_error"] for p in m["plugins"]])
         self.assertEqual(m["streams"]["lead"]["producer"], "estimator")
         self.assertIn("view", m["streams"]["lead"]["consumers"])
         self.assertEqual(self.get("/v2/tracks")["type"], "tracks")
         self.assertEqual(self.get("/v2/ego_state")["type"], "ego_state")
-        self.assertEqual(self.get("/v2/map")["reason"], "no_pack")          # the map box runs and says why it has nothing
+        if MAPPER:
+            self.assertEqual(self.get("/v2/map")["reason"], "no_pack")      # the map box runs and says why it has nothing
+        else:
+            self.assertNotIn("mapper", names)                               # without chris-mapper: no map box, the rest runs
         g = self.get("/v2/health")["governor"]                             # the roadsense governor's state, an input
         self.assertTrue(g["enabled"])
         self.assertIn("view_hz", g["caps"])

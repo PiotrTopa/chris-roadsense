@@ -3,7 +3,7 @@ two real standstill spans (model output of recorded rides, chris-integrator/test
 
     python3 -m unittest api.tests.test_lead -v     (from the repository root)
 
-The synthetic lead output follows docs/lanes/L14-lead.md: distance jitter hypot(0.07 m, 1.6 % of the distance)
+The synthetic lead output follows chris-roadsense docs/lanes/L14-lead.md: distance jitter hypot(0.07 m, 1.6 % of the distance)
 per frame, a slow wander of 0.1 m (5 s), 2 % outlier frames of 0.4-1.1 m, a lead speed output that sits within
 millimetres per second of zero behind a standing car, the model's own v_ego with rare blips, x_std = 0.1 +
 0.13 d, v_std = 0.05 + 0.3 min(|v|, 1) + 0.012 d.
@@ -579,7 +579,7 @@ class Radar(unittest.TestCase):
 
 class RealSpans(unittest.TestCase):
     """Model output (supercombo, ORT fp32, 20 fps replay) of two recorded rides around a stop behind a car.
-    Columns: t, v_ego, prob, x, x_std, v, v_std (docs/lanes/L14-lead.md says how they were made)."""
+    Columns: t, v_ego, prob, x, x_std, v, v_std (chris-roadsense docs/lanes/L14-lead.md says how they were made)."""
 
     def replay(self, name, every=1, surrogate=False):
         tr = LeadTracker()

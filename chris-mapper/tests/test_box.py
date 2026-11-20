@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from chris_mapper.box import MapBox      # noqa: E402
 from chris_mapper.rsmap import Pack      # noqa: E402
-from tests import synthpack as S         # noqa: E402
+from chris_mapper import synthpack as S         # noqa: E402
 
 NS = 10 ** 9
 

@@ -12,10 +12,9 @@ import types
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tools"))
 
 from chris_mapper import context, rsmap as R       # noqa: E402
-from tests import synthpack as S                     # noqa: E402
+from chris_mapper import synthpack as S                     # noqa: E402
 
 MAN = {"region": "synthetic", "osm_timestamp": "", "built": "test", "attribution": "hand-made test network"}
 
@@ -111,22 +110,6 @@ class TurnLanes(unittest.TestCase):
         open(bad, "wb").write(raw)
         with self.assertRaisesRegex(ValueError, "pack format 9"):
             R.Pack(bad)
-
-    def test_builder_tags(self):
-        try:                                         # the pack builder is chris-roadsense's tools/roadsense_maps.py
-            import roadsense_maps as B
-        except ImportError:
-            self.skipTest("the pack builder (chris-roadsense tools/roadsense_maps.py) is not next to this tree")
-        at = B.way_attrs({"highway": "primary", "oneway": "yes", "turn:lanes": "left|through|through; right"})
-        self.assertEqual((at[5], at[6], at[-2], at[-1]), (3, 3, "left|through|through;right", ""))
-        at = B.way_attrs({"highway": "secondary", "turn:lanes:forward": "left|", "turn:lanes:backward": "|right"})
-        self.assertEqual((at[6], at[7], at[-2], at[-1]), (2, 2, "left|none", "none|right"))
-        self.assertTrue(at[2] & R.F2_LANES_SPLIT)
-        at = B.way_attrs({"highway": "secondary", "oneway": "-1", "turn:lanes": "left|through"})
-        self.assertEqual((at[-2], at[-1]), ("", "left|through"))                    # geometry order is reversed
-        self.assertEqual(B.way_attrs({"highway": "primary", "turn:lanes": "left|right"})[-2:], ("", ""))   # two-way: ambiguous
-        self.assertEqual(R.normalise_turn_lanes("none|none|"), "")
-        self.assertEqual(B.node_feature({"highway": "speed_camera"})[0], R.FEATURE_ID["speed_camera"])
 
 
 if __name__ == "__main__":

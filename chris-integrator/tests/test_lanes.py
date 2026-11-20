@@ -2,7 +2,7 @@
 
     python3 -m unittest api.tests.test_lanes -v     (from the repository root)
 
-Noise model (docs/lanes/L15-stability.md): a lane line's lateral position jitters by a few centimetres per
+Noise model (chris-roadsense docs/lanes/L15-stability.md): a lane line's lateral position jitters by a few centimetres per
 frame near the car and by decimetres at 60 m, the network's own y_std is about four times that; a road edge
 jumps by 0.2-0.5 m per frame with a y_std of 0.5-1.4 m; the probability of a weak line wanders around the
 drawing threshold.

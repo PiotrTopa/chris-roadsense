@@ -2,7 +2,7 @@
 
 A fault is (target, kind, window, parameters). The target names a source's quantity (`TARGETS`), the kind is one
 of the taxonomy's fault classes (`KINDS`); `apply(messages, faults)` yields the stream with the faults in it.
-Nothing here knows the integrator: the campaign (tools/fault_campaign.py) runs the faulted stream through it and
+Nothing here knows the integrator: the campaign (chris-roadsense tools/fault_campaign.py) runs the faulted stream through it and
 scores what it reported against what was injected.
 
     for m in apply(msgs, [Fault("vehicle.speed", "scale", 60.0, 120.0, k=0.7)]): ...

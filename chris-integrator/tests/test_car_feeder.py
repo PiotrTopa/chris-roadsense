@@ -1,7 +1,7 @@
 """The real consumer of the vehicle input API, read-only: a car backend's own feeder code against a chris-integrator
-process. Skipped unless CHRIS_TEST_CAR_REPO names a checkout of the car computer
+process. Skipped unless CHRIS_TEST_CAR_REPO names a checkout of the reference car computer
 (github.com/PiotrTopa/cyberpank-prius-gen2-computer); CHRIS_TEST_CAR_PYTHON may name its interpreter (default: the
-checkout's `.venv/bin/python`, else this one).
+checkout's `.venv/bin/python`, else this one). Needs chris-mapper installed.
 
 The car's code runs in a process of its own (its interpreter, its imports), driven by the script below:
 
@@ -25,9 +25,13 @@ import unittest
 import urllib.request
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MAPPER = os.path.join(os.path.dirname(HERE), "chris-mapper")
+try:
+    import chris_mapper
+    MAPPER = os.path.dirname(os.path.dirname(os.path.abspath(chris_mapper.__file__)))   # where it was found
+except ImportError:
+    MAPPER = None
 CAR = os.environ.get("CHRIS_TEST_CAR_REPO")
-HAVE_CAR = bool(CAR) and os.path.isfile(os.path.join(CAR or "", "cyberpunk_computer", "backend", "position_feeder.py"))
+HAVE_CAR = bool(CAR) and MAPPER is not None and os.path.isfile(os.path.join(CAR or "", "cyberpunk_computer", "backend", "position_feeder.py"))
 
 
 def car_python():
@@ -115,7 +119,7 @@ def free_port():
         return s.getsockname()[1]
 
 
-@unittest.skipUnless(HAVE_CAR, "set CHRIS_TEST_CAR_REPO to a checkout of the car computer to run its feeder against the integrator")
+@unittest.skipUnless(HAVE_CAR, "set CHRIS_TEST_CAR_REPO to a checkout of the car computer (and install chris-mapper) to run its feeder against the integrator")
 class CarFeederAgainstTheIntegrator(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

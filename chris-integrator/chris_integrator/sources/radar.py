@@ -1,4 +1,4 @@
-"""A radar as a source: `objects` messages of the vehicle input API (docs/VEHICLE_API.md 5.7) with raw
+"""A radar as a source: `objects` messages of the vehicle input API (chris-roadsense docs/VEHICLE_API.md 5.7) with raw
 detections or the sensor's own object list, polar or Cartesian in the sensor's frame (or in the camera's
 frame, as mapd relays them).
 

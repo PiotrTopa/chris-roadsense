@@ -2,7 +2,7 @@
 
 Every fault class of the taxonomy (DESIGN.md section 5a) injected into the simulated town drive (seed 1, 240 s,
 the fault from 95 s to 150 s unless it is a permanent change), through the integrator as built. Reproduce with
-`tools/fault_campaign.py sim` of the chris-roadsense repository; `tests/test_faults.py` asserts a subset.
+[`tools/fault_campaign.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/fault_campaign.py)` sim` of the chris-roadsense repository; `tests/test_faults.py` asserts a subset.
 
 Columns: **detected after**: seconds from the onset to the first alarm that the unfaulted run does not have (a
 source `fault` / `suspect` / `stale`, a finding in `ego_state.diagnostics`). **isolated**: `ok` the injected
@@ -24,7 +24,7 @@ healthy drives**. The table is that evidence: two drives with the car's own spee
 map (38 and 15 minutes, 8843 and 1725 camera frames with the car moving), one camera-only drive, two parked
 sessions. `peak` is the largest value the detector's statistic reached as a fraction of its firing level
 (1 = it fires; 0.5 = a margin of 2). It is thin data: two drives of one car on one day; a detector that gates
-here has earned it on those and nothing more. Reproduce: `tools/detector_audit.py SESSION...` of the
+here has earned it on those and nothing more. Reproduce: roadsense [`tools/detector_audit.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/detector_audit.py)` SESSION...` of the
 chris-roadsense repository.
 
 | detector | default | healthy drives: peak / level, verdicts | why |
@@ -107,7 +107,7 @@ without the map: 18-32 m, stated 31-44 m. (`tests/test_position_loop.py`; the si
 what a wrong match costs is the map rows of the table.)
 
 Rows of the table below that this changed (simulation, default modes, seconds an output was valid and wrong
-beyond its tolerance and 3 of its own sigmas; `tools/fault_campaign.py sim`, before = the tree before L47):
+beyond its tolerance and 3 of its own sigmas; roadsense [`tools/fault_campaign.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/fault_campaign.py)` sim`, before = the tree before L47):
 
 | fault | before | after |
 |---|---|---|
@@ -133,7 +133,7 @@ a receiver fault now last as long as something is held back (up to a minute afte
 
 (The table below is the one of before L47; its receiver and map rows are superseded by the section above.)
 
-Every detector gating (`tools/fault_campaign.py sim --gate-all`): what the detectors can do on a car whose
+Every detector gating (roadsense [`tools/fault_campaign.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/fault_campaign.py)` sim --gate-all`): what the detectors can do on a car whose
 sensors support them. "Before" is the integrator before the fault-detection work. Positions are scored whenever
 both runs share the local origin (until L43 only while they shared the frame id, which hid positions after a
 re-anchoring; the "before" column is re-scored the same way).
@@ -202,7 +202,7 @@ re-anchoring; the "before" column is re-scored the same way).
 before: 59 faults: detected 46, isolated correctly 12, wrong source blamed 6, no output confidently wrong 29; confidently-wrong output time in all 1657 s
 after:  59 faults: detected 56, isolated correctly 38, wrong source blamed 2, no output confidently wrong 33; confidently-wrong output time in all 737 s
 
-**With the default modes** (`tools/fault_campaign.py sim`; `speed.cusum`, `yaw_rate.cusum`, `speed.track`,
+**With the default modes** (roadsense [`tools/fault_campaign.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/fault_campaign.py)` sim`; `speed.cusum`, `yaw_rate.cusum`, `speed.track`,
 `signal.stuck` report): 59 faults, the injected source taken out or named at fault level in 20 (all gating: 38;
 before: 12), no output confidently wrong in 30 (33; 29), confidently-wrong output time 1355 s (737 s; 1657 s),
 of which speed 424 s (131; 530), position 655 s (376; 691), heading 119 s (95; 179), yaw rate 56 s (34; 154),

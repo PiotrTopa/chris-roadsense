@@ -83,7 +83,7 @@ DEFAULT_CFG = dict(
 # model's lane lines are less steady than supercombo's (L24-M), and at the same threshold the filter was wrong and
 # confident more often on the labelled rides (5.5 % of labelled frames against 3.4 %; night expressway 9.3 against
 # 2.6 %). At 0.9 it is wrong as rarely as with supercombo (3.3 %) and says "unknown" more often (9.9 against
-# 6.6 %): unknown beats confident wrong (docs/lanes/L27-new-model-default.md).
+# 6.6 %): unknown beats confident wrong (chris-roadsense docs/lanes/L27-new-model-default.md).
 PROFILES = {"vision": dict(commit_p=0.9)}
 
 

@@ -9,8 +9,6 @@ import unittest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-MAPPER = os.path.join(os.path.dirname(HERE), "chris-mapper")
-sys.path.insert(0, MAPPER)
 
 from chris_integrator.io.feed import Feed  # noqa: E402
 from chris_integrator.io.vehicle_input import TYPES, VehicleInput, calibration_report, hello  # noqa: E402
@@ -18,15 +16,11 @@ from chris_integrator.mixer import MessageClock  # noqa: E402
 from chris_integrator.stack import build  # noqa: E402
 
 try:
-    import importlib.util
-    from chris_mapper import sim
+    from chris_mapper import sim, synthpack as S
     from chris_mapper.box import MapBox
     from chris_mapper.rsmap import Pack
     from chris_integrator.plugins.mapper import Mapper
-    _spec = importlib.util.spec_from_file_location("synthpack_vi", os.path.join(MAPPER, "tests", "synthpack.py"))
-    S = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(S)
-except (ImportError, OSError, FileNotFoundError):
+except ImportError:
     S = None
 
 NS = 10 ** 9
@@ -251,7 +245,7 @@ class Store(unittest.TestCase):
         self.assertEqual((rep["gnss"]["lag_s"], rep["gnss"]["converged"], rep["source"]), (0.8, True, "estimator"))
 
 
-@unittest.skipUnless(S is not None, "needs chris-mapper next to this tree")
+@unittest.skipUnless(S is not None, "needs chris-mapper installed")
 class ResetInTheStack(unittest.TestCase):
     """A synthetic drive through the stack, then the feeder's `reset`: the estimator has no position and the map box
     no state (`no_source`), the calibration learned from the car's sensors is kept, motion goes on; a real fix

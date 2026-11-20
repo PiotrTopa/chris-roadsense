@@ -1,4 +1,4 @@
-"""A further camera as an object source: `objects` messages of kind "camera" (docs/VEHICLE_API.md 5.7; what a
+"""A further camera as an object source: `objects` messages of kind "camera" (chris-roadsense docs/VEHICLE_API.md 5.7; what a
 second roadsense instance's detector, or any camera with its own object list, publishes): positions in the
 sensor's frame (x along its optical axis, y left), optionally class and probability.
 

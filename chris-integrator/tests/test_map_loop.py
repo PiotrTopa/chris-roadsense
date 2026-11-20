@@ -1,8 +1,7 @@
 """The loop estimator <-> map box against truth (lane L47; docs/DESIGN.md section 15a): simulated drives on the
 hand-made network through the whole stack. Is the right road matched, is the position honest, what does a parallel
 road do to the stated uncertainty, what does a turn tell about the position along the road, what is left with a
-receiver on few satellites and a host that stalls. Needs chris-mapper next to this tree."""
-import importlib.util
+receiver on few satellites and a host that stalls. Needs chris-mapper installed (skipped without)."""
 import math
 import os
 import sys
@@ -11,17 +10,12 @@ import unittest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-MAPPER = os.path.join(os.path.dirname(HERE), "chris-mapper")
-sys.path.insert(0, MAPPER)
 
 try:
-    spec = importlib.util.spec_from_file_location("synthpack_mapper", os.path.join(MAPPER, "tests", "synthpack.py"))
-    S = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(S)
-    from chris_mapper import geo, sim
+    from chris_mapper import geo, sim, synthpack as S
     from chris_mapper.box import MapBox
     from chris_mapper.rsmap import Pack
-except (ImportError, OSError, AttributeError):
+except ImportError:
     S = None
 
 from chris_integrator.io.feed import Feed  # noqa: E402
@@ -62,7 +56,7 @@ def pct(v, p):
     return v[min(len(v) - 1, int(p / 100.0 * len(v)))]
 
 
-@unittest.skipUnless(S is not None, "needs chris-mapper next to this tree")
+@unittest.skipUnless(S is not None, "needs chris-mapper installed")
 class Loop(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

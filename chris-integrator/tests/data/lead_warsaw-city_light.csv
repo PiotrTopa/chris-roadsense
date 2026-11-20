@@ -1,4 +1,4 @@
-# modeld_replay (supercombo v0.9.7, ORT fp32, 20 fps) leads[0] and v_ego, ride warsaw-city 154-194 s; source video: YouTube _AD1zhQSp5E (Unwinding Rides), CC BY 3.0, cut/scaled/re-encoded (docs/RIDES.md). Numbers only, no frames.
+# modeld_replay (supercombo v0.9.7, ORT fp32, 20 fps) leads[0] and v_ego, ride warsaw-city 154-194 s; source video: YouTube _AD1zhQSp5E (Unwinding Rides), CC BY 3.0, cut/scaled/re-encoded (chris-roadsense docs/RIDES.md). Numbers only, no frames.
 t,v_ego,prob,x,x_std,v,v_std
 154.00,3.876,0.945,16.129,0.914,0.115,0.112
 154.05,3.711,0.967,16.040,0.913,0.137,0.144

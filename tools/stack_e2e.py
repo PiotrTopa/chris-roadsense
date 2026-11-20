@@ -38,7 +38,8 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(HERE, "chris-integrator"))
-from chris_integrator.replay import load_pos, read_session  # noqa: E402
+from chris_integrator.replay import read_session  # noqa: E402
+from replay_lib import load_pos  # noqa: E402
 
 NS = 1e9
 SOCK = {"camera": "camerad", "road": "modeld", "calib": "modeld", "signs": "signd", "lights": "lightd", "env": "envd"}

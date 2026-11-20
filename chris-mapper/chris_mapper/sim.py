@@ -1,6 +1,6 @@
 """Synthetic drives over a map pack: a route through the road graph, a simple vehicle that follows it,
 and the position-input messages (GNSS + motion) a feeder would send for that drive, with noise, dropouts
-and biases. Used by the tests and by tools/synth_drive.py; nothing in the daemon depends on it."""
+and biases. Used by the tests and by chris-roadsense tools/synth_drive.py; nothing in the daemon depends on it."""
 import heapq
 import math
 import random

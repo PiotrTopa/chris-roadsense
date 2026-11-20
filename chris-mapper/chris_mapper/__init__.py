@@ -3,5 +3,5 @@ map match and the map context). It estimates no position. `box.MapBox` is the bo
 `matcher` the map matching; `context` the road attributes, limits, junctions and look-ahead."""
 from . import context, geo, matcher, rsmap, sim  # noqa: F401
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 API_VERSION = 1      # the major version of the `map` message

@@ -19,8 +19,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(os.path.dirname(HERE), "chris-mapper"))
+sys.path.insert(0, HERE)                    # chris-mapper, where a part needs it: the installed one
 
 import numpy as np  # noqa: E402
 

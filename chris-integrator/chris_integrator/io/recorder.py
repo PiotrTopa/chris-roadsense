@@ -11,7 +11,7 @@ directory `<dir>/<YYYYmmdd-HHMMSS>/` with
                         the host says about the car), `objects` (range-sensor scans, at most `objects_hz`),
                         `view` (the display channel as consumers got it, with the road picture `view.road`, at most `view_hz`),
                         `calib` and one `camera` message a second, as they are. `lanes` and `lead` are not written: they are
-                        derived from `road` and `ego`, and `tools/lanes_replay.py` / `tools/lead_replay.py`
+                        derived from `road` and `ego`, and chris-roadsense `tools/lanes_replay.py` / chris-roadsense `tools/lead_replay.py`
                         recompute them from this file.
     frames/<seq>.jpg    the camera's preview JPEG every `frame_every_s` seconds (the file camerad already
                         writes for its /preview; copied, not re-encoded; only when the recorder is given that path): the pictures a detector replay

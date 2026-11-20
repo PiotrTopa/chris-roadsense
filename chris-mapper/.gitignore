@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.egg-info/
+.venv/
+.pytest_cache/
+# map packs and map data are never committed (docs/PACK.md)
+*.rsmap
+*.osm.pbf
+*.pbf
+*.osm

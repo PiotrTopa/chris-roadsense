@@ -1,0 +1,9 @@
+include LICENSE README.md setup.py
+graft docs
+graft tests
+graft tools
+graft native
+graft scripts
+graft systemd
+prune native/dist
+global-exclude __pycache__ *.py[cod] *.so

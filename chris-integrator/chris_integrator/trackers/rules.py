@@ -16,7 +16,7 @@ confirmation, lateral and plate code, and keeps three lists:
 Junctions ("until the next intersection", par. 32 ust. 2) come from the L6 proxies (junction signs, a >= 50 deg
 turn, distance caps) plus the ego traffic light of the `lights` topic: a light seen within 45 m that then
 disappears while the car moves on marks the junction at its last position (also fed to the speed limit's
-junction list unless `lights_junction` is off). Pure module, no I/O; see docs/lanes/L11-signs-in-effect.md.
+junction list unless `lights_junction` is off). Pure module, no I/O; see chris-roadsense docs/lanes/L11-signs-in-effect.md.
 """
 import collections
 import re

@@ -1,5 +1,5 @@
 """The map box in the stack: the car's feed -> the estimator's pose -> chris-mapper -> `map`, and the match back
-into the estimator as a measurement. Position is estimated once. Needs chris-mapper next to this tree."""
+into the estimator as a measurement. Position is estimated once. Needs chris-mapper installed (skipped without)."""
 import os
 import sys
 import tempfile
@@ -7,25 +7,15 @@ import unittest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-MAPPER = os.path.join(os.path.dirname(HERE), "chris-mapper")
-sys.path.insert(0, MAPPER)
 
 try:
-    from chris_mapper import geo, sim
+    import chris_mapper
+    from chris_mapper import geo, sim, synthpack as S
     from chris_mapper.box import MapBox
     from chris_mapper.rsmap import Pack
-    from tests_mapper import synthpack as S      # noqa: F401
+    MAPPER = os.path.dirname(os.path.dirname(os.path.abspath(chris_mapper.__file__)))   # where it was found
 except ImportError:
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("synthpack_mapper", os.path.join(MAPPER, "tests", "synthpack.py"))
-        S = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(S)
-        from chris_mapper import geo, sim
-        from chris_mapper.box import MapBox
-        from chris_mapper.rsmap import Pack
-    except (ImportError, OSError):
-        S = None
+    S = None
 
 from chris_integrator.io.feed import Feed  # noqa: E402
 from chris_integrator.mixer import MessageClock  # noqa: E402
@@ -64,7 +54,7 @@ def run(pack_path, mapper, x1=5600.0, seed=1, gnss_lag_s=2.0, **feed_kw):
     return st, rows
 
 
-@unittest.skipUnless(S is not None, "needs chris-mapper next to this tree")
+@unittest.skipUnless(S is not None, "needs chris-mapper installed")
 class MapperInTheStack(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -109,7 +99,7 @@ class MapperInTheStack(unittest.TestCase):
         self.assertEqual([s.name for s in st.mixer.order][2:4], ["estimator", "mapper"])     # after ride_watch, road_users
 
     def test_out_of_process_gives_the_same_map(self):
-        env = dict(os.environ, PYTHONPATH=MAPPER)
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([HERE, MAPPER]))
         remote = RemotePlugin(name="mapper", cmd=[sys.executable, "-m", "chris_mapper", "--plugin", "--pack", self.path],
                               env=env, timeout_s=5.0)
         st_r, rows_r = run(self.path, remote, x1=2600.0)

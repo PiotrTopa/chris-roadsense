@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.egg-info/
+.venv/
+.pytest_cache/
+# the native core: built modules (native/build.sh, pip) and cross-built artefacts (native/cross-build.sh) are
+# never committed; docs/NATIVE.md says how to build them
+*.so
+native/dist/
+# recordings, captures and map packs never belong in the repository
+*.jsonl.gz
+*.cap.gz
+*.rsmap
+*.jpg

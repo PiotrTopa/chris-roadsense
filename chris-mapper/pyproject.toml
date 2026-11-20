@@ -1,21 +1,53 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "chris-mapper"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Map box of the chris car perception stack: a pose in, the map match and the map context out"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Piotr Topa" }]
 requires-python = ">=3.10"
 dependencies = ["numpy"]
+keywords = ["map matching", "openstreetmap", "automotive", "speed limit", "perception"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/PiotrTopa/chris-mapper"
+Issues = "https://github.com/PiotrTopa/chris-mapper/issues"
+Integrator = "https://github.com/PiotrTopa/chris-integrator"
 
 [project.scripts]
 chris-mapper = "chris_mapper.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "chris_mapper.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["chris_mapper*"]
 
 [tool.setuptools.package-data]
 chris_mapper = ["limits/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

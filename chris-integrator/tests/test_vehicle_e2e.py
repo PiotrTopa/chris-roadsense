@@ -1,8 +1,8 @@
 """End to end: chris-integrator as a process with the map box on a hand-made pack, fed over its sockets and
 `POST /v2/vehicle` as the legacy mapd + api were (the checks of the removed `api/tests/test_map_e2e.py` that had
 no equivalent: `reset` over HTTP, the `vehicle` topic's signal table, the input's error replies), and the
-reference clients of the vehicle input API (`tools/vehicle_client.py`, `tools/position_client.py`) when the
-roadsense tree is next to this one. No camera: the estimator's outputs go out on the vehicle's samples."""
+reference clients of the vehicle input API (chris-roadsense's `tools/vehicle_client.py`, `tools/position_client.py`)
+when CHRIS_TEST_ROADSENSE_TOOLS names that directory. Needs chris-mapper installed (skipped without). No camera: the estimator's outputs go out on the vehicle's samples."""
 import asyncio
 import json
 import os
@@ -17,25 +17,21 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REPO = os.path.dirname(HERE)
-MAPPER = os.path.join(REPO, "chris-mapper")
-TOOLS = os.path.join(REPO, "tools")
+TOOLS = os.environ.get("CHRIS_TEST_ROADSENSE_TOOLS", "")
 NS = 10 ** 9
 
 try:
-    import importlib.util
-    _spec = importlib.util.spec_from_file_location("synthpack_e2e", os.path.join(MAPPER, "tests", "synthpack.py"))
-    SP = importlib.util.module_from_spec(_spec)
-    sys.path.insert(0, MAPPER)
-    _spec.loader.exec_module(SP)
-except (ImportError, OSError, FileNotFoundError):
+    import chris_mapper
+    from chris_mapper import synthpack as SP
+    MAPPER = os.path.dirname(os.path.dirname(os.path.abspath(chris_mapper.__file__)))   # where it was found
+except ImportError:
     SP = None
 try:
     import aiohttp
     HAVE_AIOHTTP = True
 except ImportError:
     HAVE_AIOHTTP = False
-HAVE_CLIENTS = os.path.exists(os.path.join(TOOLS, "vehicle_client.py")) and os.path.exists(os.path.join(TOOLS, "position_client.py"))
+HAVE_CLIENTS = bool(TOOLS) and os.path.exists(os.path.join(TOOLS, "vehicle_client.py")) and os.path.exists(os.path.join(TOOLS, "position_client.py"))
 
 
 def free_port():
@@ -44,7 +40,7 @@ def free_port():
         return s.getsockname()[1]
 
 
-@unittest.skipUnless(SP is not None and HAVE_AIOHTTP, "needs chris-mapper next to this tree and aiohttp")
+@unittest.skipUnless(SP is not None and HAVE_AIOHTTP, "needs chris-mapper installed and aiohttp")
 class VehicleInputE2E(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -226,7 +222,7 @@ class VehicleInputE2E(unittest.TestCase):
         self.assertEqual(self.get("/v2/map")["input"]["gnss"]["source"], "e2e")
         self.assertEqual(self.get("/v2/vehicle")["input"]["resets"], 1)
 
-    @unittest.skipUnless(HAVE_CLIENTS, "needs roadsense's tools/ (the reference clients) next to this tree")
+    @unittest.skipUnless(HAVE_CLIENTS, "set CHRIS_TEST_ROADSENSE_TOOLS to chris-roadsense's tools/ (the reference clients)")
     def test_5_reference_clients(self):
         sys.path.insert(0, TOOLS)
         from position_client import PositionFeed

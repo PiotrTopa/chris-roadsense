@@ -3,7 +3,7 @@
 Pure state machine, no I/O: feed it messages with on_message(msg) (or on_signs/on_road/on_env)
 and read snapshot(). The rule set is data (rules/<country>.json); Polish rules are the default.
 Only the documented contract is used: detections[] track_id/cls/score/box(/hits), tracks_ended[]
-track_id(/cls), road v_ego/pose.yaw_rate, env place label. See docs/lanes/L6-speed-limit.md.
+track_id(/cls), road v_ego/pose.yaw_rate, env place label. See chris-roadsense docs/lanes/L6-speed-limit.md.
 """
 import collections
 import json

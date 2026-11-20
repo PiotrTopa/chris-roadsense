@@ -1,4 +1,4 @@
-# modeld_replay (supercombo v0.9.7, ORT fp32, 20 fps) leads[0] and v_ego, ride a1-s8-rain 124-141 s; source video: YouTube J-OURk-kRjA (Unwinding Rides), CC BY 3.0, cut/scaled/re-encoded (docs/RIDES.md). Numbers only, no frames.
+# modeld_replay (supercombo v0.9.7, ORT fp32, 20 fps) leads[0] and v_ego, ride a1-s8-rain 124-141 s; source video: YouTube J-OURk-kRjA (Unwinding Rides), CC BY 3.0, cut/scaled/re-encoded (chris-roadsense docs/RIDES.md). Numbers only, no frames.
 t,v_ego,prob,x,x_std,v,v_std
 124.00,2.985,1.000,12.113,0.717,2.444,0.439
 124.05,2.703,0.999,12.119,0.757,2.319,0.444

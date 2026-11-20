@@ -72,7 +72,7 @@ DEFAULT_CFG = dict(
     line_motion=False,           # carry the drawn lines by the car's motion between frames (slide by the distance
                                  # driven, turn by the yaw) and smooth only the rest. Implemented and off: on the
                                  # recorded drives it predicts the next frame no better than "the line stays
-                                 # where it is in the car's frame" (docs/lanes/L22-v2-integration.md)
+                                 # where it is in the car's frame" (chris-roadsense docs/lanes/L22-v2-integration.md)
     line_reach_std_m=1.0,        # a line point whose tracker sigma exceeds this is past the line's reach
     shift_m=0.8, shift_s=0.4,    # a line that moves this much in one frame (a track restart) blends over shift_s
     fade_s=0.3,                  # fade in / out of lines and objects
@@ -271,7 +271,7 @@ class ViewBuilder:
     # The lines a consumer DRAWS may come from another source than the road model: a separate, cheap lane-line
     # analysis whose only job is a good picture. This is the one place where that is decided. The measurement
     # topics (`lanes`, `fused.lanes`, the ego lane, the road geometry) never see such a source: they stay the
-    # road model's. Contract of the message (docs/ARCHITECTURE.md "Display lane source"): the shape of `lanes`
+    # road model's. Contract of the message (chris-roadsense docs/ARCHITECTURE.md "Display lane source"): the shape of `lanes`
     # ({"type":"display_lanes","ts_mono_ns","source","x":[..],"lines":[4 x {"present","y":[..],"y_std"?}],
     # "edges":[2 x ...]?}), device frame, y positive right, from any provider on <rundir>/laned.sock.
     def on_display_lanes(self, msg):
@@ -339,7 +339,7 @@ class ViewBuilder:
                 # agrees with the model's). Everything else is the model's line: where the two read the scene
                 # differently nobody can tell which is right, and the picture stays what it was without a source.
                 # (The extra lines are off by default, `display_agree_extra`: on the labelled rides the source's
-                # extra outer lines were a kerb or a tunnel wall more often than a lane: docs/lanes/L29.)
+                # extra outer lines were a kerb or a tunnel wall more often than a lane: chris-roadsense docs/lanes/L29-display-lanes.md.)
                 for i in range(4):
                     if agree[i]:
                         if self.agree_t[i] is None:

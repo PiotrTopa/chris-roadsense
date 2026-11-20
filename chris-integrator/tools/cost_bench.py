@@ -26,8 +26,9 @@ not measured in that run), the recorder's file as `["recorder", line]` and what 
 subscriber received as digests per topic; `diff` compares two dumps: per stream the count, the identical
 lines, and the largest relative difference of a number where lines differ.
 
-`--tree DIR` runs another checkout's chris-integrator (DIR/chris-integrator, DIR/chris-mapper) with this
-harness: the comparison before / after of a change. Standard library + the tree's own needs (numpy)."""
+`--tree DIR` runs another checkout of chris-integrator (DIR itself, or DIR/chris-integrator in a tree that holds
+the components side by side; chris-mapper from DIR/chris-mapper or a sibling checkout, else the installed one) with this harness:
+the comparison before / after of a change. Standard library + the tree's own needs (numpy)."""
 import argparse
 import cProfile
 import gzip
@@ -40,7 +41,7 @@ import tempfile
 import time
 import zlib
 
-HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))          # this checkout of chris-integrator
 INPUTS = ("road", "calib", "camera", "env", "lights", "signs", "ego", "vehicle", "objects", "gnss", "display_lanes",
           "governor", "road_users")
 BACKEND_WS = "road,lights,speed_limit,env,rules,fused,map,lead,lanes,view"
@@ -95,8 +96,10 @@ class Timed:
 
 def make(a, tmp):
     tree = os.path.abspath(a.tree) if a.tree else HERE
-    sys.path.insert(0, os.path.join(tree, "chris-mapper"))
-    sys.path.insert(0, os.path.join(tree, "chris-integrator"))
+    for p in (os.path.join(os.path.dirname(tree), "chris-mapper"), os.path.join(tree, "chris-mapper"),
+              os.path.join(tree, "chris-integrator"), tree):
+        if os.path.isdir(p):
+            sys.path.insert(0, p)
     from chris_integrator import daemon as daemon_mod
     from chris_integrator.io.api import Api
     from chris_integrator.mixer import MessageClock

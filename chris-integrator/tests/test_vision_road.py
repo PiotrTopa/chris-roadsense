@@ -9,7 +9,6 @@ import os
 import sys
 import unittest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from chris_integrator.trackers import lights  # noqa: E402
 from chris_integrator.replay import Pipeline  # noqa: E402

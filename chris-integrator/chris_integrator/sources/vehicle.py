@@ -1,6 +1,6 @@
 """The car's own motion (mapd's `ego` relay of the feeder's `motion`, CAN) and its signals (`vehicle`).
 
-Noise measured on the reference car (docs/lanes/L35-ego-fusion-audit.md section 4, L37 section 3.5):
+Noise measured on the reference car (chris-roadsense docs/lanes/L35-ego-fusion-audit.md section 4, L37 section 3.5):
 speed 0x0B4 robust sigma 0.012-0.020 m/s; gyro zeroed at standstill; rear wheel difference sigma 0.010-0.019
 rad/s; longitudinal accelerometer sigma 0.20-0.25 m/s2 about a slow offset.
 """

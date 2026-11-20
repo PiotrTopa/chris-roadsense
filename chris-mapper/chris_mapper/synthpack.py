@@ -1,4 +1,5 @@
-"""A small hand-made road network written as a real pack, for tests (no map data in the repository).
+"""A small hand-made road network written as a real pack, for tests of the map box and of its consumers (no map
+data in the repository; `from chris_mapper import synthpack; synthpack.build(path)`).
 
 Metres east (x) / north (y) of ORIGIN; the main road runs east along y = 0 and crosses a tile border.
 
@@ -17,12 +18,8 @@ Metres east (x) / north (y) of ORIGIN; the main road runs east along y = 0 and c
     that turns 90 degrees left at a junction where "Straight On" continues
 """
 import math
-import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from chris_mapper import geo, rsmap as R      # noqa: E402
+from . import geo, rsmap as R
 
 ORIGIN = (52.0, 20.99)          # the tile border at lon 21.0 is ~685 m east of the origin
 C = R.CLASS_ID

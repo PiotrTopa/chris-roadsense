@@ -1,6 +1,6 @@
 """The roadsense map pack (`.rsmap`, format version 2; version 1 is still read): one file, tiled road graph, read through mmap.
 
-Layout (little-endian; docs/MAPS.md has the full description):
+Layout (little-endian; chris-roadsense docs/MAPS.md has the full description):
 
     header   64 bytes   "RSMAP001", u32 version (2; 1 = no turn lanes, 44-byte edge records), u32 manifest_len, u64 manifest_off,
                         u64 index_off, u64 index_count, zero padding
@@ -15,7 +15,7 @@ piece between two graph nodes, with its geometry and attributes) and nodes (junc
 attribute changes) with their incident edges. An edge lives in the tile of its first point; tiles it
 passes through list it as a foreign edge so that a spatial query finds it.
 
-This module has no dependency beyond numpy; the builder (tools/roadsense_maps.py), the daemon and the
+This module has no dependency beyond numpy; the builder (chris-roadsense tools/roadsense_maps.py), the daemon and the
 tests all use it.
 """
 import collections

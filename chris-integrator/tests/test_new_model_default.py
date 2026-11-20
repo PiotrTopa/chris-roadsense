@@ -12,7 +12,6 @@ import os
 import sys
 import unittest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from chris_integrator.trackers import egolane, lead as lead_mod  # noqa: E402
 from chris_integrator.trackers.lead import LeadTracker  # noqa: E402
