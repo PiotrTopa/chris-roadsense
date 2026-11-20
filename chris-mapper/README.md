@@ -56,6 +56,12 @@ outputs). It needs nothing of chris-integrator: the contract is the messages.
 python3 -m pytest -q tests        # a hand-made network written as a real pack; no map data in the repository
 ```
 
+## Reference
+
+* [docs/MAP.md](docs/MAP.md): the `map` message field by field (match, road, speed limit, look-ahead, junction
+  view, turn lanes, road geometry) and how matching and the context are made.
+* [docs/PACK.md](docs/PACK.md): what a map pack holds and the `.rsmap` file format.
+
 ## Map data
 
 Packs are built from OpenStreetMap extracts by a separate tool; map data is (c) OpenStreetMap contributors,

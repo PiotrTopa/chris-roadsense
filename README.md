@@ -36,7 +36,10 @@ that uses it (headless render with simulated data).</sub>
 | `view` | api (display channel) | for consumers that draw: lead, traffic lights, signs, lane lines and edges with stable ids, smoothed positions in the car frame, velocities for extrapolation, fades; and `view.road`, the road as one picture: the lane from the camera near the car and from the map beyond, side roads, the junction or roundabout ahead with its arms, lane count with the probability per lane and the ego lane, painted turn arrows, each part with provenance and an "approximate" mark on a weak position. Derived from the measurement topics, never fed back |
 | `camera`, `health` | all daemons | frame metadata and MJPEG preview with overlays; fps, latency and temperature per stage |
 
-Full contract, message formats and the REST / WebSocket reference: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Full contract, message formats and the REST / WebSocket reference: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+(the raw per-camera topics and the debug face); the consolidated topics and API:
+[chris-integrator/docs/TOPICS.md](chris-integrator/docs/TOPICS.md); the `map` message and the pack format:
+[chris-mapper/docs/MAP.md](chris-mapper/docs/MAP.md), [chris-mapper/docs/PACK.md](chris-mapper/docs/PACK.md).
 
 **roadsense 2.0** (api version 2): the measurement topics above say what was measured, as fresh as the model's
 frame, and are what anything that decides should read; `view` is the display channel, smoothed and allowed
