@@ -22,7 +22,7 @@ changes.
 ```
  roadsense (per camera)                                                    chris-integrator (the mixer)
  camerad ──frame ring (shm)──┬──> modeld ───────── road, calib ──┐
-                             ├──> envd (1 fps) ─── env ──────────┤         input channels ─> bus ─> plug-ins:
+                             ├──> envd (0.5 fps) ─ env ──────────┤         input channels ─> bus ─> plug-ins:
                              ├──> sign provider ── signs ────────┼──────>  estimator, map box (chris-mapper),
                              ├──> light provider ─ lights ───────┤         lanes, ego light, sign context, rules,
                              └──> laned (optional) display_lanes ┤         fused, view ─> output channels:
@@ -448,6 +448,16 @@ the flag.
 
 ### envd: `{"type":"env", ...}` about once per second
 `envd/` reads the ring at most `--max-hz` times per second (default 1, newest frame each time),
+or once every `--period` s when that is set; `--republish S` re-sends the last message unchanged (same
+`seq` and frame time) every S s between inferences. **Installed configuration (unit
+`systemd/roadsense-envd.service`, lane L53, adopted by the owner 2026-11-21): `--period 2 --republish 1`**,
+one inference every 2 s and the message every second, so consumers that judge `env` by its arrival (the
+MFD's 5 s age rule, the speed engine) see a 1 Hz stream. Measured on the phone: envd 184 -> 95 % of a little
+core (docs/lanes/L48-phone-results.md, docs/lanes/L53-owner-decisions.md). Accepted caveat (docs/lanes/L48-envd.md):
+against 1 Hz the env area prior disagrees 0.72 % of the time (1 Hz phase noise 0.17-0.37 %) and weather /
+`wet` 0.3-0.4 points above the noise; place, light, the tunnel and every map-backed decision stay inside the
+noise. The binary's own default is still 1 Hz; the rate is set in the unit (CLI wins over `envd.json`).
+No consumer has a rate floor for `env` (`rate` floors cover road / lead / lanes / lights / signs only).
 squashes the whole frame to the image encoder's input (224x224 or so, no crop), runs a zero-shot
 CLIP-type image encoder (ONNX Runtime CPU on the little cores by default; `--backend ncnn` for the
 GPU when built with `-DROADSENSE_NCNN=ON`) and scores the embedding against precomputed text
@@ -504,8 +514,17 @@ frame, a 48x24 state CNN per light, a small tracker; models and licences: roadse
                  "score": 0.89, "box": [x0,y0,x1,y1], // frame pixels
                  "clip": "b",                         // edges of `roi` the box touches (l t r b): "b" = no ground point
                  "rider": false,                      // a bike / motor with its rider paired (union box)
-                 "p": [0,0,0.89,0,0,0,0,0]} ]         // the eight class scores; `null` = shed by the governor
+                 "p": [0,0,0.89,0,0,0,0,0]} ],        // the eight class scores; `null` = shed by the governor
+"idle": {"pattern": "ZW.Z.W", "hz": 3.33}            // optional (lane L53): nothing tracked, the provider runs its idle
+                                                     //   pattern until a light shows up; hz = passes a second it keeps
 ```
+Idle pattern (lanes L48 / L53; `signd --lights-idle P`, installed `ZW.Z.W` since 2026-11-21): while the tracker
+holds no track at all, one frame period in three gets no detector pass; every message sent in that state says so
+with `idle` (absent while a light is tracked or the pattern is off / forbidden by `<rundir>/demand`).
+chris-integrator judges the `lights` stream against it: while the newest message announces `idle` (and for one
+rate window after the last one) the topic's floor is 0.8 x `idle.hz` (2.7 a second for `ZW.Z.W`) and the rate
+is measured over the arrivals without the short-window bias; with a light tracked the full floor (3 a second)
+applies. So an idle stream that keeps its pattern is not `slow`, and one that falls behind it is.
 Road users (lane L42, `docs/lanes/L42-road-users.md`): the light detector's own output carries eight road
 classes; with `--lights-road-users` the provider decodes them from the same inference (no extra detector run;
 the decode costs well under a millisecond) and lists them per message, absent without the flag, `null` while
@@ -968,8 +987,9 @@ that does not read the file is simply never shed.
   rate over the last 2 s, the latency from the frame's camera time to the api, the governor's level, and
   `degraded` with its reasons: `shed` (the governor has capped this topic's stage), `slow` / `late` (under the
   floor of `governor.json` `floors`: by default 10 messages a second and 250 ms for `road` / `lead` / `lanes`,
-  3 a second and 400 ms for `lights` / `signs`), `limited` (the platform limiter is cutting clocks; on its own
-  it does not make a topic degraded).
+  3 a second and 400 ms for `lights` / `signs`; for `lights` while the provider announces its idle pattern,
+  0.8 x the announced rate, and the marker carries `idle_hz`), `limited` (the platform limiter is cutting clocks;
+  on its own it does not make a topic degraded). `env` has no floor.
 * `road` is forwarded as modeld wrote it and carries modeld's own fields: `rate_hz` (measured runs a second
   over 2 s), `effective_hz` (the cap in force), `rate_limited` (the governor holds the cap below `--max-hz`),
   `governor_level` (null without a governor), `limited`. The former `thermal_c` is gone (`health.governor.hottest`).

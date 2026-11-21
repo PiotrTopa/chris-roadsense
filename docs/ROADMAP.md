@@ -184,3 +184,11 @@ box **chris-mapper** (`chris-mapper/`). Both are also published as their own rep
 - [x] cost on the phone with identical outputs (L46), the position / map loop on poor reception (L47), whole-system budget (L48, L49), a native core for the hot path, deployed on the phone (L50)
 - [x] chris-integrator and chris-mapper ready for their own public repositories (L51)
 - [ ] real-drive ground truth for the map match and the stated position uncertainty (L47 rests on simulation for those claims)
+
+## Owner decisions of 2026-11-21: envd every 2 s, no latency hold, light idle pattern (lane L53; docs/lanes/L53-owner-decisions.md)
+- [x] envd one inference every 2 s, message re-sent every second (`--period 2 --republish 1`, unit): on the phone envd 180 -> 89 % of a little core, 7.01 -> 6.34 W; caveat accepted: env area prior 0.72 % disagreement against a 1 Hz noise of 0.17-0.37 %, weather slightly above the noise; no consumer has an `env` floor (test `chris-integrator/tests/test_env_rate.py`)
+- [x] modeld unit without the CPU wake-up latency hold: road rate and latency unchanged (15.2 runs/s, 93-94 / 122-124 ms), 0.1 W less
+- [x] light detector idle pattern `ZW.Z.W` (roadsense-signs unit) with an `idle {pattern, hz}` announcement; chris-integrator's `lights` floor follows it (test `tests/test_lights_idle_rate.py`): light thread -33 % on a ride without lights, -15 % with lights, 0.41 W; light-time on the phone's backend 96.9 -> 96.8 %, 98.9 -> 99.5 %. Sparser patterns lose far lights (one in 2: -1.7 to -2.7 points at 24-48 px against a noise of 0.7); table in the report
+- [x] all three on the bench phone: 5.87 W on the playlist (7.01 W with none), little cores 167 %, big 110 %, governor level 0
+- [ ] the car: first drive with all three (tunnel entry delay p90 2 s by the study; no tunnel recorded yet)
+- [ ] the phone reset once right after a key-off sequence (camera hub relay off + uhubctl) on the bench; cause open (watchdog after a hang or a supply dip)

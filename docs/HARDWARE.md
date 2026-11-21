@@ -113,8 +113,10 @@ method and every row in [docs/lanes/L21-budget-and-models.md](lanes/L21-budget-a
   the energy at a third of the speed.
 * The GPU is the cool part and the full part: 47 ms per road run and 51 ms per sign-detector run fill 91 %
   of its time at 710 MHz. More GPU work means fewer road runs.
-* The clock pins and the wake-up latency hold of the modeld unit cost 0.5 W together and buy 0.9 road runs a
-  second and 30 ms of road latency.
+* The clock pins and the wake-up latency hold of the modeld unit cost 0.5 W together and bought 0.9 road runs a
+  second and 30 ms of road latency with supercombo. With the v0.11.1 road model the hold buys nothing
+  measurable (docs/lanes/L48-phone-results.md P3) and the unit no longer sets it (lane L53, owner 2026-11-21);
+  the clock pins stay.
 * Per-process GPU time is in `/proc/<pid>/fdinfo/*` (`drm-engine-gpu`); the daemons name their threads
   (`md-prep`, `md-prefetch`, `md-main`, `sg-signs`, `sg-lights`), so `top -H` shows the stages.
 

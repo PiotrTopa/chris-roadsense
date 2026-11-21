@@ -1,5 +1,5 @@
 [Unit]
-Description=roadsense envd (scene / weather / light analyser, 1 fps)
+Description=roadsense envd (scene / weather / light analyser, one frame in 2 s, message every second)
 PartOf=roadsense.target
 After=roadsense-camerad.service
 Wants=roadsense-camerad.service
@@ -18,10 +18,17 @@ ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -e /dev/shm/roadsense-frames
 # the stack, still 1 Hz. On the big cores (2 threads, 0.33 s per frame, the setting until lane L21) the same
 # work took 61 % of a big core, 1.25 W of the phone's 6.7 W and 15 C on the big-core sensors; here it costs
 # 0.5 W less at the rail, and the road latency drops by 10 ms because the big cores are less contended.
+# Since lane L53 (adopted by the owner 2026-11-21): one inference every 2 s (--period 2), the last message
+# re-sent unchanged every second in between (--republish 1), so consumers still see `env` once a second.
+# Measured on the phone (docs/lanes/L48-phone-results.md): envd 184 -> 95 % of a little core, road rate and
+# temperatures unchanged. Accepted caveat (docs/lanes/L48-envd.md): the env area prior disagrees with 1 Hz
+# 0.72 % of the time against a 1 Hz noise of 0.17-0.37 %, weather slightly above the noise; place, light,
+# tunnel and every map-backed decision inside it. The rate is set here, not in envd.json (CLI wins; the binary's
+# default stays 1 Hz). Back to 1 Hz: drop `--period 2 --republish 1`.
 # Under heat the load governor slows envd to one frame in 5 s, then pauses it (<rundir>/governor, env_hz).
 # ncnn/Vulkan hung the GPU (kernel hangcheck), do
 # not use it. Numbers: docs/lanes/L21-budget-and-models.md; encoder: docs/lanes/L2-envd.md.
-ExecStart=/usr/local/bin/envd --backend ort --threads 3 --cpus 0-3 --max-hz 1 --stats 60
+ExecStart=/usr/local/bin/envd --backend ort --threads 3 --cpus 0-3 --max-hz 1 --period 2 --republish 1 --stats 60
 Restart=always
 RestartSec=2
 Nice=5
