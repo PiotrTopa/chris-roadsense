@@ -191,4 +191,4 @@ box **chris-mapper** (`chris-mapper/`). Both are also published as their own rep
 - [x] light detector idle pattern `ZW.Z.W` (roadsense-signs unit) with an `idle {pattern, hz}` announcement; chris-integrator's `lights` floor follows it (test `tests/test_lights_idle_rate.py`): light thread -33 % on a ride without lights, -15 % with lights, 0.41 W; light-time on the phone's backend 96.9 -> 96.8 %, 98.9 -> 99.5 %. Sparser patterns lose far lights (one in 2: -1.7 to -2.7 points at 24-48 px against a noise of 0.7); table in the report
 - [x] all three on the bench phone: 5.87 W on the playlist (7.01 W with none), little cores 167 %, big 110 %, governor level 0
 - [ ] the car: first drive with all three (tunnel entry delay p90 2 s by the study; no tunnel recorded yet)
-- [ ] the phone reset once right after a key-off sequence (camera hub relay off + uhubctl) on the bench; cause open (watchdog after a hang or a supply dip)
+- [x] the phone reset once right after a key-off sequence (camera hub relay off + uhubctl) on the bench; single event, closed by the owner without a cause (reopen if it repeats)
