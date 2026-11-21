@@ -29,7 +29,7 @@ and envd is 62 % of that; the big cores carry 1.4 cores of load, two thirds of i
 | | change | expected on the phone | quality after the consumers |
 |---|---|---|---|
 | envd (**adopted by the owner 2026-11-21, lane L53; installed in the unit**) | one inference in 2 s, message re-sent every second | 80-100 points of a little core (phone: 184 -> 95) | inside the 1 Hz phase noise for place, light, tunnel and all map-backed decisions; weather and the env area prior slightly above it |
-| light detector | while no light is tracked, one frame period in three without a pass (`--lights-idle ZW.Z.W`) | 7-30 points of a big core (0.15-0.6 W), most on roads without lights | light-time -0.1 / +0.5 points on the reference rides against a noise of 1.4; first report unchanged |
+| light detector (**adopted by the owner 2026-11-21, lane L53; installed in the signd unit**) | while no light is tracked, one frame period in three without a pass (`--lights-idle ZW.Z.W`) | 7-30 points of a big core (0.15-0.6 W), most on roads without lights | light-time -0.1 / +0.5 points on the reference rides against a noise of 1.4; first report unchanged |
 
 **Tested and rejected with numbers:** one detector instead of two (the light detector's sign class instead of
 the sign detector, or with the sign detector at 1-2.5 Hz: 9 % of the momentary signs lost without it, loss

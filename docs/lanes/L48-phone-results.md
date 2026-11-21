@@ -64,6 +64,10 @@ Everything else held: CPU fall above the required share on both idle rides, big-
 ride (-4 to -6 K), 0.24-0.59 W less, light-time within 1.5 points on both rides, first report at most 0.1 s later.
 The option was switched back off; nothing tuned.
 
+**Adopted by the owner 2026-11-21 (lane L53):** `--lights-idle ZW.Z.W` is in the signd unit; signd now announces
+the pattern in its messages (`idle {pattern, hz}`) and chris-integrator's `lights` floor follows it, so the idle
+stream is no longer marked `slow`. Bench check: docs/lanes/L53-owner-decisions.md.
+
 ## P3: wake-up latency hold (`--cpu-latency-us 0`), krakow-2024, measurement only
 
 | | with (installed) | without |

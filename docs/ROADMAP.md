@@ -171,8 +171,10 @@ The ncnn/Vulkan fp16-packed backend misses the original accuracy gate only at th
 - [ ] the run rate is now set by the GPU turn-taking with the sign detector (tuned for supercombo's 54 ms run), not by the GPU: 7 points of GPU time are unused
 - [ ] not deployed; the car's own camera has not seen this model
 
-## envd every 2 s (lane L53, 2026-11-21; docs/lanes/L53-owner-decisions.md)
-- [x] owner's decision 2026-11-21: envd one inference every 2 s, message re-sent every second (`--period 2 --republish 1`) is the installed configuration (unit); envd 184 -> 95 % of a little core on the phone (L48), caveat accepted: env area prior 0.72 % disagreement against a 1 Hz noise of 0.17-0.37 %, weather slightly above the noise
-- [x] consumers: no rate floor or staleness rule for `env` in chris-integrator or the debug face; test `chris-integrator/tests/test_env_rate.py`
-- [x] deployed on the bench phone (unit only, no build)
-- [ ] the car: first drive with the 2 s envd (tunnel entry delay p90 2 s by the study; no tunnel recorded yet)
+## Owner decisions of 2026-11-21: envd every 2 s, no latency hold, light idle pattern (lane L53; docs/lanes/L53-owner-decisions.md)
+- [x] envd one inference every 2 s, message re-sent every second (`--period 2 --republish 1`, unit): on the phone envd 180 -> 89 % of a little core, 7.01 -> 6.34 W; caveat accepted: env area prior 0.72 % disagreement against a 1 Hz noise of 0.17-0.37 %, weather slightly above the noise; no consumer has an `env` floor (test `chris-integrator/tests/test_env_rate.py`)
+- [x] modeld unit without the CPU wake-up latency hold: road rate and latency unchanged (15.2 runs/s, 93-94 / 122-124 ms), 0.1 W less
+- [x] light detector idle pattern `ZW.Z.W` (roadsense-signs unit) with an `idle {pattern, hz}` announcement; chris-integrator's `lights` floor follows it (test `tests/test_lights_idle_rate.py`): light thread -33 % on a ride without lights, -15 % with lights, 0.41 W; light-time on the phone's backend 96.9 -> 96.8 %, 98.9 -> 99.5 %. Sparser patterns lose far lights (one in 2: -1.7 to -2.7 points at 24-48 px against a noise of 0.7); table in the report
+- [x] all three on the bench phone: 5.87 W on the playlist (7.01 W with none), little cores 167 %, big 110 %, governor level 0
+- [ ] the car: first drive with all three (tunnel entry delay p90 2 s by the study; no tunnel recorded yet)
+- [ ] the phone reset once right after a key-off sequence (camera hub relay off + uhubctl) on the bench; cause open (watchdog after a hang or a supply dip)
