@@ -514,7 +514,10 @@ frame, a 48x24 state CNN per light, a small tracker; models and licences: roadse
                  "score": 0.89, "box": [x0,y0,x1,y1], // frame pixels
                  "clip": "b",                         // edges of `roi` the box touches (l t r b): "b" = no ground point
                  "rider": false,                      // a bike / motor with its rider paired (union box)
-                 "p": [0,0,0.89,0,0,0,0,0]} ],        // the eight class scores; `null` = shed by the governor
+                 "p": [0,0,0.89,0,0,0,0,0],           // the eight class scores
+                 "scale_rate": 0.042,                 // optional (signd --lights-ru-scale): d ln(size)/dt of the object's
+                 "scale_rate_std": 0.006,             //   image over the last scale_dt_s s, 1/s (> 0 growing), from
+                 "scale_dt_s": 0.8} ],                //   patch alignment; its 1-sigma. `"road_users": null` = shed
 "idle": {"pattern": "ZW.Z.W", "hz": 3.33}            // optional (lane L53): nothing tracked, the provider runs its idle
                                                      //   pattern until a light shows up; hz = passes a second it keeps
 ```
@@ -533,6 +536,16 @@ api does nothing with them; chris-integrator places them with the camera's calib
 folds their class into the vote of the track they point at (`tracks[].class`, `lead.class`) and draws those no
 track holds as `view.objects` of kind `road_user`. Boxes cut at the bottom of the region (`clip` "b": nearer
 than about 14 m in the wide view, 24 m in the second view) carry a bearing only.
+Image scale change (`signd --lights-ru-scale`, roadsense-signs `docs/LIGHT_MODELS.md`, 2026-11-23): a road user
+may carry `scale_rate` (1/s), the rate of change of the log size of its image, `scale_rate_std` (1/s, 1 sigma)
+and `scale_dt_s` (s, the baseline). The provider aligns a grey patch of the box with the same object's patch
+0.2-1.0 s earlier (normalised cross-correlation over scale and shift, then a least-squares fit of scale, shift,
+gain and offset on the full-resolution frame), so the value does not depend on the box edges' jitter, the
+object's true size, the camera pitch or the road slope: for an object straight ahead, closing speed / distance
+= `scale_rate` (time to contact 1 / `scale_rate`), i.e. range rate = -range x `scale_rate`. The three keys come
+together and are absent when not measured (no earlier patch of the object in the window, a tiny, textureless or
+edge-clipped patch, a poor match, or a stated 1-sigma above 0.06 / `scale_dt_s`). Consumers weight it by
+`scale_rate_std`; it is the mean rate over the baseline, so it lags a changing rate by about `scale_dt_s` / 2.
 Confirmed tracks (>= 2 hits) are listed: those matched in the current frame and, since 2026-11-16 (lane L15),
 those the reference provider is coasting (`coast` 1..`--lights-coast`, the box predicted, the state the last
 smoothed one), so a light the detector misses in one frame, or one that only the other view can see, does not
