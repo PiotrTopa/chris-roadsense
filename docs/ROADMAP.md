@@ -192,3 +192,27 @@ box **chris-mapper** (`chris-mapper/`). Both are also published as their own rep
 - [x] all three on the bench phone: 5.87 W on the playlist (7.01 W with none), little cores 167 %, big 110 %, governor level 0
 - [ ] the car: first drive with all three (tunnel entry delay p90 2 s by the study; no tunnel recorded yet)
 - [x] the phone reset once right after a key-off sequence (camera hub relay off + uhubctl) on the bench; single event, closed by the owner without a cause (reopen if it repeats)
+
+## Detection inputs for the tracker (lane `detin`, 2026-11-24; docs/lanes/detin-detection-inputs.md)
+The light provider's road users carried a box, a class and a score. Five more inputs for chris-integrator's
+tracker, built on the detector's side (roadsense-signs branch `detin`), each behind its own option, all off by
+default, the contract in docs/ARCHITECTURE.md; how the tracker should take them: docs/lanes/detin-consumption-design.md.
+- [x] low-score list (`--lights-ru-low`, key `road_users_low`): boxes below the class thresholds, to continue an object and never to start one
+- [x] flags (`--lights-ru-flags`): `trunc`, `occ`, `occ_by`, `occ_edges`; held against BDD100K's own attributes
+- [x] appearance vector (`--lights-ru-emb`): a model-free 27-number vector, and the runtime and training tools of a small learnt one; a tap on the detector's feature maps measured and rejected
+- [x] view cues without a model (`--lights-ru-view`): the lamp pair of a vehicle in the dark (which end faces the camera, a ruler), mirror symmetry (not validated)
+- [x] scale rate in the dark (`--lights-ru-scale-lamps`, `--lights-ru-scale-multi`, low boxes continue a chain): more boxes with a value at night
+- [ ] the tracker's side: nothing consumed yet (design only; the simulator has to emit the fields first)
+- [ ] heading and wheel contact points: need a trained head and 3D-box data that is not on the dev box
+- [ ] nothing measured on the phone or on the car's own camera (laptop and ride library only); a night drive recorded at 5 frames a second is still the missing check for the scale rate
+
+## Pose head: heading and ground contact (lane `viewhead`, 2026-11-24; docs/lanes/viewhead-pose-head.md)
+The open half of the detection inputs: which way a vehicle points, by day, and where it meets the road. A small
+head trained on KITTI (project chris-pose; weights CC BY-NC-SA 3.0, loaded at run time, not part of chris-signs),
+run per vehicle box by `signd --lights-ru-pose FILE.onnx` (chris-signs branch `viewhead`), off by default.
+- [x] the model: heading with a calibrated uncertainty and view class, footprint centre, near-face point and outer bottom corners with uncertainties and "seen" flags, dimensions; 495 k parameters; held-out KITTI drives: heading median 2.5 deg, 8.8 % off by more than 30 deg; a near face under a cut bottom found to 0.06-0.08 of the box height
+- [x] the option, the message keys `pose` / `pose_kind` (docs/ARCHITECTURE.md), tests without a model file, messages unchanged with the option off
+- [x] checks on seven rides of other cameras (no labels): vehicle ahead seen from behind in 92-99 % by day; lamp colours at night on open roads 93-97 %; weak in a snowy lit city at night
+- [x] how the tracker should take it: docs/lanes/detin-consumption-design.md section 9
+- [ ] consumed by the tracker (chris-integrator); measured on the phone (estimated 4-5 ms a box on a big core, cap 4 a pass); seen by the car's own camera
+- [ ] wheel contact points proper (needs wheel labels); a second training camera; night data instead of drawn lamps
