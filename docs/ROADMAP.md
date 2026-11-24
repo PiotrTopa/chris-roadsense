@@ -192,3 +192,16 @@ box **chris-mapper** (`chris-mapper/`). Both are also published as their own rep
 - [x] all three on the bench phone: 5.87 W on the playlist (7.01 W with none), little cores 167 %, big 110 %, governor level 0
 - [ ] the car: first drive with all three (tunnel entry delay p90 2 s by the study; no tunnel recorded yet)
 - [x] the phone reset once right after a key-off sequence (camera hub relay off + uhubctl) on the bench; single event, closed by the owner without a cause (reopen if it repeats)
+
+## Detection inputs for the tracker (lane `detin`, 2026-11-24; docs/lanes/detin-detection-inputs.md)
+The light provider's road users carried a box, a class and a score. Five more inputs for chris-integrator's
+tracker, built on the detector's side (roadsense-signs branch `detin`), each behind its own option, all off by
+default, the contract in docs/ARCHITECTURE.md; how the tracker should take them: docs/lanes/detin-consumption-design.md.
+- [x] low-score list (`--lights-ru-low`, key `road_users_low`): boxes below the class thresholds, to continue an object and never to start one
+- [x] flags (`--lights-ru-flags`): `trunc`, `occ`, `occ_by`, `occ_edges`; held against BDD100K's own attributes
+- [x] appearance vector (`--lights-ru-emb`): a model-free 27-number vector, and the runtime and training tools of a small learnt one; a tap on the detector's feature maps measured and rejected
+- [x] view cues without a model (`--lights-ru-view`): the lamp pair of a vehicle in the dark (which end faces the camera, a ruler), mirror symmetry (not validated)
+- [x] scale rate in the dark (`--lights-ru-scale-lamps`, `--lights-ru-scale-multi`, low boxes continue a chain): more boxes with a value at night
+- [ ] the tracker's side: nothing consumed yet (design only; the simulator has to emit the fields first)
+- [ ] heading and wheel contact points: need a trained head and 3D-box data that is not on the dev box
+- [ ] nothing measured on the phone or on the car's own camera (laptop and ride library only); a night drive recorded at 5 frames a second is still the missing check for the scale rate
