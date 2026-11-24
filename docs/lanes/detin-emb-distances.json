@@ -1,0 +1,591 @@
+{
+ "note": "distance = Euclidean on the published int8 values in the units of roadsense docs/ARCHITECTURE.md (yuv3x3: int8 / 32; reid32+yuv3x3: first 32 / 127, the other 27 / 32 x 0.5); rides: crops-warsaw-city.npz, crops-krakow-night-tunnel.npz",
+ "warsaw-city": {
+  "yuv3x3": {
+   "1 s": {
+    "n_same": 6118,
+    "n_other": 47513,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.044,
+     0.07,
+     0.14,
+     0.331,
+     0.542,
+     0.87,
+     1.313,
+     1.65,
+     2.389
+    ],
+    "other": [
+     0.674,
+     1.15,
+     1.393,
+     1.828,
+     2.537,
+     3.477,
+     4.283,
+     4.788,
+     6.116
+    ],
+    "lognormal_same": [
+     -0.729,
+     0.903
+    ],
+    "lognormal_other": [
+     0.901,
+     0.462
+    ],
+    "other_pairs_lr_le_quarter": 0.786,
+    "same_pairs_lr_ge_4": 0.771,
+    "same_pairs_lr_le_quarter": 0.041
+   },
+   "2 s": {
+    "n_same": 5345,
+    "n_other": 46795,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.044,
+     0.083,
+     0.161,
+     0.407,
+     0.664,
+     1.021,
+     1.479,
+     1.834,
+     2.579
+    ],
+    "other": [
+     0.771,
+     1.177,
+     1.414,
+     1.845,
+     2.552,
+     3.476,
+     4.286,
+     4.796,
+     6.107
+    ],
+    "lognormal_same": [
+     -0.552,
+     0.884
+    ],
+    "lognormal_other": [
+     0.91,
+     0.447
+    ],
+    "other_pairs_lr_le_quarter": 0.735,
+    "same_pairs_lr_ge_4": 0.724,
+    "same_pairs_lr_le_quarter": 0.045
+   },
+   "4 s": {
+    "n_same": 4460,
+    "n_other": 45502,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.044,
+     0.083,
+     0.153,
+     0.5,
+     0.798,
+     1.204,
+     1.683,
+     2.002,
+     2.67
+    ],
+    "other": [
+     0.816,
+     1.205,
+     1.432,
+     1.872,
+     2.579,
+     3.505,
+     4.321,
+     4.829,
+     6.08
+    ],
+    "lognormal_same": [
+     -0.408,
+     0.914
+    ],
+    "lognormal_other": [
+     0.923,
+     0.439
+    ],
+    "other_pairs_lr_le_quarter": 0.68,
+    "same_pairs_lr_ge_4": 0.651,
+    "same_pairs_lr_le_quarter": 0.043
+   }
+  },
+  "reid32+yuv3x3": {
+   "1 s": {
+    "n_same": 6118,
+    "n_other": 47513,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.03,
+     0.056,
+     0.107,
+     0.315,
+     0.466,
+     0.661,
+     0.935,
+     1.132,
+     1.51
+    ],
+    "other": [
+     0.585,
+     0.996,
+     1.166,
+     1.438,
+     1.805,
+     2.222,
+     2.583,
+     2.811,
+     3.414
+    ],
+    "lognormal_same": [
+     -0.925,
+     0.837
+    ],
+    "lognormal_other": [
+     0.558,
+     0.344
+    ],
+    "other_pairs_lr_le_quarter": 0.855,
+    "same_pairs_lr_ge_4": 0.843,
+    "same_pairs_lr_le_quarter": 0.03
+   },
+   "2 s": {
+    "n_same": 5345,
+    "n_other": 46795,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.033,
+     0.064,
+     0.123,
+     0.388,
+     0.557,
+     0.77,
+     1.059,
+     1.259,
+     1.609
+    ],
+    "other": [
+     0.682,
+     1.032,
+     1.183,
+     1.449,
+     1.81,
+     2.223,
+     2.582,
+     2.819,
+     3.42
+    ],
+    "lognormal_same": [
+     -0.771,
+     0.835
+    ],
+    "lognormal_other": [
+     0.567,
+     0.327
+    ],
+    "other_pairs_lr_le_quarter": 0.815,
+    "same_pairs_lr_ge_4": 0.803,
+    "same_pairs_lr_le_quarter": 0.037
+   },
+   "4 s": {
+    "n_same": 4460,
+    "n_other": 45502,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.034,
+     0.063,
+     0.13,
+     0.453,
+     0.657,
+     0.89,
+     1.209,
+     1.398,
+     1.641
+    ],
+    "other": [
+     0.762,
+     1.063,
+     1.205,
+     1.473,
+     1.825,
+     2.238,
+     2.602,
+     2.828,
+     3.407
+    ],
+    "lognormal_same": [
+     -0.641,
+     0.871
+    ],
+    "lognormal_other": [
+     0.581,
+     0.315
+    ],
+    "other_pairs_lr_le_quarter": 0.774,
+    "same_pairs_lr_ge_4": 0.737,
+    "same_pairs_lr_le_quarter": 0.046
+   }
+  }
+ },
+ "krakow-night-tunnel": {
+  "yuv3x3": {
+   "1 s": {
+    "n_same": 601,
+    "n_other": 386,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.325,
+     0.406,
+     0.469,
+     0.595,
+     0.819,
+     1.335,
+     2.078,
+     2.574,
+     4.968
+    ],
+    "other": [
+     0.615,
+     0.831,
+     0.953,
+     1.218,
+     1.849,
+     3.051,
+     4.845,
+     6.234,
+     7.731
+    ],
+    "lognormal_same": [
+     -0.087,
+     0.603
+    ],
+    "lognormal_other": [
+     0.686,
+     0.616
+    ],
+    "other_pairs_lr_le_quarter": 0.324,
+    "same_pairs_lr_ge_4": 0.371,
+    "same_pairs_lr_le_quarter": 0.048
+   },
+   "2 s": {
+    "n_same": 508,
+    "n_other": 394,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.391,
+     0.477,
+     0.53,
+     0.682,
+     0.985,
+     1.528,
+     2.413,
+     3.517,
+     5.451
+    ],
+    "other": [
+     0.63,
+     0.756,
+     0.9,
+     1.274,
+     1.976,
+     3.72,
+     5.882,
+     6.815,
+     7.991
+    ],
+    "lognormal_same": [
+     0.067,
+     0.604
+    ],
+    "lognormal_other": [
+     0.765,
+     0.683
+    ],
+    "other_pairs_lr_le_quarter": 0.307,
+    "same_pairs_lr_ge_4": 0.191,
+    "same_pairs_lr_le_quarter": 0.057
+   },
+   "4 s": {
+    "n_same": 402,
+    "n_other": 385,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.46,
+     0.577,
+     0.676,
+     0.884,
+     1.139,
+     1.719,
+     2.539,
+     3.369,
+     5.779
+    ],
+    "other": [
+     0.62,
+     0.745,
+     0.928,
+     1.389,
+     1.973,
+     3.367,
+     6.406,
+     7.341,
+     8.195
+    ],
+    "lognormal_same": [
+     0.225,
+     0.539
+    ],
+    "lognormal_other": [
+     0.779,
+     0.674
+    ],
+    "other_pairs_lr_le_quarter": 0.234,
+    "same_pairs_lr_ge_4": 0.0,
+    "same_pairs_lr_le_quarter": 0.05
+   }
+  },
+  "reid32+yuv3x3": {
+   "1 s": {
+    "n_same": 601,
+    "n_other": 386,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.291,
+     0.344,
+     0.371,
+     0.456,
+     0.611,
+     0.929,
+     1.325,
+     1.563,
+     2.701
+    ],
+    "other": [
+     0.534,
+     0.672,
+     0.722,
+     0.92,
+     1.214,
+     1.811,
+     2.719,
+     3.367,
+     4.06
+    ],
+    "lognormal_same": [
+     -0.409,
+     0.497
+    ],
+    "lognormal_other": [
+     0.266,
+     0.491
+    ],
+    "other_pairs_lr_le_quarter": 0.337,
+    "same_pairs_lr_ge_4": 0.433,
+    "same_pairs_lr_le_quarter": 0.053
+   },
+   "2 s": {
+    "n_same": 508,
+    "n_other": 394,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.326,
+     0.368,
+     0.399,
+     0.512,
+     0.698,
+     1.032,
+     1.622,
+     2.063,
+     2.921
+    ],
+    "other": [
+     0.558,
+     0.647,
+     0.73,
+     0.922,
+     1.262,
+     2.134,
+     3.149,
+     3.61,
+     4.225
+    ],
+    "lognormal_same": [
+     -0.285,
+     0.519
+    ],
+    "lognormal_other": [
+     0.334,
+     0.542
+    ],
+    "other_pairs_lr_le_quarter": 0.307,
+    "same_pairs_lr_ge_4": 0.274,
+    "same_pairs_lr_le_quarter": 0.065
+   },
+   "4 s": {
+    "n_same": 402,
+    "n_other": 385,
+    "quantiles_pct": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     75,
+     90,
+     95,
+     99
+    ],
+    "same": [
+     0.378,
+     0.428,
+     0.495,
+     0.601,
+     0.787,
+     1.117,
+     1.56,
+     2.196,
+     3.12
+    ],
+    "other": [
+     0.581,
+     0.715,
+     0.782,
+     0.952,
+     1.281,
+     2.049,
+     3.415,
+     3.832,
+     4.284
+    ],
+    "lognormal_same": [
+     -0.166,
+     0.473
+    ],
+    "lognormal_other": [
+     0.356,
+     0.532
+    ],
+    "other_pairs_lr_le_quarter": 0.252,
+    "same_pairs_lr_ge_4": 0.132,
+    "same_pairs_lr_le_quarter": 0.057
+   }
+  }
+ }
+}
