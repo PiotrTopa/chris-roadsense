@@ -1,4 +1,8 @@
-# Detection inputs: how the tracker should take them (design, not built)
+# Detection inputs: how the tracker should take them (design)
+
+*Sections 1-8: lane `detin`, written before the tracker's half existed; what the tracker then built, and where it
+chose otherwise, is chris-integrator `docs/RADAR.md` section 8. Section 9 (lane `viewhead`): the pose head, written
+against the tracker as it is now; not built.*
 
 Lane `detin`, 2026-11-24. The detector side is built (roadsense-signs branch `detin`, `docs/DETECTION_INPUTS.md`;
 the contract: [ARCHITECTURE.md](../ARCHITECTURE.md), light provider). This file is the consumption design for
@@ -179,11 +183,11 @@ Recommended use until a labelled check exists: none on its own; with the box asp
 views (aspect 1.4-2.4 and `sym` < 0.4, A) from rear / front views (aspect < 1.6, `sym` > 0.7) for the birth
 heading. A wrong reading costs only the birth prior.
 
-### What is not delivered: heading, wheel contact points
-The present detector gives a box; no pixel rule of this lane tells a rear view from a three-quarter view by
-day, or finds where the tyres meet the road. That needs a trained head (lane report, "orientation and ground
-contact"). Until then the ground contact a consumer has is the box's bottom edge, valid when `b` ∉ E, and the
-range from it is geometry on the consumer's side (next section).
+### Heading by day and ground contact points: the pose head
+Not delivered by lane `detin`; delivered since by lane `viewhead` as the optional `pose` of a road user (a trained
+head, `signd --lights-ru-pose`): **section 9**. Without it the ground contact a consumer has is the box's bottom
+edge, valid when `b` ∉ E, and the range from it is geometry on the consumer's side (next section). Wheel contact
+points proper are still not delivered (no data set with wheel labels was used).
 
 ## 5. Range from the ground plane: the consumer's geometry
 
@@ -246,3 +250,214 @@ swap, grade term), `oncoming` at night (`white` lamps: birth prior), `queue` (oc
 4. appearance LR (section 3): per-leaf vector, tables;
 5. lamps: colour -> heading / birth prior, then the size row (section 4);
 6. grade term and width ruler (section 5), scale-row correlation (section 6).
+
+## 9. The pose head: heading and ground contact (`pose`, lane `viewhead`, 2026-11-24)
+
+The detector side: chris-signs `signd --lights-ru-pose FILE.onnx` (`docs/POSE_HEAD.md` there), the model: chris-pose
+(its `MODEL_CARD.md` has the full evaluation), the contract: [ARCHITECTURE.md](../ARCHITECTURE.md), light provider,
+"Pose of a road user". Read against the tracker at chris-integrator `docs/RADAR.md` sections 2, 4 and 8 (the state
+is the object's centre; a camera's box stands at the near face; rulers are measurements of the height state; a
+hidden bottom should be a one-sided range). Nothing in the integrator was changed. **M** = measured in this lane on
+KITTI's held-out drives with the detector's own boxes (chris-pose `scripts/evaluate.py`, `eval_tracks.py`), or on
+rides where said; **A** = assumed.
+
+### 9.0 What arrives, and when to look at it
+`from_lights` copies `pose` per object and `pose_kind` per message; a `pose_kind` the consumer does not know means:
+ignore `pose`. A box has a `pose` only if it is of a vehicle class, at least 8 px on a side, and its turn came
+(at most `--lights-ru-pose-max` runs a pass: on a busy pass some boxes have none; absent says nothing).
+
+Before any field of a `pose` is used:
+* `kind[0]` >= 0.5 (the crop looks like a vehicle). **M**: the head calls 99.6 % of the vehicles a vehicle and
+  96.2 % of the persons a person. Below 0.5: no pose rows, and the class vote may take it as a hint (A:
+  weight 0.3, as a low box's class).
+* Persons and two-wheelers have no `pose` by default and must not be given one by the consumer's own guess: **M**
+  their heading is wrong by more than 30 degrees in 43.6 % (persons) and 57.1 % (two-wheelers) of the
+  boxes.
+* At night the heading is weaker than by day and its stated uncertainty less honest (9.5): the lamp pair decides
+  the end there.
+
+### 9.1 Heading
+`yaw` is the heading against the line of sight from the camera, clockwise seen from above. In the tracker's terms
+(`hdg`: car frame, left positive, where the front points), with `b` the bearing of the object's centre as the
+camera sees it:
+
+    hdg = b - yaw * pi / 180          a (the heading against the line of sight, RADAR.md section 4) = -yaw
+
+The head's answer is a probability over the heading given one crop, not a Gaussian: the heading is within
+52.5 degrees of `yaw` with probability `p` (then `yaw_std` is its 1-sigma), within 52.5 degrees of the opposite
+direction with probability `flip` (front taken for rear: the typical mistake), elsewhere with the rest.
+
+**M**, vehicles, the detector's boxes:
+
+| | median error | over 15 deg | over 30 deg | over 90 deg (flipped) |
+|---|---|---|---|---|
+| all (12651) | 2.5 deg | 11.5 % | 8.8 % | 6.2 % |
+| view rear / front | 1.7 / 2.0 deg | 7.2 / 3.8 % | 6.3 / 3.5 % | 4.9 / 3.4 % |
+| view three-quarter | 4.3 deg | 18.9 % | 13.1 % | 8.9 % |
+| view side | 14.2 deg | 48.9 % | 36.9 % | 17.6 % |
+| labelled largely occluded | 3.5 deg | 19.8 % | 13.5 % | 8.0 % |
+| cut by the picture's edge (label truncation > 0.1) | 4.8 deg | 29.0 % | 22.2 % | 15.9 % |
+
+The stated numbers, same boxes: of the answers in the right lobe (92.5 %), 68.6 % are within one
+`yaw_std`, 91.7 % within two, 2.8 % beyond three (a Gaussian: 68.3, 95.4, 0.27): the core is honest, the
+tails are heavy. `flip` is honest (stated 0.004: flipped 0.003; stated 0.032: flipped 0.035; stated 0.072: flipped 0.090; stated 0.144: flipped 0.154; stated 0.269: flipped 0.272; stated 0.415: flipped 0.426), and so is `p` (stated 0.433: within 0.412; stated 0.605: within 0.613; stated 0.780: within 0.802; stated 0.907: within 0.925; stated 0.977: within 0.986; stated 0.997: within 0.998). Over time (four held-out tracking
+sequences, 137 tracks, 10 frames a second): the error in the lobe is half the object's own (the track's
+offset: sigma 2.4 deg) and half scatter (2.4 deg); successive errors correlate 0.65 at
+0.2 s, 0.33 at 1 s, 0.24 at 2 s. Flips come and go: 5.4 % of the boxes are flipped, but only
+1.5 % of the tracks have more than half of their boxes flipped.
+
+How it enters, in the tracker's own idioms:
+
+* **The axis and the end are taken apart**, as the lamp colour is taken today (RADAR.md section 8: the end by
+  votes, the heading "to its sigma and no better however often").
+  * *The end* (which way round): every pose with `p` + `flip` >= 0.8 adds `ln(p / flip)`, clamped to +-ln 8 (A), to
+    the leaf's log-odds that the front is where `yaw` says; the extent's front is turned when the log-odds change
+    sign by more than ln 4 (A; today: "two more boxes say the other end"). Motion that has shown the front outvotes
+    it (a leaf faster than 2.5 m/s: the direction of travel, as now). Because flips are transient, a second or two
+    of boxes settles the end; because they are correlated over about a second, votes closer than 0.5 s apart count
+    half (A).
+  * *The axis* (the heading modulo 180 degrees): a scalar row on the extent's heading, innovation folded into
+    (-90, 90] degrees, used when `p` + `flip` >= 0.8, with
+
+        R = max(yaw_std, 3 deg)^2 * max(1, 1 s / time since this leaf's previous pose row)
+
+    The floor is the object's own offset (**M** 2.4 deg), the factor the errors' correlation over about a
+    second (**M**; the same treatment as overlapping scale-rate windows, section 6). With Huber's weight at 2 sigma
+    (A; **M** 2.8 % of the in-lobe errors are beyond 3 sigma). It does not replace the direction of travel of
+    a moving leaf; it is what a standing leaf and a new leaf have.
+* **Which side of the line of sight** (the mirror the box width cannot tell, RADAR.md section 4): the sign of `yaw`.
+  **M**: right for 91.1 % of the vehicles 20 to 160 degrees off the line of sight. The axis row carries
+  it; where the road-axis prior picks between a heading and its mirror, the pose's sign goes first when `p` >= 0.8.
+* **Birth** (`r_extent_birth`): the heading from the pose instead of "along the car's own, or across when the box is
+  wide", with the variance above. A new vehicle seen from the front (`vp` front, `vp_conf` >= 0.8) gets the moving
+  hypotheses' velocity against the car's heading, as white lamps give it at night (section 4); one seen side-on
+  gets it along its heading (it drives forwards), with the standing hypothesis keeping its share.
+* **The width ruler** (`in_width`): the silhouette `s = (L |sin a| + W |cos a|) / W` has to be "believed known to a
+  third". With a pose of `yaw_std` under 5 degrees (**M** rear and front views: median error 1.7 deg) it is
+  known from the first box, not only after the motion or the road axis has pinned the heading; and the test "within
+  8 degrees of the axis for a car" reads `yaw`.
+* Not proposed: a yaw-rate state. Nothing here measures it.
+
+### 9.2 Ground contact
+Three facts about the tracker decide the use: the state is the centre; the camera's ground row is predicted at
+the near face, "where the line of sight to the centre enters the rectangle" (RADAR.md section 2); a box with a
+hidden bottom has no ground row today.
+
+* **`gn` is that near-face point**, by the same definition. Its row `gn[1]` is a measurement for the existing
+  ground-angle row (same prediction `r_h`, same offset state `dp`), with the 1-sigma `gn[2]`.
+* **Whole boxes: it adds nothing to the detector's bottom edge.** **M** (visible, uncut vehicles): row error
+  0.0436 of the box height for `gn` against 0.0449 for the box bottom (robust sigma), the two errors
+  correlated 0.72, their mean 0.0416; as a range (the object's own ground height, so only the
+  pixel error counts): median 2.6 % against 2.8 % (7.0 / 8.2 % at the 90 % point).
+  Nearer than 15 m `gn` is better (3.4 % against 5.0 %): close vehicles are seen from above
+  and the box bottom is the nearest corner, not the near face. Rule: on a box with `b` ∉ E use ONE row: `gn` when
+  `gn[3]` (seen) >= 0.5 and `gn[2]` is smaller than the tracker's own sigma for a bottom edge of that box, else the
+  bottom edge. Never both: they are the same pixels.
+* **Hidden bottoms: this is what the head is for.** A box whose bottom is cut by the view or the frame (`clip` /
+  `trunc` b) or lies under a nearer box (`occ_edges` b) is a bearing only today (kind `b` / `bt`). The head
+  extrapolates the near-face row from what it sees. **M**, whole vehicles with the box cut artificially at the
+  bottom, errors in units of the TRUE box height:
+
+  | bottom cut away | `gn` error, median / 90 % | bias | within 1 / 2 stated sigma | heading over 30 deg |
+  |---|---|---|---|---|
+  | nothing | 0.028 / 0.075 | +0.004 | 70.2 / 93.3 % | 3.1 % |
+  | 10 % (view edge / picture edge) | 0.037 / 0.092 (view), 0.059 / 0.176 (picture) | +0.004, +0.031 | 90.5 / 99.3 %, 86.7 / 99.4 % | 3.7 %, 5.4 % |
+  | 25 % | 0.075 / 0.180 (view), 0.067 / 0.185 (picture) | +0.005, +0.017 | 79.6 / 98.0 %, 82.8 / 98.8 % | 7.7 %, 7.6 % |
+  | 40 % | 0.076 / 0.183 (view), 0.072 / 0.187 (picture) | +0.000, +0.015 | 86.6 / 98.9 %, 86.6 / 99.2 % | 8.3 %, 9.3 % |
+  | 55 % | 0.059 / 0.164 (view), 0.055 / 0.161 (picture) | -0.006, -0.012 | 92.2 / 98.9 %, 91.2 / 98.8 % | 15.2 %, 17.0 % |
+
+  and for the near face under a nearer labelled box (2476 boxes): median 0.051, 90 % point 0.236 of
+  the box height, with the stated sigma too small there (61.1 % within one, 80.9 % within two).
+  A row error e (in box heights) is a range error of `e * H / h_cam` (H the object's height, h_cam the camera's):
+  for a 1.5 m car from 1.2 m, 0.07 of the box height is 9 % of the range. So such a box gets a
+  range to about a tenth where it had none.
+  How to take it: the ground row with `gn[1]`, `gn[2]` (times 1.5 where `occ_edges` has b: A from the M above), the
+  size rows stay off (the box height is not the object's). **With the one-sided bound** the tracker lane asked
+  for: the true contact lies at or below the visible bottom `v_b` of the box, so the row's likelihood is the
+  Gaussian of `gn` cut at `v_b`. As moments for the Kalman row (alpha = (v_b - gn) / sigma, lambda = phi(alpha) /
+  (1 - Phi(alpha))):
+
+      mean = gn + sigma * lambda          variance = sigma^2 * (1 + alpha * lambda - lambda^2)
+
+  When no pose is there, the bound alone stays what RADAR.md section 8 describes (not built).
+* **Row noise over time.** **M**: `gn`'s error is half the track's own offset (0.042 box heights) and half
+  scatter (0.037); successive errors correlate 0.68 at 0.2 s, 0.26 at 1 s. As for the heading:
+  `R = gn[2]^2 * max(1, 1 s / time since this leaf's previous ground row from a pose)`.
+* **`gc`: the centre's bearing, not a second range.** `gc[0]` is the image column of the object's centre. **M**
+  (visible, whole): 1.51 px median (0.021 box widths) against 2.97 px for the box centre; with a side
+  of the object outside the picture (near, large boxes): 22 px median against the box centre's 60 px.
+  Use `gc[0]` with `gc[2]` as the bearing row instead of the box centre, in particular where a side is hidden
+  (today: the box centre moved by half the hidden width). `gc[1]` is NOT a further range row: it is `gn` plus
+  the head's own idea of the half depth, from the same crop. What `gc[1]` - `gn[1]` does carry is that half depth:
+  an optional row on the extent (A, not proposed for the first build).
+* **`gl`, `gr`**: the footprint's outer visible corners. On whole boxes their columns are the box's sides (rides:
+  within 0.05 box widths); they matter only where a side is hidden, as the amodal silhouette for the
+  extent's width row. Second build.
+* **The road's profile and the pitch are untouched by any of this**: against a flat road under KITTI's camera the
+  same rows give 9.5 % median range error for `gn` and 9.4 % for the box bottom (beyond 50 m:
+  16.9 %): the state `dp` and `grade_k` stay necessary, and they are where the error is.
+
+### 9.3 Dimensions, occlusion, kind
+* `dim`: **M** for cars the head knows no more than the prior (median |ln error| length 0.073, width 0.036,
+  height 0.050; the mean car alone: 0.072, 0.031, 0.052), and the error is the object's own (the
+  track's offset 0.093 in ln length against 0.039 of scatter): it must be counted once per object
+  (`ruler_uses`), not per box. Where it helps: a van the detector calls `car` (93 % of KITTI's vans):
+  height error 0.158 (head) against 0.252 (the class prior), still read low by 0.151. Where
+  it is wrong: lorries (0.382 against the class prior's 0.061; KITTI has few). Proposed use:
+  only as a vote for the height prior's kind mixture (`size_prior`): `dim[2]` > 1.9 m on a `car` box counts as a
+  `truck` vote of weight 0.5 (A). Not as a ruler, not for lorries and buses.
+* `occ`: **M** agrees with KITTI's "partly occluded or more" in 87.7 % at 0.5. The flags of section 1 know
+  only boxes as occluders ("no flag does not mean whole"); `occ` >= 0.5 on an unflagged box: treat it as partly
+  covered (size rows' variance times (1 + occ)^2, no extent teaching) (A).
+* `trunc`: the share outside the picture; redundant with `trunc` / `clip` flags, not used.
+
+### 9.4 With the lamp pair and the other rulers
+* By day the pose is the only source of the end: the lamp rule should be silent then, and where it fires on a dull
+  frame it is often wrong (9.5).
+* **In a truly dark frame the lamp colour decides the end.** Rides (9.5): on the night ride with the most lamp
+  pairs the pose's end agrees with the colour in 97 % (red) and 96 % (white) of the boxes, on a snowy lit street
+  in 62 % and 45 %, and there the pose is surer than it should be. Rule (A): where `lamps.c` is red or white AND
+  the frame is dark (the detector's own gate, a median luma of at most 90, also fires on dull days: ask for the
+  tracker's night flag, `app_dark` or the vectors' luma, as well), the lamp's vote is ln 8 and the pose's vote is
+  capped at ln 2, and the axis row is taken only with `p` >= 0.9. By day a `white` pair against a pose with `p` >=
+  0.8 is ignored (**M**: the rule's white is wrong on dull daytime frames).
+* The lamp separation and the width as rulers (`in_lamp_size`, `in_width`) need `a`: with a pose, `a` = -`yaw`
+  to `yaw_std`.
+* The scale rate is untouched.
+
+### 9.5 What the rides say (no labels there)
+Seven rides on other cameras, 5 minutes each, no labels (table and method: chris-signs `docs/POSE_HEAD.md`,
+section 4). Each line holds the head against a cue with errors of its own.
+* By day (overcast city, rain, low sun): the vehicle ahead (a chain that keeps its size for 3 s in mid-picture)
+  is called rear in 92-99 % of its boxes, median |yaw| 2-3 deg; crossing chains (15 of them) point the way they
+  move in 84-94 % of their poses. Flips between boxes 0.2 s apart: 1.4-4.7 %.
+* By day the lamp rule's `white` is wrong on dull frames (vehicles seen from behind, checked by eye on two sheets):
+  the pose is right there. So `lamps.c` white must not turn a daytime object round against a pose.
+* At night on open roads (three rides): red lamp pairs go with a rear-half heading in 93-97 % (99-100 % where `p` >=
+  0.8 and `flip` < 0.1); white pairs in 96 % on the one ride with 138 of them, about half on two rides with 8 and
+  19 (far oncoming headlamps). Flips between boxes 4-8 %.
+* At night in a snowy lit city: 62 % / 45 % against the lamp colour (both cues err there), flips 11 %, and `p` is
+  too confident (76 % right where it says >= 0.8). The uncertainties were calibrated by day.
+* `gn` on uncut boxes sits within 0.01-0.04 box heights of the box bottom in the median, with an offset that
+  depends on the ride (low sun: 0.036 above; dark motorway: 0.041 below): no truth to say which of the two is off.
+* None of this measures what the head is for on the unit, `gn` under a cut bottom: that rests on KITTI (9.2).
+
+### 9.6 What the simulator must emit
+| what | model | numbers (**M** unless marked) |
+|---|---|---|
+| which boxes | vehicles; at most N a pass, in turns | N = 4 |
+| heading | with probability 1 - q the truth plus an error e; with probability q the truth + 180 deg plus e. e = the actor's own offset (constant) + a first-order autoregressive scatter | q 6.2 % overall (4.9 % rear, 8.9 % three-quarter, 15.9 % with a side cut), redrawn about once a second; offset sigma 2.4 deg, scatter 2.4 deg with correlation 0.65 at 0.2 s; times 2 for three-quarter and 4 for side views |
+| `yaw_std`, `p`, `flip` | stated honestly: `yaw_std` = the error's sigma, `flip` = q drawn per box from a skewed distribution (most boxes near 0, a few near 0.4) | calibration tables of the model card |
+| `gn` | the true near-face row + e x box height, e as the heading's (offset + scatter) | offset 0.042, scatter 0.037, correlation 0.68 at 0.2 s; with a hidden bottom: sigma 0.10 of the true box height, stated 0.12 |
+| `gc[0]` | the centre's column + e x box width | 0.021 (median |e|) |
+| `dim` | the kind's mean size (no information) | A |
+| night | open roads: as by day; a lit city street: q x 2, with `p` stated as by day (too sure) | rides, 9.5 (no labels: A) |
+
+### 9.7 Order of implementation
+1. pass-through, `pose_kind`, the bit-identity test with the option off;
+2. `gn` as the ground row of boxes with a hidden bottom, with the one-sided bound (new information where there was a
+   bearing only; **M** at the unit's schedule 97 % of a day ride's first-list vehicle boxes and 41 % of a night
+   ride's are cut at the bottom by the view);
+3. `gc[0]` as the bearing row;
+4. the end votes and the axis row; birth from the pose; the width ruler's `a`;
+5. `occ` as a flag, the van vote.

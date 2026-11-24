@@ -531,12 +531,25 @@ frame, a 48x24 state CNN per light, a small tracker; models and licences: roadse
                            "l": [612.4, 398.1],       //   red | white | unknown, left / right blob centroid (frame px),
                            "r": [633.9, 398.6],       //   their distance and its 1-sigma (px)
                            "sep": 21.5, "sep_std": 0.4},
-                 "emb": "0a1f..."} ],                 // optional (--lights-ru-emb): appearance vector, hex of int8 values
+                 "emb": "0a1f...",                    // optional (--lights-ru-emb): appearance vector, hex of int8 values
+                 "pose": {"yaw": -4.5, "yaw_std": 3.1, // optional (--lights-ru-pose, a trained head): heading against the
+                          "p": 0.98, "flip": 0.01,    //   line of sight (deg, clockwise from above; 0 = rear seen), its
+                          "vp": "rear",               //   1-sigma, P(within 52.5 deg of it), P(the opposite heading);
+                          "vp_conf": 0.93,            //   view class rear | front | side | threequarter, its probability
+                          "gc": [642.1, 401.3, 2.0, 1.4, 0.95],  // footprint centre: u, v, sigma u, sigma v (px), P(seen)
+                          "gn": [642.1, 409.8, 1.6, 0.97],       // near-face point: u (= gc's), v, sigma v, P(seen)
+                          "gl": [611.0, 407.2, 2.4, 2.0, 0.9],   // leftmost / rightmost visible bottom corner, as gc
+                          "gr": [668.3, 409.5, 2.1, 1.9, 0.9],
+                          "dim": [4.31, 1.66, 1.49],             // length, width, height (m) and the 1-sigma of
+                          "dim_std": [0.11, 0.05, 0.06],         //   their logarithms
+                          "occ": 0.08, "trunc": 0.0,             // P(occluded), share outside the picture
+                          "kind": [0.99, 0.0, 0.01]} } ],        // P(vehicle, person, two-wheeler) by the crop
 "road_users_low": [ {...} ],                         // optional (--lights-ru-low X): boxes scoring above X but not above
                                                      //   their class threshold, same keys as road_users: to continue an
                                                      //   existing track only, never to start one; occ_by indexes road_users
 "emb_kind": "yuv3x3",                                // optional (--lights-ru-emb): what `emb` is: "yuv3x3" (27 numbers,
                                                      //   model-free) | "reid32+yuv3x3" (32 learnt + the 27)
+"pose_kind": "pose1",                                // optional (--lights-ru-pose): the contract of `pose` (below)
 "idle": {"pattern": "ZW.Z.W", "hz": 3.33}            // optional (lane L53): nothing tracked, the provider runs its idle
                                                      //   pattern until a light shows up; hz = passes a second it keeps
 ```
@@ -603,6 +616,38 @@ by default, each adding only optional keys; with all of them off the message is 
   `scale_src` says when the value came from the lamp pair's separation (`lamps`) or from both measurements
   (`both`). The stated std is then the combination's; where the two disagree by more than three of their joint
   sigma, half their difference is added to it.
+Pose of a road user (lane `viewhead`, 2026-11-24; `signd --lights-ru-pose FILE.onnx`, roadsense-signs
+`docs/POSE_HEAD.md`; how a tracker should take it: `docs/lanes/detin-consumption-design.md` section 9, the lane:
+`docs/lanes/viewhead-pose-head.md`). A small trained head run on the crop of a vehicle box gives which way the
+object points and where it stands on the road. Off by default; with it off the message is byte for byte what it
+was. The model file is not part of roadsense-signs: it is trained in the separate project chris-pose on the
+KITTI data set and distributed under CC BY-NC-SA 3.0 (non-commercial), loaded at run time; without the file the
+option stays off. `pose_kind` at the message's top level names the contract (`pose1`); a consumer ignores a kind it
+does not know. Per road user (vehicle classes; at most `--lights-ru-pose-max` boxes a pass, more boxes take turns
+over the passes, so `pose` is absent on some boxes of a busy pass):
+* `yaw` (degrees): the object's heading against the line of sight from the camera to it, clockwise seen from
+  above: 0 = it points away (the rear is seen), +-180 = it points at the camera (the front is seen), +90 = it points
+  to the right of the line of sight (its right side is seen), -90 = to the left. In the car's frame (left
+  positive) the heading is the line of sight's bearing minus `yaw`. `yaw_std`: its 1-sigma, given that the answer
+  is in the right lobe; `p`: the probability that the heading is within 52.5 degrees of `yaw`; `flip`: the
+  probability that it is within 52.5 degrees of the opposite direction (front taken for rear: the head's typical
+  mistake); what is left to 1 is "somewhere else". `vp` / `vp_conf`: the most probable view class (`rear` within
+  22.5 degrees of 0, `front` of 180, `side` of +-90, `threequarter` the rest) and its probability.
+* Ground points, frame pixels: where the object's footprint (the rectangle length x width under it) meets the
+  road. `gc` = its centre `[u, v, sigma_u, sigma_v, seen]`; `gn` = the near-face point `[u, v, sigma_v, seen]`:
+  where the line of sight to the centre enters the rectangle (for a vehicle straight ahead the middle of its rear
+  face on the road), the same column as `gc`; `gl`, `gr` = the leftmost and the rightmost in the picture of the
+  bottom corners on the sides that face the camera, as `gc`. `seen` is the probability that the point itself is in
+  the crop and the picture and not covered; a point that is not seen is extrapolated from what is seen (its sigma
+  says how well): a box cut at the bottom by the view (`clip` b) or the frame, or with its bottom under a nearer
+  box, still gets a `gn`. The points are amodal: they may lie outside the box and outside the frame.
+* `dim` (length, width, height in metres) with `dim_std` (1-sigma of the logarithms), `occ` (probability that
+  the object is partly occluded or more), `trunc` (share of it outside the picture), `kind` (the probabilities
+  that the crop shows a vehicle, a person, a two-wheeler: a box of a vehicle class whose `kind` says otherwise is
+  the detector's confusion).
+The uncertainties are calibrated on held-out drives of the training set and are inside the model file. Measured
+accuracy, the checks on rides and the limits (night, cameras other than the training set's): roadsense-signs
+`docs/POSE_HEAD.md` and the model card of chris-pose.
 Confirmed tracks (>= 2 hits) are listed: those matched in the current frame and, since 2026-11-16 (lane L15),
 those the reference provider is coasting (`coast` 1..`--lights-coast`, the box predicted, the state the last
 smoothed one), so a light the detector misses in one frame, or one that only the other view can see, does not
