@@ -536,7 +536,7 @@ frame, a 48x24 state CNN per light, a small tracker; models and licences: roadse
                                                      //   their class threshold, same keys as road_users: to continue an
                                                      //   existing track only, never to start one; occ_by indexes road_users
 "emb_kind": "yuv3x3",                                // optional (--lights-ru-emb): what `emb` is: "yuv3x3" (27 numbers,
-                                                     //   model-free) | "reid32" (32 numbers, learnt)
+                                                     //   model-free) | "reid32+yuv3x3" (32 learnt + the 27)
 "idle": {"pattern": "ZW.Z.W", "hz": 3.33}            // optional (lane L53): nothing tracked, the provider runs its idle
                                                      //   pattern until a light shows up; hz = passes a second it keeps
 ```
@@ -596,8 +596,9 @@ by default, each adding only optional keys; with all of them off the message is 
   (Euclidean distance); `emb_kind` at the message's top level says which vector it is, and vectors of different
   kinds must not be compared. `yuv3x3`: the central 90 % of the box in 3 x 3 cells, per cell the mean Y, Cb, Cr
   (nine Y, then nine Cb, then nine Cr; value = int8 / 32, in units of 50 grey levels about 110 for Y and of 20
-  about 128 for chroma). `reid32`: a small network on the 32 x 32 crop, L2-normalised (value = int8 / 127).
-  Absent for boxes under 8 px on a side (and, for `reid32`, beyond the per-pass cap).
+  about 128 for chroma). `reid32+yuv3x3`: 32 numbers of a small network on the 32 x 32 crop, L2-normalised
+  (value = int8 / 127), followed by the 27 `yuv3x3` numbers; distance = sqrt(|d learnt|^2 + (0.5 |d yuv|)^2).
+  Absent for boxes under 8 px on a side (and, with the network, beyond the per-pass cap).
 * **Scale rate in the dark** (`--lights-ru-scale-lamps`, `--lights-ru-scale-multi N`): the same three keys;
   `scale_src` says when the value came from the lamp pair's separation (`lamps`) or from both measurements
   (`both`). The stated std is then the combination's; where the two disagree by more than three of their joint
