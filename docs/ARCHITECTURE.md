@@ -406,7 +406,7 @@ Sign detection is not part of roadsense. Any external process may provide it by
 reading the frame ring and listening on `<rundir>/signd.sock` with the message
 below; the api connects to that socket like to the others and treats a missing
 socket as "not connected" (everything else keeps working). The reference
-implementation is [roadsense-signs](https://github.com/PiotrTopa/roadsense-signs)
+implementation is [roadsense-signs](https://github.com/PiotrTopa/chris-signs)
 (AGPL-3.0, separate repository because of its model licences), whose `signd`
 runs an MTSD detector + classifier + SORT tracker.
 

@@ -38,7 +38,7 @@ test = ["pytest", "aiohttp"]
 Homepage = "https://github.com/PiotrTopa/chris-integrator"
 Issues = "https://github.com/PiotrTopa/chris-integrator/issues"
 "Map box" = "https://github.com/PiotrTopa/chris-mapper"
-"Camera perception" = "https://github.com/PiotrTopa/roadsense"
+"Camera perception" = "https://github.com/PiotrTopa/chris-roadsense"
 
 [project.scripts]
 chris-integrator = "chris_integrator.daemon:main"

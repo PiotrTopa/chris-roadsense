@@ -2,7 +2,7 @@
 
 What a map pack holds and its file format: the data the map box reads (`chris_mapper/rsmap.py`: the reader
 `Pack` and the writer `build_pack`; the builder tool that reads OpenStreetMap extracts lives in chris-roadsense,
-[`tools/roadsense_maps.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/roadsense_maps.py), [`scripts/roadsense-maps`](https://github.com/PiotrTopa/roadsense/blob/main/scripts/roadsense-maps)). Moved verbatim from chris-roadsense's [`docs/MAPS.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/MAPS.md) (lane L43); "mapd" in it names
+[`tools/roadsense_maps.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/roadsense_maps.py), [`scripts/roadsense-maps`](https://github.com/PiotrTopa/chris-roadsense/blob/main/scripts/roadsense-maps)). Moved verbatim from chris-roadsense's [`docs/MAPS.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/MAPS.md) (lane L43); "mapd" in it names
 the legacy daemon that read packs before the map box, "roadsense 2.0" the release that brought format 2.
 
 **Attribution.** Map data © OpenStreetMap contributors, available under the Open Database License (ODbL)

@@ -161,7 +161,7 @@ ssh user@phone 'cd ~/roadsense && sudo sh scripts/install-camerad-dvr.sh --enabl
 ```
 
 Sign and traffic-light detection is a separate AGPL-3.0 project,
-[roadsense-signs](https://github.com/PiotrTopa/roadsense-signs), that plugs into
+[roadsense-signs](https://github.com/PiotrTopa/chris-signs), that plugs into
 the `signs` / `lights` sockets and joins `roadsense.target`; roadsense runs without it.
 
 ## Documentation
@@ -184,5 +184,5 @@ the `signs` / `lights` sockets and joins `roadsense.target`; roadsense runs with
 
 MIT, see [LICENSE](LICENSE). Third-party models are downloaded by `scripts/fetch-models.sh` and never
 committed ([docs/LICENSES.md](docs/LICENSES.md)). Map packs are derived from OpenStreetMap
-(© OpenStreetMap contributors, ODbL 1.0) and never committed either. [roadsense-signs](https://github.com/PiotrTopa/roadsense-signs) is a separate
+(© OpenStreetMap contributors, ODbL 1.0) and never committed either. [roadsense-signs](https://github.com/PiotrTopa/chris-signs) is a separate
 AGPL-3.0 project and not part of this repository.

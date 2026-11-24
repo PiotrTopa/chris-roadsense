@@ -377,7 +377,7 @@ deployment. What that does and does not show:
 
 | repository | what | licence |
 |---|---|---|
-| [chris-roadsense](https://github.com/PiotrTopa/roadsense) | per-camera perception on the car computer: camera capture, the road model, sign / light / scenery detectors' daemons, the debug face; the replay and measurement tools; the lane reports | MIT |
+| [chris-roadsense](https://github.com/PiotrTopa/chris-roadsense) | per-camera perception on the car computer: camera capture, the road model, sign / light / scenery detectors' daemons, the debug face; the replay and measurement tools; the lane reports | MIT |
 | chris-integrator (this) | every input in, fusion, trackers, decisions, the consolidated API | MIT |
 | [chris-mapper](https://github.com/PiotrTopa/chris-mapper) | the map box: map matching and map context from OpenStreetMap packs | MIT |
 | roadsense-signs | the sign and traffic-light detectors | AGPL, separate |
@@ -387,7 +387,7 @@ chris-integrator contains no code of roadsense-signs. It reads the *messages* it
 strings in those messages. A deployment without those detectors runs without the sign and light boxes' inputs.
 
 Numbers in the documents often name where they were measured: "lane Lnn" is a work report in chris-roadsense's
-[`docs/lanes/`](https://github.com/PiotrTopa/roadsense/tree/main/docs/lanes), and `tools/...` names a
+[`docs/lanes/`](https://github.com/PiotrTopa/chris-roadsense/tree/main/docs/lanes), and `tools/...` names a
 chris-roadsense tool unless it is one of this repository's own `tools/` (cost and native benchmarks). Those
 reports describe the code as it was when they were written; this repository's documents describe it as it is.
 

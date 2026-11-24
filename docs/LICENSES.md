@@ -18,7 +18,7 @@
 | Evaluation datasets (never shipped, outside the repo): BDD100K val, DAWN, Places365 val | `<datasets>/` on the dev box | BDD100K licence (research / not-for-profit), CC BY-NC 3.0, Places (research) | a linear probe trained on them is not committed |
 
 Sign detection is not part of roadsense. The reference sign provider,
-[roadsense-signs](https://github.com/PiotrTopa/roadsense-signs), is a separate
+[roadsense-signs](https://github.com/PiotrTopa/chris-signs), is a separate
 AGPL-3.0 project because its models are Ultralytics-trained (AGPL-3.0 claim on
 the weights) and carry no licence of their own; it talks to roadsense only over
 the frame ring and a JSON socket (docs/ARCHITECTURE.md), so no sign code or model

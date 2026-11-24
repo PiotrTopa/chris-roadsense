@@ -51,7 +51,7 @@ built and proven on the simulator and on synthetic sensors injected into the rea
 ## 1. What the data says
 
 From the audit and L37 (recordings of 2026-11-19), plus two things settled in this lane before the design
-(roadsense [`tools/integrator_eval.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/integrator_eval.py)` gnss`, `calib`; numbers in the report):
+(roadsense [`tools/integrator_eval.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/integrator_eval.py)` gnss`, `calib`; numbers in the report):
 
 * **Vehicle speed (CAN 0x0B4)**: 10 Hz, robust sigma 0.012-0.020 m/s against its own neighbours; wheel speeds
   at 0.979-0.981 of it. The feed falls silent for about 7 s 19-25 times a drive and its first samples after a
@@ -218,7 +218,7 @@ intersection (section 6).
 ## 3a. The receiver: what a fix is, and what its own motion says (L47)
 
 A fix is `position(t - delay) + slowly varying error + white noise`. On the reference car (four drives of one
-day; roadsense [`tools/integrator_eval.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/integrator_eval.py)` gnss`, roadsense [`tools/mapper_eval.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/mapper_eval.py)` real`, lane report L47):
+day; roadsense [`tools/integrator_eval.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/integrator_eval.py)` gnss`, roadsense [`tools/mapper_eval.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/mapper_eval.py)` real`, lane report L47):
 
 * From one fix to the next the receiver moves as the odometer says to 0.75-1.55 m (robust sigma): the white
   part is small. Raw fixes lie 7-10 m (median) beside the road they are on, the same way for 5-20 s: the
@@ -336,7 +336,7 @@ Recovery needs evidence of agreement (hysteresis as in L37). Faults survive epoc
 
 Section 5 is isolation between sources. Below it sits detection that knows nothing about any particular
 source or incident (`core/fdi.py`), and above it the campaign that scores all of it (`sim/faults.py`,
-[`tools/fault_campaign.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/fault_campaign.py) in chris-roadsense, `tests/test_faults.py`).
+[`tools/fault_campaign.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/fault_campaign.py) in chris-roadsense, `tests/test_faults.py`).
 
 **Taxonomy** (the campaign injects each into every source and quantity it applies to): bias, scale error, slow
 drift, stuck value, repeated samples, drop-out, noise burst, outliers, delay and delay jump of the content,
@@ -566,7 +566,7 @@ What remains of roadsense's api: the sockets it already publishes (`road`, `cali
 
 **Inputs reach the integrator directly.** The car backend connects to the integrator's `feed.sock` and speaks
 the vehicle input API as it does to mapd today (`gnss`, `motion`, `controls`, `body`, `vehicle`, `objects`,
-`reset`; roadsense [docs/VEHICLE_API.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/VEHICLE_API.md)). The sources accept both the feeder's `motion` / `gnss` and mapd's relayed
+`reset`; roadsense [docs/VEHICLE_API.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/VEHICLE_API.md)). The sources accept both the feeder's `motion` / `gnss` and mapd's relayed
 `ego` / `gnss`, so the switch is a socket path on the car.
 
 **Process and the cost of crossing it.** One daemon (`python3 -m chris_integrator`): it reads each
@@ -949,7 +949,7 @@ Two ways in, both an input only:
 By construction nothing reads the attribute: gating, association, existence, the lead selection and the ego
 estimate are the same, number for number, with and without a class detector (a test asserts exactly that).
 
-**Lane L42: the first class detector, and the vote** (report: roadsense [`docs/lanes/L42-road-users.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L42-road-users.md)).
+**Lane L42: the first class detector, and the vote** (report: roadsense [`docs/lanes/L42-road-users.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L42-road-users.md)).
 
 * The detector is the traffic-light detector of roadsense-signs (BDD100K YOLO11n, eight road classes besides
   lights and signs): `signd --lights-road-users` decodes its road-user boxes from the inference that already runs

@@ -2,14 +2,14 @@
 
 What chris-integrator serves to consumers: the HTTP / WebSocket API (`chris_integrator/io/http.py`, `io/api.py`)
 and the messages of its public streams. The text and tables below were moved verbatim from chris-roadsense's
-[`docs/ARCHITECTURE.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/ARCHITECTURE.md) (where they were kept until this component had its own reference; lane L43); words like
+[`docs/ARCHITECTURE.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/ARCHITECTURE.md) (where they were kept until this component had its own reference; lane L43); words like
 "api", "mapd" and "roadsense 2.0" in them name the component that served a topic before lane L39. The `map`
 topic (the map box) is described in chris-mapper's `docs/MAP.md`, the map pack format in its `docs/PACK.md`.
 The raw per-camera topics this API passes through (`road`, `signs`, `lights` with its `road_users`, `env`,
-`camera`, `calib`, `display_lanes`, `governor`) are chris-roadsense's (its [`docs/ARCHITECTURE.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/ARCHITECTURE.md)). The object
+`camera`, `calib`, `display_lanes`, `governor`) are chris-roadsense's (its [`docs/ARCHITECTURE.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/ARCHITECTURE.md)). The object
 class fields of lane L42 (`tracks[].class`, `lead.class`, `view.objects[].cls`) and the `road_user` objects of
 `view` are in the tables below (design: `chris_integrator/trackers/roadusers_view.py`, `docs/DESIGN.md` section 16). Paths in the moved text are those of the chris-roadsense repository at the time
-([`docs/VEHICLE_API.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/VEHICLE_API.md), `chris_integrator/...`, "section Calibration" of its ARCHITECTURE.md).
+([`docs/VEHICLE_API.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/VEHICLE_API.md), `chris_integrator/...`, "section Calibration" of its ARCHITECTURE.md).
 
 Ports in a deployment: the consolidated API on 8090, the camera instance's debug face on 8091 (`docs/INSTALL.md`).
 
@@ -36,7 +36,7 @@ to the debug face (`--roadsense-http`). `POST /v2/vehicle` goes to the integrato
 | `GET /v2/lead` | the tracked lead vehicle (topic `lead`, below): distance, relative speed, time gap, standing flag, `departed` cue, with the raw vision value alongside; 503 before the first `road` message |
 | `GET /v2/view` | the display channel (topic `view`, below): smoothed objects and lines with ids, velocities and fades, and the road picture `view.road`, for a consumer that draws; 503 before the first `road` message |
 | `GET /v2/version` | `{"name":"roadsense-api","version":"2.0.0","api":2,"topics":[...]}`; `/v2/health` carries the same as `api: {"major": 2, "version": "2.0.0"}` |
-| `GET /v2/vehicle` | the car as the host describes it: mapd's `vehicle` message (every signal with age, quality and source, description, calibration estimates, feeders) plus the last scan of every range sensor (`objects`); 503 while mapd is not running. roadsense [`docs/VEHICLE_API.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/VEHICLE_API.md) 8 |
+| `GET /v2/vehicle` | the car as the host describes it: mapd's `vehicle` message (every signal with age, quality and source, description, calibration estimates, feeders) plus the last scan of every range sensor (`objects`); 503 while mapd is not running. roadsense [`docs/VEHICLE_API.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/VEHICLE_API.md) 8 |
 | `POST /v2/vehicle`, `POST /v2/position` | vehicle input API over HTTP (body: one message, a JSON array, or JSON lines), forwarded to mapd's `position.sock`; answers `{"api":1,"accepted":n,"rejected":[...]}`, 503 without mapd |
 | `GET /v2/camera` | latest `camera` message + ring header fields |
 | `GET /v2/governor`, `POST /v2/governor` | the load governor (below, "Load governor"): state, and holding a shed level by hand |
@@ -72,7 +72,7 @@ track_id/cls/score/box/hits and `tracks_ended[]` track_id), `road` (`v_ego`, `po
 `ts_mono_ns`) and `env` (`place` label) into the limit that applies to the car. Sent on `/ws` on
 every change and at least once a second; `/v1/speed_limit` adds `recent_changes` and `ignored`.
 Rules are data: `chris_integrator/trackers/rules/<country>.json` (the `rules` plug-in's `rules` key, default
-`pl`). Design, Polish sources and limits: roadsense [`docs/lanes/L6-speed-limit.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L6-speed-limit.md).
+`pl`). Design, Polish sources and limits: roadsense [`docs/lanes/L6-speed-limit.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L6-speed-limit.md).
 
 ```
 "limit_kmh": 70,                         // null = unknown (no sign, area unknown)
@@ -97,7 +97,7 @@ feeds it every `road` / `signs` / `env` message and also takes `lights`, and jud
 the rule table `rules/<country>.json` -> `effects` (category, how it ends, side, legal source, guesses marked)
 with the same track confirmation, lateral-position and plate code. Sent on `/ws` on every change and at least
 once a second; `/v1/rules` adds `pending`, `recent_changes` and `ignored`. Design, Polish sources, rule table
-and the offline evaluation: roadsense [`docs/lanes/L11-signs-in-effect.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L11-signs-in-effect.md); offline runner roadsense [`tools/rules_replay.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/rules_replay.py).
+and the offline evaluation: roadsense [`docs/lanes/L11-signs-in-effect.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L11-signs-in-effect.md); offline runner roadsense [`tools/rules_replay.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/rules_replay.py).
 
 ```
 "in_effect": [                           // lasting rules + momentary signs that bind at the next intersection
@@ -254,7 +254,7 @@ source: scans, detections, assigned, started, late, dropped, `nis`, `age_s`, `ki
 `chris_integrator/trackers/lead.py` tracks the lead vehicle over time: one message per `road` message (so at the
 model's rate, 10-14 per second on the reference phone), about 0.7 kB; `/v1/lead`. `road.leads[]` is not
 modified and stays the network's frame-by-frame output; `lead` is what a consumer should draw or act on
-(added 2026-11-15, roadsense [docs/lanes/L14-lead.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L14-lead.md)).
+(added 2026-11-15, roadsense [docs/lanes/L14-lead.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L14-lead.md)).
 
 Why: `road.leads[0].x[0]` jitters by about 1.5 % of the distance from frame to frame (0.08 m at 4 m, with
 single frames 0.5-1 m off, e.g. under a wiper) and wanders by a few decimetres over seconds even behind a
@@ -325,7 +325,7 @@ The model's `a[0]` is not used (it made the track lag). Modes:
 | `coast` | `prob` under 0.3 | prediction only, `meas_age_s` counting, for 0.6 s (2.5 s while standing); then `present: false`, event `lost` |
 
 **Profile for the vision model** (`lead.PROFILES["vision"]`, applied when `road_model` is `"vision"`; a key in
-`lead.json` wins; lane L27, roadsense [docs/lanes/L27-new-model-default.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L27-new-model-default.md)). The numbers above were measured on
+`lead.json` wins; lane L27, roadsense [docs/lanes/L27-new-model-default.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L27-new-model-default.md)). The numbers above were measured on
 supercombo. The vision model has no memory: its `prob` flickers from frame to frame and it finds and drops
 distant leads; its relative speed, from an image pair 200 ms apart, scatters by 0.8-1.0 m/s per frame at 50 m
 and beyond where supercombo's scatters by 2-4, and its own `v_std` overstates that. The profile uses the speed
@@ -336,7 +336,7 @@ on purpose:
 | relative speed | sigma max(0.15, 2 v_std) + 0.1 d: little weight beyond 30 m | sigma max(0.15, 0.5 v_std) + 0.01 d: the filter's speed carries the distance through gaps; relative to `pose.vx` of the same run |
 | distance | sigma max(hypot(0.10 m, 2 % of d), 0.2 x_std); kinematics only | sigma with 0.4 x_std (its per-frame scatter is 2-4 m at 50 m and beyond), plus a random walk of (3 % of d)^2 per second: the model's distance drifts against its own speed output, and a track that trusted the speed alone stopped following the distance |
 | start of a track | 2 frames with `prob` >= 0.5 | accumulated evidence: the `prob` of successive frames (>= 0.3) whose distance moved as the reported relative speed says add up, a frame that does not agree starts again; a track starts at 2.5. Two agreeing frames at >= 0.9 start it at once (a clear cut-in is not delayed) |
-| a frame under 0.3 | no measurement: `coast`, prediction only, 0.6 s | from 0.1 on, if its distance is within max(2 m, 8 %) and its speed within 2.5 m/s of the track: a measurement with 2.5 times the sigma, `mode: "coast"`, `evidence: "weak"`; the track ends 1.5 s after its last confirming frame (2.5 s until L29). Otherwise `evidence: "none"`, prediction only, 0.6 s (0.8 s until L29; a departed lead is released after about 0.7 s, roadsense [docs/lanes/L29-display-lanes.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L29-display-lanes.md)) |
+| a frame under 0.3 | no measurement: `coast`, prediction only, 0.6 s | from 0.1 on, if its distance is within max(2 m, 8 %) and its speed within 2.5 m/s of the track: a measurement with 2.5 times the sigma, `mode: "coast"`, `evidence: "weak"`; the track ends 1.5 s after its last confirming frame (2.5 s until L29). Otherwise `evidence: "none"`, prediction only, 0.6 s (0.8 s until L29; a departed lead is released after about 0.7 s, roadsense [docs/lanes/L29-display-lanes.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L29-display-lanes.md)) |
 | a replacing hypothesis at another distance | new `track_id` (`changed` / `cut_in`) | the same `track_id` when its speed is within 1.5 m/s and its lateral position within 1 m of the track's (`relocated`): the model re-estimated the distance of the same vehicle. The distance still jumps; nothing is held |
 | found again after `lost` | new `track_id` | the same `track_id` within 3 s when it is where the lost track would be (max(3 m, 15 %)): `reacquired`. It was absent in between and the message said so |
 
@@ -347,13 +347,13 @@ with `evidence` and `meas_age_s`, and then dropped.
 `departed`: the standing regime ended because the lead moved away while ego still stands; true from that frame
 until ego moves, both stand again, or 8 s. `departure.moved_m` is how far it has gone. On the replayed
 rides it comes 0.25-0.95 s (median 0.45 s) after the lead starts to roll, when the raw distance has grown by about 0.3-0.8 m
-(roadsense [docs/lanes/L14-lead.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L14-lead.md)). It is information for a "the car ahead is leaving" hint, not a go signal.
+(roadsense [docs/lanes/L14-lead.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L14-lead.md)). It is information for a "the car ahead is leaving" hint, not a go signal.
 
 Latency against smoothing: at short range the distance measurement is weighted heavily and the model's
 relative speed feeds the filter directly, so on the rides the tracked distance trails a zero-phase reference
 by about 10 ms under 40 m (135 ms beyond, where the model's speed is weighted little) while the gap closes faster than 2 m/s, with a third to a half less noise than the raw value; the
 standing regime costs nothing while moving. Standing, on the car's recorded drives (5,400 s behind a standing
-lead, roadsense [docs/lanes/L19-view-channel.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L19-view-channel.md)): frame-to-frame jitter 0.009-0.021 m rms (raw 0.10-0.23 m), never constant
+lead, roadsense [docs/lanes/L19-view-channel.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L19-view-channel.md)): frame-to-frame jitter 0.009-0.021 m rms (raw 0.10-0.23 m), never constant
 for more than 1.2 s (the old hold: up to 32 min), within 0.02-0.10 m rms of the camera's 2 s mean (the old
 hold: 0.17-0.37 m). Constants: `DEFAULT_CFG` in `lead.py`, overridable per key in
 `<config dir>/lead.json` (e.g. `{"camera_to_front_m": 1.6}`).
@@ -375,14 +375,14 @@ long, radar noise 0.15 m): error under 0.5 m at 30 m against 4.5 m for the camer
 and under 1.5 m of error through a radar drop-out. Cost: 0.13 ms per frame with 16 objects against 0.09 ms
 without (laptop).
 
-Replay and measurement on recorded `road` lines: roadsense [`tools/lead_replay.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/lead_replay.py)` ROAD.jsonl[.gz] [--ego surrogate]
+Replay and measurement on recorded `road` lines: roadsense [`tools/lead_replay.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/lead_replay.py)` ROAD.jsonl[.gz] [--ego surrogate]
 [--every N] [--csv OUT]`.
 
 ### consolidated topic (chris-integrator): `{"type":"lanes", ...}`
 `chris_integrator/trackers/lanes.py` tracks the road geometry over time: one message per `road` message (10-14 per
 second on the reference phone), about 2.5 kB; `/v1/lanes`. `road.lane_lines[]` / `road.road_edges[]` are not
 modified and stay the network's frame-by-frame output; `lanes` is what a consumer should draw (added
-2026-11-16, roadsense [docs/lanes/L15-stability.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L15-stability.md)).
+2026-11-16, roadsense [docs/lanes/L15-stability.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L15-stability.md)).
 
 Why: a lane line's `prob` hovers around any fixed drawing threshold (at 0.3: 18-70 on/off changes of the four
 lines per minute on the replayed rides at 10 Hz, nearly all of them spans shorter than a second), and the road
@@ -430,7 +430,7 @@ stands on them.
   synthetic prior only.
 
 Constants: `DEFAULT_CFG` in `lanes.py`, overridable per key in `<config dir>/lanes.json`. Replay and
-measurement on recorded `road` lines: roadsense [`tools/lanes_replay.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/lanes_replay.py)` ROAD.jsonl[.gz] [--every N] [--lanes-total N
+measurement on recorded `road` lines: roadsense [`tools/lanes_replay.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/lanes_replay.py)` ROAD.jsonl[.gz] [--every N] [--lanes-total N
 --lanes-forward N] [--out LANES.jsonl]`.
 
 ### Ego lane (`chris_integrator/trackers/egolane.py`, lanes L20 and L22; inside `fused.lanes`)
@@ -464,11 +464,11 @@ diffuses by 1 % per second (a change nobody saw). `ego_index` only when one lane
 until L22): "unknown" is a valid answer, a wrong confident one is not. Constants: `DEFAULT_CFG` in
 `egolane.py`, overridable per key in `<config dir>/egolane.json`. Cost 0.05 ms per frame on the laptop (the
 `lanes` tracker: 0.38 ms). Replay and score against hand labels:
-roadsense [`tools/egolane_replay.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/egolane_replay.py)` ROAD_OR_SESSION --labels LANES.csv [--clock ride|session] [--map-count label|recorded|none]`.
+roadsense [`tools/egolane_replay.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/egolane_replay.py)` ROAD_OR_SESSION --labels LANES.csv [--clock ride|session] [--map-count label|recorded|none]`.
 Wrong-and-confident share on the labelled frames (the map count as a tagged map would give it; before L20 /
 L20 / L22): night motorway 1.4 / 0.9 / 0.3 %, night expressway with tunnels 1.5 / 3.8 / 1.5 %, city arterials
 19.1 / 7.7 / 4.6 %, the car's camera (6 sessions) 21.4 / 11.1 / 5.3 %; right share of all frames on the car's
-camera 72.6 / 78.2 / 79.7 % (roadsense [docs/lanes/L20-ego-lane-junctions.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L20-ego-lane-junctions.md), roadsense [docs/lanes/L22-v2-integration.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L22-v2-integration.md)).
+camera 72.6 / 78.2 / 79.7 % (roadsense [docs/lanes/L20-ego-lane-junctions.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L20-ego-lane-junctions.md), roadsense [docs/lanes/L22-v2-integration.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L22-v2-integration.md)).
 
 ### Road geometry (`chris_integrator/trackers/roadgeom.py`; the geometry fields of `view.road`)
 Until roadsense 2.0 this was a topic of its own (`roadgeom`, `/v1/roadgeom`). It is display content (the
@@ -478,7 +478,7 @@ inside the display channel: the fields below are fields of `view.road` (next sec
 `roadgeom.py` joins everything that is known about the shape of the road ahead into one geometry in the car's
 frame (x forward from the camera, y right, metres): the camera's lane as far as the camera knows it, the map's
 road beyond, the side roads of the junctions ahead and a roundabout as a ring (lane L17,
-roadsense [docs/lanes/L17-road-geometry.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L17-road-geometry.md)). `lanes` stays the camera's own result and `map` the map's.
+roadsense [docs/lanes/L17-road-geometry.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L17-road-geometry.md)). `lanes` stays the camera's own result and `map` the map's.
 
 ```
 "source": "vision" | "vision+map",
@@ -537,16 +537,16 @@ whole junction view.)
   signal nothing changes.
 
 Cost on the laptop: 0.09 ms per frame without a map, 0.36 ms with one, plus 0.17 ms per `map` message; on the phone: see
-roadsense [docs/lanes/L17-road-geometry.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L17-road-geometry.md). Constants: `DEFAULT_CFG` in `roadgeom.py`, overridable per key in
-`<config dir>/roadgeom.json`. Tools: roadsense [`tools/roadgeom_replay.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/roadgeom_replay.py)` SESSION.jsonl.gz` (a recorded drive through the
-tracker and the fusion), roadsense [`tools/roadgeom_drive.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/roadgeom_drive.py)` --network tour [--turn T0:T1:left|right] [--out REC]` (a
+roadsense [docs/lanes/L17-road-geometry.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L17-road-geometry.md). Constants: `DEFAULT_CFG` in `roadgeom.py`, overridable per key in
+`<config dir>/roadgeom.json`. Tools: roadsense [`tools/roadgeom_replay.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/roadgeom_replay.py)` SESSION.jsonl.gz` (a recorded drive through the
+tracker and the fusion), roadsense [`tools/roadgeom_drive.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/roadgeom_drive.py)` --network tour [--turn T0:T1:left|right] [--out REC]` (a
 synthetic drive over a made-up network or a pack with a synthetic camera, compared with the truth; the
 recording carries `view` messages).
 
 ### consolidated topic (chris-integrator): `{"type":"view", ...}` (display channel, roadsense 2.0)
 `chris_integrator/trackers/view.py` (objects, lines) and `roadview.py` (`road`): one message per road frame (10-14 per
 second), after `lead` and `lanes` of that frame; 1.5 kB without a map, 3-4 kB with the road picture; `/v2/view`.
-Added 2026-11-18 (roadsense [docs/lanes/L19-view-channel.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L19-view-channel.md); `road`: roadsense [docs/lanes/L22-v2-integration.md](https://github.com/PiotrTopa/roadsense/blob/main/docs/lanes/L22-v2-integration.md)). For any consumer
+Added 2026-11-18 (roadsense [docs/lanes/L19-view-channel.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L19-view-channel.md); `road`: roadsense [docs/lanes/L22-v2-integration.md](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/lanes/L22-v2-integration.md)). For any consumer
 that draws (a car display, a HUD, a dashboard): objects that keep their identity, move smoothly between two
 detections, fade in and out, and carry a velocity so the consumer can extrapolate to its own render time.
 Derived from the measurement topics, never fed back into them; nothing in it belongs to one display.
@@ -593,7 +593,7 @@ Derived from the measurement topics, never fed back into them; nothing in it bel
 | lead | the `lead` topic's track: carried by its relative speed, corrections eased over 0.1 s + 0.01 s per metre (0.15 s at 5 m, 0.5 s at 40 m); fade in 0.3 s, fade out 0.4 s at its extrapolated place after the track ends | drawn distance trails the tracker by up to the ease time at long range; `attrs.dist_m` is the tracker's value |
 | lines | the `lanes` topic's geometry, two first-order stages whose time constant grows with the distance (`line_tau_s` + `line_tau_rel` x: 0.1 s at the car, 0.16 s at 10 m, 0.28 s at 30 m); a restart of the track on another marking (the near part moves by more than 0.8 m in one frame) is blended linearly over 0.4 s; fade 0.3 s when a line comes or goes; `reach_m` where the tracker's sigma passes 1 m; `dy` the rate of each point | two to three frames behind `lanes` at 10 m, about five (0.4 s) at 30 m: smoothness is chosen over lag on the display channel. Carrying the lines by the car's own motion (slide, turn) is implemented and off (`line_motion`): on the recorded drives it predicts the next frame no better than "the line stays where it is in the car's frame" (a line at 30 m: 0.280 m rms against 0.286 m in turns, 0.137 against 0.136 m elsewhere), and with the uncalibrated camera it adds a bias of 0.03 m per frame |
 
-On the 2026-11-17 day drive (29 min, roadsense [`tools/view_replay.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/view_replay.py)): the ego light's drawn distance step per frame after
+On the 2026-11-17 day drive (29 min, roadsense [`tools/view_replay.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/view_replay.py)): the ego light's drawn distance step per frame after
 the car's own motion 1.96 -> 0.12 m rms, steps over 2 m 129 -> 0, lateral 0.32 -> 0.07 m; lane lines and edges
 that pop on or off without a fade 106 -> 2; the lead's step per frame after its relative speed 0.27 -> 0.09 m rms;
 a lane line's step per frame at 30 m 0.089 -> 0.068 m rms, steps over 0.3 m 119 -> 72 (the reference consumer,
@@ -658,5 +658,5 @@ Without mapd, without a pack or without a position `road` still carries the came
 `position` null or untrusted, `junction` null, lane counts null, the filter's `probs` from the right).
 "Unknown" is a value here: a part that cannot be trusted is null, never a guess drawn as a fact. Constants:
 `<config dir>/view.json` (keys of `view.DEFAULT_CFG`; the key `road` holds overrides of
-`roadview.DEFAULT_CFG`). Replay: roadsense [`tools/view_replay.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/view_replay.py)` SESSION [--map MAP.jsonl]` prints how often each part is
+`roadview.DEFAULT_CFG`). Replay: roadsense [`tools/view_replay.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/view_replay.py)` SESSION [--map MAP.jsonl]` prints how often each part is
 given on a recorded drive.

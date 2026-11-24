@@ -1,6 +1,6 @@
 # The vehicle input API as served by chris-integrator
 
-The integrator is the receiver of the vehicle input API 1.1 (the contract is roadsense's [`docs/VEHICLE_API.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/VEHICLE_API.md);
+The integrator is the receiver of the vehicle input API 1.1 (the contract is roadsense's [`docs/VEHICLE_API.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/VEHICLE_API.md);
 this page says how the integrator serves it and where it differs from the legacy mapd that served it before).
 The store behind it is `chris_integrator/io/vehicle_input.py`, ported from mapd's `vehicle.py` / `engine.py`
 (lane L43-V). The integrator informs the driver; nothing here is an output to the car.

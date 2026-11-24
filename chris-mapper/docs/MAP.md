@@ -2,7 +2,7 @@
 
 The message the map box puts out, and how it is made. In: the integrator's `ego_state` (pose with uncertainty
 and time); out: `map` (the box's contract: `README.md`). The text below was moved verbatim from chris-roadsense's
-[`docs/ARCHITECTURE.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/ARCHITECTURE.md), section "mapd" (lane L43), where the map message was described while the legacy
+[`docs/ARCHITECTURE.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/ARCHITECTURE.md), section "mapd" (lane L43), where the map message was described while the legacy
 daemon roadsense-mapd produced it; "mapd" in it names that daemon, `matcher.py` and `context.py` are
 `chris_mapper/matcher.py` and `chris_mapper/context.py`, and `mapd/roadsense_mapd/limits/pl.json` is
 `chris_mapper/limits/pl.json`. In the chris stack `map.position` repeats the pose the box was given
@@ -134,7 +134,7 @@ likely path: with `confidence` near 0.5 the path, and therefore the highlighted 
 restrictions are not in the pack. Cost: `look_ahead` with the view 0.53 ms on the laptop (Poland pack,
 a town centre, 660 positions); not yet measured on the phone.
 
-**Turn lanes** (`road.turn_lanes`, `ahead.turn_lanes`, lane L22; pack format 2, roadsense [`docs/MAPS.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/MAPS.md)): the painted
+**Turn lanes** (`road.turn_lanes`, `ahead.turn_lanes`, lane L22; pack format 2, roadsense [`docs/MAPS.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/MAPS.md)): the painted
 arrows of OpenStreetMap's `turn:lanes`, per direction of travel. `road.turn_lanes` is the matched edge's own
 (the car is on the stretch). `ahead.turn_lanes` announces the first stretch on the most likely path:
 

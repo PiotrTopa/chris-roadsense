@@ -112,8 +112,8 @@ python3 -m chris_mapper --replay EGO_STATES.jsonl --pack PACK
 A pack is a tiled road graph with attributes (class, name, ref, lanes, turn lanes, maxspeed, built-up area,
 tunnel, bridge, features such as traffic signals and crossings) in one memory-mapped file; the format is in
 [docs/PACK.md](docs/PACK.md). Packs are built from OpenStreetMap extracts by the pack builder, which today lives
-in chris-roadsense ([`tools/roadsense_maps.py`](https://github.com/PiotrTopa/roadsense/blob/main/tools/roadsense_maps.py),
-[`docs/MAPS.md`](https://github.com/PiotrTopa/roadsense/blob/main/docs/MAPS.md)). Map data is (c) OpenStreetMap
+in chris-roadsense ([`tools/roadsense_maps.py`](https://github.com/PiotrTopa/chris-roadsense/blob/main/tools/roadsense_maps.py),
+[`docs/MAPS.md`](https://github.com/PiotrTopa/chris-roadsense/blob/main/docs/MAPS.md)). Map data is (c) OpenStreetMap
 contributors, ODbL; no map data is part of this repository.
 
 ## Status and limits
@@ -142,11 +142,11 @@ from the consolidated API by a separate project. The box itself is car-agnostic.
 
 ## The chris stack
 
-[chris-roadsense](https://github.com/PiotrTopa/roadsense) (per-camera perception, MIT),
+[chris-roadsense](https://github.com/PiotrTopa/chris-roadsense) (per-camera perception, MIT),
 [chris-integrator](https://github.com/PiotrTopa/chris-integrator) (fusion and the consolidated API, MIT),
 chris-mapper (this, MIT). The sign and light detectors (roadsense-signs) are a separate AGPL project; nothing of
 them is in this repository. "Lane Lnn" in the documents names a work report in chris-roadsense's
-[`docs/lanes/`](https://github.com/PiotrTopa/roadsense/tree/main/docs/lanes).
+[`docs/lanes/`](https://github.com/PiotrTopa/chris-roadsense/tree/main/docs/lanes).
 
 ## Licence
 
